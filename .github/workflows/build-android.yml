@@ -98,9 +98,11 @@ jobs:
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
         run: |
+          # 仓库拆分后签名密钥需在新仓重新配置。缺失时以未签名方式继续，
+          # 让 CI 仍能验证代码本身；正式发布包必须配置该 secret。
           if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            echo "::error::ANDROID_KEYSTORE_BASE64 secret is not set."
-            exit 1
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret is not set —— 本次以未签名方式构建（仅验证代码）；要出正式发布包，请在本仓配置 ANDROID_KEYSTORE_BASE64 与 ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD。"
+            exit 0
           fi
           SIGNING_DIR="$RUNNER_TEMP/android-signing"
           mkdir -p "$SIGNING_DIR"
@@ -145,7 +147,12 @@ jobs:
       - name: Stage APK
         run: |
           mkdir -p build/artifacts
-          cp app/build/outputs/apk/release/app-release.apk \
+          # 未配置签名密钥时 AGP 产出 app-release-unsigned.apk
+          SRC="app/build/outputs/apk/release/app-release.apk"
+          if [ ! -f "$SRC" ]; then
+            SRC="app/build/outputs/apk/release/app-release-unsigned.apk"
+          fi
+          cp "$SRC" \
             "build/artifacts/pim-android-v${{ steps.ver.outputs.artifact_slug }}-vc${{ steps.ver.outputs.version_code }}.apk"
 
       - name: Log signing cert fingerprint

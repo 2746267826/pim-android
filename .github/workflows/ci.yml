@@ -1,0 +1,98 @@
+name: CI
+
+on:
+  push:
+    branches: [master]
+  pull_request:
+    branches: [master]
+  workflow_dispatch:
+    inputs:
+      force_all:
+        description: Force all builds
+        required: false
+        default: true
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  resolve-version:
+    runs-on: ubuntu-latest
+    outputs:
+      version: ${{ steps.ver.outputs.version }}
+      version_code: ${{ steps.ver.outputs.version_code }}
+      artifact_slug: ${{ steps.ver.outputs.artifact_slug }}
+      assembly_version: ${{ steps.ver.outputs.assembly_version }}
+      git_sha_short: ${{ steps.ver.outputs.git_sha_short }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - id: ver
+        uses: ./.github/actions/resolve-version
+        with:
+          pr_number: ${{ github.event_name == 'pull_request' && github.event.pull_request.number || '' }}
+
+  build-android:
+    needs: [resolve-version]
+    uses: ./.github/workflows/build-android.yml
+    with:
+      version: ${{ needs.resolve-version.outputs.version }}
+      version_code: ${{ needs.resolve-version.outputs.version_code }}
+      artifact_slug: ${{ needs.resolve-version.outputs.artifact_slug }}
+      assembly_version: ${{ needs.resolve-version.outputs.assembly_version }}
+      git_sha_short: ${{ needs.resolve-version.outputs.git_sha_short }}
+    secrets: inherit
+
+  build-shell-android:
+    needs: [resolve-version]
+    uses: ./.github/workflows/build-shell-android.yml
+    with:
+      version: ${{ needs.resolve-version.outputs.version }}
+      version_code: ${{ needs.resolve-version.outputs.version_code }}
+      artifact_slug: ${{ needs.resolve-version.outputs.artifact_slug }}
+      assembly_version: ${{ needs.resolve-version.outputs.assembly_version }}
+      git_sha_short: ${{ needs.resolve-version.outputs.git_sha_short }}
+    secrets: inherit
+
+  # 汇总门禁：任一子任务失败即整体失败，避免"看起来绿了"。
+  gate:
+    name: CI Gate
+    needs: [resolve-version, build-android, build-shell-android]
+    if: always()
+    runs-on: ubuntu-latest
+    steps:
+      - name: Evaluate required jobs
+        env:
+          R_RESOLVE: ${{ needs.resolve-version.result }}
+          R_APK: ${{ needs.build-android.result }}
+          R_SHELL: ${{ needs.build-shell-android.result }}
+        run: |
+          set -uo pipefail
+          fail=0
+          check () {
+            local label="$1" result="$2"
+            if [ "$result" = "success" ]; then
+              echo "✅ $label — success"
+            else
+              echo "❌ $label — ${result:-<missing>}"
+              fail=1
+            fi
+          }
+          check "resolve-version" "$R_RESOLVE"
+          check "build-android" "$R_APK"
+          check "build-shell-android" "$R_SHELL"
+
+          if [ "$fail" -ne 0 ]; then
+            echo ""
+            echo "::error::CI Gate 未通过：存在失败或未产生结果的必需 job。"
+            exit 1
+          fi
+          echo ""
+          echo "CI Gate 通过：所有必需 job 均成功。"

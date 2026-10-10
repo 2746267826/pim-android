@@ -2,6 +2,24 @@
 
 This repository is shared by multiple agent conversations. Keep `master` useful as the latest runnable version of the Android collection client.
 
+
+## 接口契约与门禁
+
+### 与后端的接口
+- 本仓与 `pim-api` 的接口以 `contract/openapi.json` 为准（快照随本仓提交，说明见 `contract/README.md`）。
+- **不要凭猜测调用接口**：不得手写或臆测契约里不存在的路径、字段、枚举值。改动涉及接口时，先对照契约确认形状。
+- **需要新接口时不要自己造**：把需求写给用户转交后端实现 —— 说明用途、请求方法与路径、请求字段、响应字段、示例。后端在 `pim-api` 实现并更新契约后，本仓再刷新快照并接入。
+- 后端契约更新后，用 `scripts/ci/fetch-contract.sh` 刷新本仓快照再提交。快照落后不影响本仓 CI（不阻塞），但接入新字段前必须先刷新。
+
+### 门禁怎么过
+- 四个公开仓（api / web / android / windows）的 `master` 有两把锁：**`CI Gate`** 与 **`PIM Independent Acceptance`**。
+- **CI 全绿 ≠ 可以合并**：PR 此时仍会显示 `BLOCKED`，因为还差第二把锁的盖章。
+- 该 Check Run 只能由独立验收身份发布，**agent 没有权限**。交付后在 PR 里写明「等待独立验收」即可 ——
+  **不要重试、不要绕过、不要为了让门禁变绿去改 ruleset 或 `.github/workflows/*`。**
+
+### 本仓特有的一条
+- `core/models/*.kt` 等 DTO 为**手写**。改任何与后端交互的代码前，必须对照本仓 `contract/openapi.json` 核对字段名、类型与可空性 —— 写错不会编译报错，只会在运行时失败。
+
 ## Communication And Planning
 
 - Communicate with the user in Simplified Chinese by default.

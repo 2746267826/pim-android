@@ -96,3 +96,66 @@ jobs:
           fi
           echo ""
           echo "CI Gate 通过：所有必需 job 均成功。"
+
+  # 发版：打 tag（v2026.10.810）时发布安装包 + version.json。
+  # version.json 是客户端更新检查的唯一数据源，读取用 release 的稳定直链：
+  #   https://github.com/<owner>/<repo>/releases/latest/download/version.json
+  # 走直链不需要 GitHub API/token，也不受 master 门禁约束（不往受保护分支提交）。
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [resolve-version, build-android, build-shell-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      - name: Normalize assets and generate version.json
+        run: |
+          set -euo pipefail
+          V="${{ needs.resolve-version.outputs.version }}"
+          VC="${{ needs.resolve-version.outputs.version_code }}"
+          BASE="https://github.com/${{ github.repository }}/releases/download/v$V"
+          mkdir -p out
+          APK="$(ls dl/pim-android-*/*.apk | head -n1)"
+          cp "$APK" "out/pim-android-v$V.apk"
+          SHELL_APK="$(ls dl/pim-shell-android-*/*.apk | head -n1)"
+          cp "$SHELL_APK" "out/pim-shell-android-v$V.apk"
+          jq -n \
+            --arg v "$V" --arg vc "$VC" --arg base "$BASE" \
+            --arg a "pim-android-v$V.apk" --arg s "pim-shell-android-v$V.apk" \
+            '{version: $v, versionCode: ($vc|tonumber), releasedAt: (now|todateiso8601),
+              assets: {
+                android:      {version: $v, url: ($base + "/" + $a)},
+                shellAndroid: {version: $v, url: ($base + "/" + $s)}
+              }}' > out/version.json
+          cat out/version.json
+
+      - name: Publish release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          V="${{ needs.resolve-version.outputs.version }}"
+          gh release create "v$V" out/* \
+            --repo "${{ github.repository }}" \
+            --title "PIM Android v$V" \
+            --generate-notes
+
+      - name: Summary
+        if: always()
+        run: |
+          {
+            echo "### 发版 v${{ needs.resolve-version.outputs.version }}"
+            echo ""
+            echo "| 资产 | 说明 |"
+            echo "| --- | --- |"
+            echo "| pim-android-v${{ needs.resolve-version.outputs.version }}.apk | 安卓客户端 |"
+            echo "| pim-shell-android-v${{ needs.resolve-version.outputs.version }}.apk | 安卓壳 |"
+            echo "| version.json | 更新检查数据源 |"
+          } >> "$GITHUB_STEP_SUMMARY"
+

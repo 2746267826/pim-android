@@ -150,7 +150,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
           set -euo pipefail
+          # 每个 step 是独立进程：上一步定义的 shell 变量不会带过来，
+          # 这里用到的 TAG 必须在本步重新声明（此前漏了 -> TAG: unbound variable）。
           V="${{ needs.resolve-version.outputs.version }}"
+          TAG="${{ needs.resolve-version.outputs.release_tag }}"
           gh release create "$TAG" out/* \
             --repo "${{ github.repository }}" \
             --title "PIM Android $TAG" \

@@ -51,8 +51,10 @@ import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewFeature
+import com.pim.core.auth.AuthSessionStore
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
+import okhttp3.OkHttpClient
 import java.net.URI
 
 sealed class PimWebViewState {
@@ -220,12 +222,27 @@ fun PimWebViewScreen(
     bridge: AndroidWebMessageBridge? = null,
     reloadKey: Long = 0L,
     initialUrl: String? = null,
-    onUrlChanged: ((String) -> Unit)? = null
+    onUrlChanged: ((String) -> Unit)? = null,
+    okHttpClient: OkHttpClient? = null,
+    authSessionStore: AuthSessionStore? = null,
+    settingsStore: ServerSettingsStore? = null
 ) {
     val context = LocalContext.current
     val currentOnUrlChanged by rememberUpdatedState(onUrlChanged)
     val currentServerUrl by rememberUpdatedState(serverUrl)
     val currentRoute by rememberUpdatedState(route)
+    /*
+     * PW-07a §4：每个 WebView 一份代发器，用已有的 Hilt `@Singleton OkHttpClient`（已带
+     * AuthInterceptor）、AuthSessionStore、ServerSettingsStore 派生。缺任一依赖时该 WebView
+     * 不代发（shouldInterceptRequest 返回 null）——不得另装一个不带拦截器的新客户端。
+     */
+    val embedProxy = remember(okHttpClient, authSessionStore, settingsStore) {
+        if (okHttpClient != null && authSessionStore != null && settingsStore != null) {
+            NativeEmbedRequestProxy(okHttpClient, authSessionStore, settingsStore)
+        } else {
+            null
+        }
+    }
     val targetUrl = remember(serverUrl, route, initialUrl) {
         if (initialUrl != null && matchesTrustedRoute(initialUrl, serverUrl, route)) {
             initialUrl
@@ -250,6 +267,9 @@ fun PimWebViewScreen(
                 if (lastUrl.isNotEmpty() && matchesTrustedRoute(lastUrl, currentServerUrl, currentRoute)) {
                     currentOnUrlChanged?.invoke(lastUrl)
                 }
+                // PW-07a §10 销毁顺序：取消本 WebView 的 call 并关闭已交付流 → bridge.remove →
+                // stopLoading → about:blank → destroy。
+                embedProxy?.cancel()
                 bridge?.remove(webView)
                 webView.stopLoading()
                 webView.loadUrl("about:blank")
@@ -297,6 +317,8 @@ fun PimWebViewScreen(
             val webView = webViewRef.value
             if (webView != null) {
                 state = PimWebViewState.Loading
+                // PW-07a §3：reloadKey 变化时先取消该 WebView 的在飞 call，再把快照代次加一。
+                embedProxy?.onDocumentReloaded()
                 webView.reload()
             }
         }
@@ -371,7 +393,8 @@ fun PimWebViewScreen(
                                     if (matchesTrustedRoute(url, currentServerUrl, currentRoute)) {
                                         currentOnUrlChanged?.invoke(url)
                                     }
-                                }
+                                },
+                                embedProxy = embedProxy
                             )
                             webViewRef.value = this
                             val bridgeInstalled = bridge == null || bridge.install(this)
@@ -403,13 +426,22 @@ fun PimWebViewScreen(
     }
 }
 
-private fun createPimWebViewClient(
+/*
+ * PW-07a 实施（唯一规格 remediation/native-embed/reviewed-spec.md §4、§10）：
+ * - `createPimWebViewClient` 从 `private` 提为 `internal` 并接收每个 WebView 一份的
+ *   `embedProxy`（`review-policy.md` §7 允许的接缝）；
+ * - `shouldInterceptRequest` 只做三件事：把请求交给允许表 + 代发器、把结果转成
+ *   `WebResourceResponse`、返回 null 表示不拦截。**不做任何 View 调用**，日志只有
+ *   固定原因码 + origin/path（在代发器里）。
+ */
+internal fun createPimWebViewClient(
     trustedOrigin: String?,
     openExternal: (String) -> String?,
     onLoading: (String) -> Unit,
     onContent: (String) -> Unit,
     onError: (PimWebViewState.Error) -> Unit,
-    onHistoryUrlChanged: ((String) -> Unit)? = null
+    onHistoryUrlChanged: ((String) -> Unit)? = null,
+    embedProxy: NativeEmbedRequestProxy? = null
 ): WebViewClient {
     return object : WebViewClient() {
         private val TAG = "PimWebView"
@@ -423,7 +455,34 @@ private fun createPimWebViewClient(
         override fun onPageStarted(view: WebView?, url: String?, favicon: Bitmap?) {
             mainFrameError = false
             currentMainFrameUrl = if (url.isNullOrEmpty()) null else url
+            // §3：主文档快照在 UI 线程写入；拦截线程只读。
+            embedProxy?.onMainDocumentStarted(url)
             onLoading(url.orEmpty())
+        }
+
+        override fun shouldInterceptRequest(
+            view: WebView?,
+            request: WebResourceRequest?
+        ): WebResourceResponse? {
+            val proxy = embedProxy ?: return null
+            if (request == null) return null
+            val url = request.url?.toString() ?: return null
+            val headers = request.requestHeaders
+                ?.mapValues { (_, value) -> listOf(value) }
+                .orEmpty()
+            val pageResponse = try {
+                proxy.proxyRequest(
+                    rawUrl = url,
+                    method = request.method ?: "GET",
+                    isForMainFrame = request.isForMainFrame,
+                    pageRequestHeaders = headers
+                )
+            } catch (_: Exception) {
+                // 绝不把异常消息写进 logcat（可能含 URL/令牌）；代发器内部已按固定原因码记录。
+                Log.w(TAG, "embed-proxy dispatch_failed")
+                null
+            } ?: return null
+            return pageResponse.toWebResourceResponse()
         }
 
         override fun onPageFinished(view: WebView?, url: String?) {
@@ -511,8 +570,27 @@ private fun createPimWebViewClient(
     }
 }
 
-private fun openSystemBrowser(context: Context, url: String): String? {
-    val exception = runCatching {
+/**
+ * PW-07a §6：只使用六参构造。`data` 是 `ByteArrayInputStream` 或 §5.3 的扫描流。
+ * 头表由 §5.1 剥离后的 `Map<String, List<String>>` 合成（同名多值按 HTTP 语义合并），
+ * 已被丢弃的头不会因为合并而回来。
+ */
+private fun EmbedProxyResponse.toWebResourceResponse(): WebResourceResponse {
+    val flattened = LinkedHashMap<String, String>()
+    for ((name, values) in headers) {
+        flattened[name] = values.joinToString(", ")
+    }
+    return WebResourceResponse(
+        mimeType,
+        "UTF-8",
+        statusCode,
+        reasonPhrase,
+        flattened,
+        body
+    )
+}
+
+private fun openSystemBrowser(context: Context, url: String): String? {    val exception = runCatching {
         context.startActivity(Intent(Intent.ACTION_VIEW, Uri.parse(url)))
     }.exceptionOrNull() ?: return null
     return exception.message ?: "系统浏览器不可用"

@@ -11,7 +11,7 @@ import com.pim.app.status.StatusSyncActionRunner
 import com.pim.app.status.SyncPhase
 import com.pim.app.ui.shell.AndroidWebMessageBridge
 import com.pim.core.auth.AuthSessionStore
-import com.pim.core.network.AuthRefreshCoordinator
+import com.pim.core.auth.AuthTokens
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
 import dagger.hilt.android.lifecycle.HiltViewModel
@@ -32,6 +32,7 @@ import kotlinx.coroutines.flow.launchIn
 import kotlinx.coroutines.flow.onEach
 import kotlinx.coroutines.flow.stateIn
 import kotlinx.coroutines.launch
+import okhttp3.OkHttpClient
 
 enum class TodayStatus {
     Loading,
@@ -71,6 +72,17 @@ data class TodayPageReportEnvelope(
     val serverIdentity: String,
     val report: TodayPageReport
 )
+
+internal fun redactCurrentSessionTokens(
+    report: TodayPageReport,
+    tokens: AuthTokens?
+): TodayPageReport {
+    val error = report.error ?: return report
+    val containsCurrentToken = listOfNotNull(tokens?.accessToken, tokens?.refreshToken)
+        .filter { it.isNotBlank() }
+        .any(error::contains)
+    return if (containsCurrentToken) report.copy(error = "页面加载错误") else report
+}
 
 internal fun resolveReportFromEnvelope(
     envelope: TodayPageReportEnvelope?,
@@ -254,6 +266,9 @@ object TodayStatusMapper {
     fun toNativeState(state: StatusCenterState): Map<String, Any?> {
         val result = linkedMapOf<String, Any?>(
             "collectionMode" to state.snapshot.service.continuousCollectionEnabled,
+            // `batteryOptimizationGranted` means the app is exempt from optimization.
+            // The Web field is true only when optimization may affect collection.
+            "batteryOptimized" to !state.snapshot.permissions.batteryOptimizationGranted,
             "triggerReason" to state.snapshot.tracking.currentPolicyReason,
             "nextLocationAt" to state.snapshot.tracking.nextExpectedLocationAtMillis?.let { formatIso(it) },
             "pending" to state.pendingTotal,
@@ -359,13 +374,21 @@ object TodayStatusMapper {
 class TodayViewModel @Inject constructor(
     private val statusCenterRepository: StatusCenterRepository,
     private val authSessionStore: AuthSessionStore,
-    private val authRefreshCoordinator: AuthRefreshCoordinator,
     private val serverSettingsStore: ServerSettingsStore,
     private val mobileSyncScheduler: MobileSyncScheduler,
-    private val acceptedSignal: StatusAcceptedSignal
+    private val acceptedSignal: StatusAcceptedSignal,
+    private val okHttpClient: OkHttpClient
 ) : ViewModel() {
 
     val serverUrl: String get() = serverSettingsStore.getBaseUrl()
+
+    /*
+     * PW-07a §10：屏幕用同一个 Hilt `@Singleton` 客户端（已带 AuthInterceptor）构造
+     * 每个 WebView 一份的 `NativeEmbedRequestProxy`。这里只暴露依赖，不构造代发器。
+     */
+    internal val embedOkHttpClient: OkHttpClient get() = okHttpClient
+    internal val embedSessionStore: AuthSessionStore get() = authSessionStore
+    internal val embedSettingsStore: ServerSettingsStore get() = serverSettingsStore
 
     private fun currentServerIdentity(): String {
         return runCatching {
@@ -391,13 +414,13 @@ class TodayViewModel @Inject constructor(
     )
 
     val bridge: AndroidWebMessageBridge = AndroidWebMessageBridge(
-        authSessionStore = authSessionStore,
-        refreshCoordinator = authRefreshCoordinator,
         serverSettingsStore = serverSettingsStore,
         scope = viewModelScope,
         nativeStateProvider = { TodayStatusMapper.toNativeState(latestStatusState.value) },
         pageReportSink = { report ->
-            pageReportFlow.value = TodayPageReportEnvelope(currentServerIdentity(), TodayPageReport.fromMap(report))
+            val parsed = TodayPageReport.fromMap(report)
+            val safe = redactCurrentSessionTokens(parsed, authSessionStore.snapshot().tokens)
+            pageReportFlow.value = TodayPageReportEnvelope(currentServerIdentity(), safe)
         }
     )
 

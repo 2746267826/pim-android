@@ -64,8 +64,7 @@ data class CalendarResponse(
 @Serializable
 data class CreateCalendarRequest(
     val name: String,
-    val color: String? = null,
-    val description: String? = null
+    val color: String? = null
 )
 
 // Events
@@ -83,6 +82,20 @@ data class EventResponse(
 
 @Serializable
 data class CreateEventRequest(
+    val calendarId: String,
+    val title: String,
+    val description: String? = null,
+    val location: String? = null,
+    val dtStart: String,
+    val dtEnd: String
+)
+
+/**
+ * 契约 `PUT /api/v1/calendar/events/{id}` 的请求体组件（`UpdateEventRequest`）。
+ * 字段与 `CreateEventRequest` 相同，但**必须**以契约组件名声明 —— 请求体 schema 名是门禁可判定维度（F-B-04）。
+ */
+@Serializable
+data class UpdateEventRequest(
     val calendarId: String,
     val title: String,
     val description: String? = null,
@@ -109,6 +122,25 @@ data class CreateTaskRequest(
     val description: String? = null,
     val priority: Int = 0,
     val due: String? = null
+)
+
+/** 契约 `PUT /api/v1/calendar/tasks/{id}` 的请求体组件（`UpdateTaskRequest`）（F-B-04）。 */
+@Serializable
+data class UpdateTaskRequest(
+    val title: String,
+    val description: String? = null,
+    val priority: Int = 0,
+    val due: String? = null
+)
+
+/** 契约 `POST /api/v1/calendar/outlook/sync` 的请求体组件；契约里所有字段均可空（F-B-04）。 */
+@Serializable
+data class OutlookSyncRequest(
+    val calendarBindingIds: List<String>? = null,
+    val mode: String? = null,
+    val rangeStart: String? = null,
+    val rangeEnd: String? = null,
+    val retryOfBatchId: String? = null
 )
 
 // Search

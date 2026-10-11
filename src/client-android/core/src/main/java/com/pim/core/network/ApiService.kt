@@ -1,7 +1,6 @@
 package com.pim.core.network
 
 import com.pim.core.models.*
-import okhttp3.RequestBody
 import retrofit2.Response
 import retrofit2.http.*
 
@@ -39,7 +38,7 @@ interface ApiService {
     @PUT("calendar/events/{id}")
     suspend fun updateEvent(
         @Path("id") id: String,
-        @Body request: CreateEventRequest
+        @Body request: UpdateEventRequest
     ): ApiResponse<EventResponse>
 
     @DELETE("calendar/events/{id}")
@@ -57,7 +56,7 @@ interface ApiService {
     @PUT("calendar/tasks/{id}")
     suspend fun updateTask(
         @Path("id") id: String,
-        @Body request: CreateTaskRequest
+        @Body request: UpdateTaskRequest
     ): ApiResponse<TaskResponse>
 
     @DELETE("calendar/tasks/{id}")
@@ -70,9 +69,9 @@ interface ApiService {
         @Query("type") type: String? = null
     ): ApiResponse<List<SearchResult>>
 
-    // ICS
+    // ICS —— 契约该 operation 没有 requestBody（F-B-04）。
     @POST("calendar/import-ics")
-    suspend fun importIcs(@Body body: RequestBody): ApiResponse<Int>
+    suspend fun importIcs(): ApiResponse<Int>
 
     @GET("calendar/export-ics")
     suspend fun exportIcs(
@@ -80,13 +79,9 @@ interface ApiService {
         @Query("end") end: String
     ): ApiResponse<String>
 
-    // Outlook
+    // Outlook —— 契约 requestBody required=true（OutlookSyncRequest，字段全部可空）（F-B-04）。
     @POST("calendar/outlook/sync")
-    suspend fun syncOutlook(): ApiResponse<String>
-
-    // Stats
-    @POST("stats/upload")
-    suspend fun uploadStats(@Body batch: UploadBatch): ApiResponse<Int>
+    suspend fun syncOutlook(@Body request: OutlookSyncRequest = OutlookSyncRequest()): ApiResponse<String>
 
     // Mobile
     @POST("mobile/devices/register")
@@ -144,10 +139,7 @@ interface ApiService {
         @Query("rangeStartUtc") rangeStartUtc: String? = null,
         @Query("rangeEndUtc") rangeEndUtc: String? = null,
         @Query("deviceId") deviceId: String? = null,
-        @Query("maxAccuracyMeters") maxAccuracyMeters: Double = 50.0,
-        @Query("includeRejected") includeRejected: Boolean = false,
-        @Query("cursor") cursor: String? = null,
-        @Query("pageSize") pageSize: Int? = null
+        @Query("maxAccuracyMeters") maxAccuracyMeters: Double = 50.0
     ): ApiResponse<MobileLocationHistoryResponse>
 
     @GET("mobile/location/analytics/overview")

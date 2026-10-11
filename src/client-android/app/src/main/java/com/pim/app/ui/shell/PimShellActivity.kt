@@ -33,9 +33,9 @@ import com.pim.app.recovery.ForegroundRecoveryObserver
 import com.pim.app.recovery.RunningStateRestorer
 import com.pim.app.ui.permissions.PermissionCenterScreen
 import com.pim.core.auth.AuthSessionStore
-import com.pim.core.network.AuthRefreshCoordinator
 import com.pim.core.settings.ServerSettingsStore
 import dagger.hilt.android.AndroidEntryPoint
+import okhttp3.OkHttpClient
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -48,18 +48,16 @@ class PimShellActivity : AppCompatActivity() {
     lateinit var authSessionStore: AuthSessionStore
 
     @Inject
-    lateinit var refreshCoordinator: AuthRefreshCoordinator
+    lateinit var serverSettingsStore: ServerSettingsStore
 
     @Inject
-    lateinit var serverSettingsStore: ServerSettingsStore
+    lateinit var okHttpClient: OkHttpClient
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
 
         val initialRoute = intent.getStringExtra(EXTRA_ROUTE) ?: "/today"
         val bridge = AndroidWebMessageBridge(
-            authSessionStore = authSessionStore,
-            refreshCoordinator = refreshCoordinator,
             serverSettingsStore = serverSettingsStore,
             scope = lifecycleScope
         )
@@ -67,7 +65,9 @@ class PimShellActivity : AppCompatActivity() {
             PimShellScreen(
                 initialRoute = initialRoute,
                 serverSettingsStore = serverSettingsStore,
-                bridge = bridge
+                bridge = bridge,
+                okHttpClient = okHttpClient,
+                authSessionStore = authSessionStore
             )
         }
         lifecycle.addObserver(
@@ -91,7 +91,9 @@ class PimShellActivity : AppCompatActivity() {
 fun PimShellScreen(
     initialRoute: String = "/today",
     serverSettingsStore: ServerSettingsStore? = null,
-    bridge: AndroidWebMessageBridge? = null
+    bridge: AndroidWebMessageBridge? = null,
+    okHttpClient: OkHttpClient? = null,
+    authSessionStore: AuthSessionStore? = null
 ) {
     var route by rememberSaveable { mutableStateOf(initialRoute) }
     var showPermissions by rememberSaveable { mutableStateOf(false) }
@@ -162,6 +164,9 @@ fun PimShellScreen(
                         route = route,
                         serverUrl = serverUrl,
                         bridge = bridge,
+                        okHttpClient = okHttpClient,
+                        authSessionStore = authSessionStore,
+                        settingsStore = serverSettingsStore,
                         modifier = Modifier
                             .fillMaxWidth()
                             .height(620.dp)

@@ -48,7 +48,10 @@ fun TracksScreen(
                     bridge = viewModel.bridge,
                     reloadKey = refreshVersion,
                     initialUrl = savedUrl,
-                    onUrlChanged = onUrlChanged
+                    onUrlChanged = onUrlChanged,
+                    okHttpClient = viewModel.embedOkHttpClient,
+                    authSessionStore = viewModel.embedSessionStore,
+                    settingsStore = viewModel.embedSettingsStore
                 )
             }
         }

@@ -3,8 +3,6 @@ package com.pim.app.ui.shell
 import android.webkit.WebView
 import androidx.webkit.WebViewCompat
 import androidx.webkit.WebViewFeature
-import com.pim.core.auth.AuthSessionStore
-import com.pim.core.network.AuthRefreshCoordinator
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
 import kotlinx.coroutines.CancellationException
@@ -24,8 +22,6 @@ import kotlinx.serialization.json.put
 import kotlinx.serialization.json.putJsonObject
 
 class AndroidWebMessageBridge(
-    private val authSessionStore: AuthSessionStore,
-    private val refreshCoordinator: AuthRefreshCoordinator,
     private val serverSettingsStore: ServerSettingsStore,
     private val scope: CoroutineScope,
     private val nativeStateProvider: (() -> Map<String, Any?>)? = null,
@@ -63,8 +59,12 @@ class AndroidWebMessageBridge(
 
         return try {
             when (type) {
-                "token.request" -> handleTokenRequest(id, trustedOrigin)
-                "token.refresh" -> handleTokenRefresh(id, trustedOrigin, root)
+                /*
+                 * PW-07a §7 令牌退役：类型保留，但在协议版本、id、type、主框架、origin
+                 * 都通过之后固定回 auth_unavailable。不读令牌、不刷新、不 clear()，
+                 * 回复与日志都不含 access/refresh 的字节。页面数据改由原生代发（§4）。
+                 */
+                "token.request", "token.refresh" -> errorJson(id, AUTH_UNAVAILABLE)
                 "native.state.request" -> handleNativeStateRequest(id)
                 "page.report" -> handlePageReport(id, root)
                 else -> errorJson(id, "invalid_request")
@@ -73,34 +73,12 @@ class AndroidWebMessageBridge(
             throw e
         } catch (_: Exception) {
             errorJson(id, when (type) {
-                "token.request", "token.refresh" -> "auth_unavailable"
+                "token.request", "token.refresh" -> AUTH_UNAVAILABLE
                 "native.state.request" -> "native_state_unavailable"
                 "page.report" -> "page_report_failed"
                 else -> "invalid_request"
             })
         }
-    }
-
-    private suspend fun handleTokenRequest(id: String, identity: String): String {
-        refreshCoordinator.refreshIfExpired(identity)
-        val accessToken = authSessionStore.accessTokenForServerIdentity(identity)
-            ?: return errorJson(id, "login_expired")
-        return successTokenJson(id, accessToken)
-    }
-
-    private suspend fun handleTokenRefresh(
-        id: String,
-        identity: String,
-        root: JsonObject
-    ): String {
-        val failedAccessToken = root["failedAccessToken"]?.asStringOrNull()
-        val refreshed = refreshCoordinator.refreshAfterUnauthorized(failedAccessToken, identity)
-        if (!refreshed) {
-            return errorJson(id, "login_expired")
-        }
-        val accessToken = authSessionStore.accessTokenForServerIdentity(identity)
-            ?: return errorJson(id, "login_expired")
-        return successTokenJson(id, accessToken)
     }
 
     private fun handleNativeStateRequest(id: String): String {
@@ -213,17 +191,6 @@ class AndroidWebMessageBridge(
         }.getOrNull()
     }
 
-    private fun successTokenJson(id: String, accessToken: String): String {
-        return encode(
-            buildJsonObject {
-                put("version", 1)
-                put("id", id)
-                put("ok", true)
-                put("accessToken", accessToken)
-            }
-        )
-    }
-
     private fun errorJson(id: String?, errorCode: String): String {
         return encode(
             buildJsonObject {
@@ -252,9 +219,14 @@ class AndroidWebMessageBridge(
     companion object {
         private const val PROTOCOL_VERSION = 1
         const val JS_OBJECT_NAME = "pimAndroid"
+
+        /** PW-07a §7：token.request / token.refresh 的固定失败码。 */
+        const val AUTH_UNAVAILABLE = "auth_unavailable"
+
         private val PAGE_REPORT_WHITELIST = listOf("hasServerData", "generatedAt", "error")
         private val NATIVE_STATE_WHITELIST = setOf(
             "collectionMode",
+            "batteryOptimized",
             "triggerReason",
             "nextLocationAt",
             "pending",

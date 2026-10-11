@@ -138,5 +138,7 @@ dependencies {
     androidTestImplementation("androidx.test:rules:1.5.0")
     androidTestImplementation("androidx.compose.ui:ui-test-junit4:1.5.4")
     androidTestImplementation("androidx.room:room-testing:2.6.1")
+    // PW-07a 设备侧系统 WebView 探针（自造数据，仅 127.0.0.1 随机端口）
+    androidTestImplementation("com.squareup.okhttp3:mockwebserver:4.12.0")
     debugImplementation("androidx.compose.ui:ui-test-manifest:1.5.4")
 }

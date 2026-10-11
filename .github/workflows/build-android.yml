@@ -18,6 +18,12 @@ on:
       git_sha_short:
         required: true
         type: string
+      # true = 正式发布构建（master push），必须产出已签名且验签通过的 APK；
+      # false = fork / 普通 PR，允许未签名构建，仅用于代码验证。
+      require_signing:
+        description: 'Require a signed, verified release APK (true only for a real release build)'
+        required: true
+        type: boolean
   workflow_dispatch:
     inputs:
       version:
@@ -36,6 +42,11 @@ on:
       git_sha_short:
         required: false
         default: ''
+      require_signing:
+        description: 'Require a signed, verified release APK (leave false for code-only builds)'
+        required: false
+        default: false
+        type: boolean
 
 jobs:
   build:
@@ -97,11 +108,15 @@ jobs:
       - name: Decode Android signing key
         env:
           ANDROID_KEYSTORE_BASE64: ${{ secrets.ANDROID_KEYSTORE_BASE64 }}
+          PIM_IS_RELEASE: ${{ inputs.require_signing }}
         run: |
-          # 仓库拆分后签名密钥需在新仓重新配置。缺失时以未签名方式继续，
-          # 让 CI 仍能验证代码本身；正式发布包必须配置该 secret。
+          # 正式发布构建必须有签名密钥：缺失即失败关闭，绝不让未签名包成为正式资产（F-A-04）。
           if [ -z "${ANDROID_KEYSTORE_BASE64:-}" ]; then
-            echo "::warning::ANDROID_KEYSTORE_BASE64 secret is not set —— 本次以未签名方式构建（仅验证代码）；要出正式发布包，请在本仓配置 ANDROID_KEYSTORE_BASE64 与 ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD。"
+            if [ "${PIM_IS_RELEASE:-false}" = "true" ]; then
+              echo "::error::正式发布构建（require_signing=true）必须配置 ANDROID_KEYSTORE_BASE64 / ANDROID_KEYSTORE_PASSWORD / ANDROID_KEY_ALIAS / ANDROID_KEY_PASSWORD。"
+              exit 1
+            fi
+            echo "::warning::ANDROID_KEYSTORE_BASE64 secret is not set —— 非发布构建，以未签名方式继续（仅验证代码）。"
             exit 0
           fi
           SIGNING_DIR="$RUNNER_TEMP/android-signing"
@@ -128,8 +143,8 @@ jobs:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
           ANDROID_KEY_ALIAS: ${{ secrets.ANDROID_KEY_ALIAS }}
           ANDROID_KEY_PASSWORD: ${{ secrets.ANDROID_KEY_PASSWORD }}
+          PIM_IS_RELEASE: ${{ inputs.require_signing }}
         run: |
-          # 签名密钥缺失时（例如新仓尚未配置 secret）以未签名方式继续；
           # 只有密钥文件存在时才要求配套的密码/别名，避免 gradle 拿到半个配置。
           if [ -n "${ANDROID_KEYSTORE_FILE:-}" ]; then
             for name in ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD; do
@@ -138,11 +153,15 @@ jobs:
                 exit 1
               fi
             done
+          elif [ "${PIM_IS_RELEASE:-false}" = "true" ]; then
+            echo "::error::正式发布构建（require_signing=true）缺少签名密钥文件（ANDROID_KEYSTORE_BASE64 未配置或解码失败）。"
+            exit 1
           else
-            echo "::warning::ANDROID_KEYSTORE_FILE 未设置 —— 以未签名方式构建（仅验证代码）。"
+            echo "::warning::ANDROID_KEYSTORE_FILE 未设置 —— 非发布构建，以未签名方式继续（仅验证代码）。"
             unset ANDROID_KEYSTORE_PASSWORD ANDROID_KEY_ALIAS ANDROID_KEY_PASSWORD
           fi
-          ./gradlew :app:testDebugUnitTest --no-daemon &
+          # F-A-02：:core 的测试（鉴权/刷新/契约）必须与 :app 同等进 CI，不能只跑 :app。
+          ./gradlew :app:testDebugUnitTest :core:testDebugUnitTest --no-daemon &
           PID1=$!
           ./gradlew assembleRelease --no-daemon &
           PID2=$!
@@ -152,25 +171,46 @@ jobs:
           exit $STATUS
 
       - name: Stage APK
+        env:
+          PIM_IS_RELEASE: ${{ inputs.require_signing }}
         run: |
           mkdir -p build/artifacts
-          # 未配置签名密钥时 AGP 产出 app-release-unsigned.apk
-          SRC="app/build/outputs/apk/release/app-release.apk"
-          if [ ! -f "$SRC" ]; then
-            SRC="app/build/outputs/apk/release/app-release-unsigned.apk"
+          SIGNED="app/build/outputs/apk/release/app-release.apk"
+          UNSIGNED="app/build/outputs/apk/release/app-release-unsigned.apk"
+          if [ "${PIM_IS_RELEASE:-false}" = "true" ]; then
+            # 正式发布必须使用已签名产物；回退到 unsigned 会以正式资产名发布未签名包（F-A-04）。
+            if [ ! -f "$SIGNED" ]; then
+              echo "::error::正式发布构建必须产出已签名 APK，实际找不到 $SIGNED（未签名包不得作为正式资产）。"
+              exit 1
+            fi
+            SRC="$SIGNED"
+          else
+            SRC="$SIGNED"
+            if [ ! -f "$SRC" ]; then
+              SRC="$UNSIGNED"
+            fi
           fi
           cp "$SRC" \
             "build/artifacts/pim-android-v${{ steps.ver.outputs.artifact_slug }}-vc${{ steps.ver.outputs.version_code }}.apk"
 
       - name: Log signing cert fingerprint
         working-directory: src/client-android
+        shell: bash
+        env:
+          PIM_IS_RELEASE: ${{ inputs.require_signing }}
         run: |
+          # 非发布构建（fork / 普通 PR）不强制验签，保留未签名代码验证能力。
+          if [ "${PIM_IS_RELEASE:-false}" != "true" ]; then
+            echo "::notice::非发布构建，跳过验签强制（未签名包仅用于代码验证）。"
+            exit 0
+          fi
           APK=$(ls build/artifacts/*.apk | head -n1)
           BT=$(ls -d "$ANDROID_HOME"/build-tools/*/ 2>/dev/null | sort -V | tail -n1)
           if [ -z "$BT" ]; then
-            echo "::warning::build-tools not found; skip apksigner"
-            exit 0
+            echo "::error::正式发布构建找不到 build-tools，无法验签。"
+            exit 1
           fi
+          # shell: bash ⇒ `-o pipefail`：apksigner 失败不再被 `| tee` 吞掉（F-A-04 / C-1）。
           "${BT}apksigner" verify --print-certs "$APK" | tee build/artifacts/signing-certs.txt
 
       - name: Upload APK

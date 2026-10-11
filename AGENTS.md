@@ -35,7 +35,7 @@ This repository is shared by multiple agent conversations. Keep `master` useful 
 ## Branch, PR, And GitHub Actions Workflow
 
 - All file-changing work must happen on a non-`master` branch.
-- Create branches with an `{agent}-{os}/{topic}` prefix (e.g. `antigravity-linux/location-fix`, `xiaoi-linux/ci-release-serialization`) unless the user asks for another branch name. `agent` is the AI agent's name, `os` is the operating system the agent runs on (`win` or `linux`), and `topic` is a short kebab-case English summary of the branch's purpose. Branches opened automatically by tooling (e.g. `task/<n>`) do not follow this scheme.
+- Create branches with an `{agent}-{os}/{topic}` prefix (e.g. `antigravity-linux/location-fix`, `xiaoi-linux/ci-release-serialization`) (user-requested branches must still comply with the prefix or one of the tool exceptions below). `agent` is the AI agent's name, `os` is the operating system the agent runs on (`win` or `linux`), and `topic` is a short kebab-case English summary of the branch's purpose. Branches opened automatically by tooling — `task/<n>`, `dependabot/**`, `renovate/**` — do not follow this scheme; that is the complete exception set checked by the PR metadata gate (`scripts/ci/verify-pr-metadata.sh`).
 - Make focused commits at suitable checkpoints. Push the working branch to GitHub when creating a PR, enabling CI visibility, handing work off, or preserving a useful checkpoint.
 - Open a pull request for all file-changing work.
 - After opening or updating a PR, wait for triggered GitHub Actions checks and confirm they pass before calling the task complete.
@@ -57,13 +57,13 @@ Apply this policy at the start of every session/task:
 
 ## Pull Request Descriptions Feed The Release Changelog
 
-- Every PR description MUST include the four bilingual sections below, keeping the exact heading format. CI extracts these into the GitHub Release changelog (`scripts/ci/build-release-notes.sh`):
+- Every PR description MUST include the four bilingual sections below, keeping the exact heading format. They are written for humans reading the release changelog; the GitHub Release itself is created by `gh release create --generate-notes` (GitHub builds the notes from the merged PR titles — there is no separate local changelog script):
   - `## 技术修改 / Technical changes` — modules/files touched, key design decisions, API or schema changes, dependency changes
   - `## 功能变化 / Feature changes` — user-visible changes; write `无 / None` if none
   - `## 如何体验 / How to try it` — how a user experiences the feature: which screen, what actions, what visible effect to expect (step-by-step is fine). This is an experience guide for users, NOT deployment/build instructions — build/run/verify commands belong in 测试 / Tests
   - `## 测试 / Tests` — verification commands run and their results
-- PRs without these sections still merge, but their release entry falls back to a bare title link — filling them in keeps the changelog useful.
-- Docs-only merges skip all platform builds and do not produce a GitHub Release (path-filtered); the sections above are still expected for accurate history.
+- PRs without these sections are **blocked**: the `pr-metadata` job checks the current PR body for the exact four heading lines (each heading on its own line) and a compliant head branch name, and fails `CI Gate` when either check fails (F-A-10). Without the sections the release entry would fall back to a bare title link, so filling them in keeps the changelog useful.
+- There are **no `paths:` / `paths-ignore:` filters** in this repository's workflows: a docs-only merge to `master` runs the full pipeline like any other change and can therefore still produce a GitHub Release. The sections above are still expected for accurate history.
 
 ## During Work
 

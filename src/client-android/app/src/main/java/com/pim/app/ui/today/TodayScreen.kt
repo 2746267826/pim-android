@@ -64,7 +64,10 @@ fun TodayScreen(
                         .fillMaxWidth()
                         .weight(1f),
                     bridge = viewModel.bridge,
-                    reloadKey = refreshVersion
+                    reloadKey = refreshVersion,
+                    okHttpClient = viewModel.embedOkHttpClient,
+                    authSessionStore = viewModel.embedSessionStore,
+                    settingsStore = viewModel.embedSettingsStore
                 )
             }
         }

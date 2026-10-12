@@ -63,10 +63,52 @@ jobs:
       git_sha_short: ${{ needs.resolve-version.outputs.git_sha_short }}
     secrets: inherit
 
+  # 契约新鲜度（只读 check + 离线行为测试）：把本仓 contract/openapi.json 与 pim-api 当前上游
+  # 解析出的不可变 commit 上的同路径字节做**逐字节比较**，并校验 contract/provenance.json
+  # 的存在性/形状及其与仓内快照的一致性。
+  #
+  # 上游契约一变、本仓没刷新 → 本 job 红；人工执行 scripts/ci/fetch-contract.sh 并提交刷新结果即恢复。
+  # 取不到权威源（网络/404/空体/非 OpenAPI3）一律 fail-closed，不跳过、不降级。
+  # 本仓没有 generated.ts / 没有 openapi-typescript 生成步骤，所以不安装 npm、不生成代码；
+  # 入仓产物只有两个：contract/openapi.json 与 contract/provenance.json。
+  #
+  # 为什么是独立 job（而不是像 web 那样复用某个构建 job）：本仓的构建 job 是可复用 workflow
+  # （build-android / build-shell-android），需要 Android SDK 且与契约无关；本校验只需要
+  # Ubuntu + python3，独立成 job 才能被 CI Gate 逐个 check 消费而不必抬高构建成本。
+  # 无 if: / continue-on-error / 路径过滤：push(master)、pull_request、workflow_dispatch 都执行。
+  contract-freshness:
+    name: Contract freshness
+    needs: [resolve-version]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      # 显式准备本设施的必要前置：python3（payload/provenance JSON 校验）与 PyYAML
+      # （行为测试从真实 ci.yml 原样抽取 step/gate 体）。不依赖 runner 的预装版本。
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install test prerequisites (PyYAML)
+        run: python3 -m pip install --disable-pip-version-check PyYAML
+
+      # 先跑目标行为测试（离线 fixture 上游；证明一致=绿/陈旧=红/取源失败=红/旁路被拒）
+      - name: Contract freshness behaviour tests
+        run: |
+          set -euo pipefail
+          bash scripts/ci/test-contract-freshness.sh
+
+      # 再跑默认真实上游的只读 check（不带任何 PIM_CONTRACT_* 覆盖）
+      - name: Verify client contract is up to date
+        run: |
+          set -euo pipefail
+          bash scripts/ci/check-contract-freshness.sh
+          echo "✅ 契约快照与 provenance 均与 pim-api 当前上游一致"
+
   # 汇总门禁：任一子任务失败即整体失败，避免"看起来绿了"。
   gate:
     name: CI Gate
-    needs: [resolve-version, build-android, build-shell-android]
+    needs: [resolve-version, build-android, build-shell-android, contract-freshness]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -75,6 +117,7 @@ jobs:
           R_RESOLVE: ${{ needs.resolve-version.result }}
           R_APK: ${{ needs.build-android.result }}
           R_SHELL: ${{ needs.build-shell-android.result }}
+          R_FRESHNESS: ${{ needs.contract-freshness.result }}
         run: |
           set -uo pipefail
           fail=0
@@ -90,6 +133,7 @@ jobs:
           check "resolve-version" "$R_RESOLVE"
           check "build-android" "$R_APK"
           check "build-shell-android" "$R_SHELL"
+          check "contract-freshness" "$R_FRESHNESS"
 
           if [ "$fail" -ne 0 ]; then
             echo ""
@@ -107,12 +151,14 @@ jobs:
     # 合并到 master 就发版（与 pim-api 一致）。原先写成 tag 触发，但拆仓后
     # 「每次合并 = 一个版本」是既定口径，tag 由 gh release create 自动创建。
     # 构建失败时不发版；PR 时 is_release 为 false，自然跳过。
+    # contract-freshness 也必须在 needs 里：否则 master 上的 release 只依赖两个构建 job，
+    # 会在契约新鲜度失败时照样发版（绕过本 check）。
     if: |
       always() &&
       needs.resolve-version.outputs.is_release == 'true' &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
-    needs: [resolve-version, build-android, build-shell-android]
+    needs: [resolve-version, build-android, build-shell-android, contract-freshness]
     runs-on: ubuntu-latest
     permissions:
       contents: write

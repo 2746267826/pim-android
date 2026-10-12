@@ -9,10 +9,14 @@ This repository is shared by multiple agent conversations. Keep `master` useful 
 - 本仓与 `pim-api` 的接口以 `contract/openapi.json` 为准（快照随本仓提交，说明见 `contract/README.md`）。
 - **不要凭猜测调用接口**：不得手写或臆测契约里不存在的路径、字段、枚举值。改动涉及接口时，先对照契约确认形状。
 - **需要新接口时不要自己造**：把需求写给用户转交后端实现 —— 说明用途、请求方法与路径、请求字段、响应字段、示例。后端在 `pim-api` 实现并更新契约后，本仓再刷新快照并接入。
-- 后端契约更新后，用 `scripts/ci/fetch-contract.sh` 刷新本仓快照再提交。快照落后不影响本仓 CI（不阻塞），但接入新字段前必须先刷新。
+- 后端契约更新后，用 `scripts/ci/fetch-contract.sh` 刷新本仓快照（`contract/openapi.json` + `contract/provenance.json`）再提交。
+- **快照落后会让本仓 CI 变红**：`CI` 的 `Contract freshness` job 会把快照与上游按解析出的不可变 commit 做逐字节比较，
+  并将该 job 接进 `CI Gate` 与 `release` 的 `needs`。刷新脚本是唯一写入口（人工执行）；
+  `scripts/ci/check-contract-freshness.sh` 只读、不写仓，CI 调的是它。细节与来源记录见 `contract/README.md`。
 
 ### 门禁怎么过
 - 四个公开仓（api / web / android / windows）的 `master` 有两把锁：**`CI Gate`** 与 **`PIM Independent Acceptance`**。
+- `CI Gate` 逐个 check `resolve-version` / `build-android` / `build-shell-android` / `contract-freshness`，任一失败或 skipped 即 Gate 红；`release` 也依赖这四个 job，契约陈旧时不发版。
 - **CI 全绿 ≠ 可以合并**：PR 此时仍会显示 `BLOCKED`，因为还差第二把锁的盖章。
 - 该 Check Run 只能由独立验收身份发布，**agent 没有权限**。交付后在 PR 里写明「等待独立验收」即可 ——
   **不要重试、不要绕过、不要为了让门禁变绿去改 ruleset 或 `.github/workflows/*`。**

@@ -4,7 +4,16 @@ on:
   push:
     branches: [master]
   pull_request:
-    branches: [master]
+    # CI-only trigger correction: no `branches` filter.
+    # A stacked PR (gate branch based on the product branch) targets a non-master
+    # base; with `branches: [master]` GitHub never delivers the event, so the gate
+    # PR would report zero checks instead of a real result. Removing the filter
+    # makes every PR target branch run the same jobs/permissions/required checks;
+    # `push` stays restricted to master and nothing else changes.
+    # 显式列出 activity types（review B2）：`pull_request` 默认只跑 opened/synchronize/reopened，
+    # PR 先绿、随后把描述改坏时，旧 SHA 上那条 success 仍是最新 check，required 检查不会重跑。
+    # `edited` 让 PR 描述的改动重新触发门禁；其余三个是默认集合，保留不缩小。
+    types: [opened, synchronize, reopened, edited]
   workflow_dispatch:
     inputs:
       force_all:
@@ -50,6 +59,9 @@ jobs:
       artifact_slug: ${{ needs.resolve-version.outputs.artifact_slug }}
       assembly_version: ${{ needs.resolve-version.outputs.assembly_version }}
       git_sha_short: ${{ needs.resolve-version.outputs.git_sha_short }}
+      # 正式发布（合并到 master）必须真的有签名产物；fork / 普通 PR 传 false，
+      # 仍可构建未签名包完成代码验证（F-A-04 / AC-AND-01）。
+      require_signing: ${{ needs.resolve-version.outputs.is_release == 'true' }}
     secrets: inherit
 
   build-shell-android:
@@ -61,18 +73,89 @@ jobs:
       artifact_slug: ${{ needs.resolve-version.outputs.artifact_slug }}
       assembly_version: ${{ needs.resolve-version.outputs.assembly_version }}
       git_sha_short: ${{ needs.resolve-version.outputs.git_sha_short }}
+      require_signing: ${{ needs.resolve-version.outputs.is_release == 'true' }}
     secrets: inherit
+
+  # 发布纯逻辑（F-A-01 / REQ-COM-04 前半 / I-3）：**合并前**就执行资产命名与 version.json 生成。
+  # 只读权限、无 secrets、不调用 gh，所以 PR（含 fork PR）上能真正跑起来；
+  # 真实运行与真正发版的 `release` 作业用**同一个**仓库入口
+  # （scripts/ci/generate-release-artifacts.sh），避免两份脚本各自漂移。
+  # 它消费两个构建 job 的真实产物：产物缺失 / version_code 非法 / 生成失败都会让本 job 非 0，
+  # 经 `CI Gate` 的逐 need 消费让 required check 变红，release 也因 needs 含 gate 而不发版。
+  release-logic:
+    needs: [resolve-version, build-android, build-shell-android]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Download build artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dl
+
+      - name: Generate release assets and version.json (pure logic, no publish)
+        run: |
+          bash scripts/ci/generate-release-artifacts.sh \
+            "${{ needs.resolve-version.outputs.version }}" \
+            "${{ needs.resolve-version.outputs.version_code }}" \
+            "${{ needs.resolve-version.outputs.release_tag }}" \
+            "${{ github.repository }}"
+
+  # 纯脚本门禁（无 secrets、无发布权限，PR 上就能跑）：
+  # 版本号纯逻辑自测 + 契约快照新鲜度。两者都必须被 required `CI Gate` 真正消费（F-A-06 / F-V-03）。
+  ci-script-checks:
+    needs: [resolve-version]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Version script self-test
+        run: bash scripts/ci/test-resolve-version.sh
+
+      - name: Contract snapshot freshness
+        run: |
+          # 权威契约在 pim-api；本仓快照落后必须变红，修法是刷新快照跟进上游，
+          # 不是改快照去迎合调用（REQ-COM-03 / F-V-03 / F-V-04）。
+          bash scripts/ci/fetch-contract.sh
+          git diff --quiet -- contract/openapi.json
+
+  # PR 元数据门禁（F-A-10 / REQ-COM-05）：PR 描述四段双语章节 + head 分支命名。
+  # 与前一个作业一样是**纯只读**检查：无 `contents: write`、无 secrets、不调用 `gh`，fork PR 上也能跑。
+  # 非 `pull_request` 事件（push master / workflow_dispatch）由脚本自行 exit 0 ——
+  # 这里刻意**不用** job / step 级 `if:`：被跳过时 required `CI Gate` 看到的是 `skipped`，
+  # master 合并会被自己的门禁挡住，而且 step 被跳过时 job 仍报 success，会让门禁变成假绿。
+  # 只看当前事件负载，不查询历史 PR（历史 PR 不追溯）。
+  pr-metadata:
+    needs: [resolve-version]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Verify PR description sections and branch naming
+        env:
+          # 三个变量由 workflow 从**当前事件负载**接线；判据会严格核对这三条表达式（review B1）。
+          PR_EVENT_NAME: ${{ github.event_name }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        run: bash scripts/ci/verify-pr-metadata.sh
 
   # 汇总门禁：任一子任务失败即整体失败，避免"看起来绿了"。
   gate:
     name: CI Gate
-    needs: [resolve-version, build-android, build-shell-android]
+    needs: [resolve-version, ci-script-checks, release-logic, pr-metadata, build-android, build-shell-android]
     if: always()
     runs-on: ubuntu-latest
     steps:
       - name: Evaluate required jobs
         env:
           R_RESOLVE: ${{ needs.resolve-version.result }}
+          R_SCRIPTS: ${{ needs.ci-script-checks.result }}
+          R_RELEASE_LOGIC: ${{ needs.release-logic.result }}
+          R_PR_METADATA: ${{ needs.pr-metadata.result }}
           R_APK: ${{ needs.build-android.result }}
           R_SHELL: ${{ needs.build-shell-android.result }}
         run: |
@@ -88,6 +171,9 @@ jobs:
             fi
           }
           check "resolve-version" "$R_RESOLVE"
+          check "ci-script-checks" "$R_SCRIPTS"
+          check "release-logic" "$R_RELEASE_LOGIC"
+          check "pr-metadata" "$R_PR_METADATA"
           check "build-android" "$R_APK"
           check "build-shell-android" "$R_SHELL"
 
@@ -107,12 +193,17 @@ jobs:
     # 合并到 master 就发版（与 pim-api 一致）。原先写成 tag 触发，但拆仓后
     # 「每次合并 = 一个版本」是既定口径，tag 由 gh release create 自动创建。
     # 构建失败时不发版；PR 时 is_release 为 false，自然跳过。
+    # 四态收紧（REQ-COM-04 / ADD-A-01）：任一必需 job 为 failure / cancelled / **skipped**
+    # 都不得发版 —— skipped 原先没被排除，是表达式语义上的真实缺口。
+    # `needs` 里含 required 汇总 `CI Gate`：被 gate 消费的 job 一旦失败，gate 变红，
+    # 这里的 `needs.*.result` 也会看到，release 因此既不通过门禁也不发版（RED-2）。
     if: |
       always() &&
       needs.resolve-version.outputs.is_release == 'true' &&
       !contains(needs.*.result, 'failure') &&
-      !contains(needs.*.result, 'cancelled')
-    needs: [resolve-version, build-android, build-shell-android]
+      !contains(needs.*.result, 'cancelled') &&
+      !contains(needs.*.result, 'skipped')
+    needs: [resolve-version, gate]
     runs-on: ubuntu-latest
     permissions:
       contents: write
@@ -125,25 +216,13 @@ jobs:
 
       - name: Normalize assets and generate version.json
         run: |
-          set -euo pipefail
-          V="${{ needs.resolve-version.outputs.version }}"
-          VC="${{ needs.resolve-version.outputs.version_code }}"
-          TAG="${{ needs.resolve-version.outputs.release_tag }}"
-          BASE="https://github.com/${{ github.repository }}/releases/download/$TAG"
-          mkdir -p out
-          APK="$(ls dl/pim-android-*/*.apk | head -n1)"
-          cp "$APK" "out/pim-android-v$V.apk"
-          SHELL_APK="$(ls dl/pim-shell-android-*/*.apk | head -n1)"
-          cp "$SHELL_APK" "out/pim-shell-android-v$V.apk"
-          jq -n \
-            --arg v "$V" --arg vc "$VC" --arg base "$BASE" \
-            --arg a "pim-android-v$V.apk" --arg s "pim-shell-android-v$V.apk" \
-            '{version: $v, versionCode: ($vc|tonumber), releasedAt: (now|todateiso8601),
-              assets: {
-                android:      {version: $v, url: ($base + "/" + $a)},
-                shellAndroid: {version: $v, url: ($base + "/" + $s)}
-              }}' > out/version.json
-          cat out/version.json
+          # 与 PR 上的 `release-logic` 作业同一个入口：发布纯逻辑只有一份实现，
+          # 合并前验证过的就是这里真正执行的（F-A-01 / I-3）。
+          bash scripts/ci/generate-release-artifacts.sh \
+            "${{ needs.resolve-version.outputs.version }}" \
+            "${{ needs.resolve-version.outputs.version_code }}" \
+            "${{ needs.resolve-version.outputs.release_tag }}" \
+            "${{ github.repository }}"
 
       - name: Publish release
         env:

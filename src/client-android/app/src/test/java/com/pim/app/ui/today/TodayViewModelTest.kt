@@ -10,6 +10,7 @@ import com.pim.app.status.StatusCenterSnapshot
 import com.pim.app.status.StatusCenterState
 import com.pim.app.status.SyncPhase
 import com.pim.app.status.TrackingPolicySnapshot
+import com.pim.core.auth.AuthTokens
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.delay
@@ -27,6 +28,37 @@ import org.junit.Test
 
 @OptIn(kotlinx.coroutines.ExperimentalCoroutinesApi::class)
 class TodayViewModelTest {
+
+    @Test
+    fun `page report error containing either current session token is replaced before display`() {
+        val tokens = AuthTokens("access-canary", "refresh-canary", Long.MAX_VALUE)
+        assertEquals(
+            "页面加载错误",
+            redactCurrentSessionTokens(TodayPageReport(error = "failed access-canary tail"), tokens).error
+        )
+        assertEquals(
+            "页面加载错误",
+            redactCurrentSessionTokens(TodayPageReport(error = "failed refresh-canary tail"), tokens).error
+        )
+        assertEquals(
+            "ordinary failure",
+            redactCurrentSessionTokens(TodayPageReport(error = "ordinary failure"), tokens).error
+        )
+    }
+
+    @Test
+    fun `native state maps existing battery optimization status to the warning field`() {
+        val optimized = StatusCenterState.empty()
+        assertFalse(optimized.snapshot.permissions.batteryOptimizationGranted)
+        assertEquals(true, TodayStatusMapper.toNativeState(optimized)["batteryOptimized"])
+
+        val exempt = optimized.copy(
+            snapshot = optimized.snapshot.copy(
+                permissions = optimized.snapshot.permissions.copy(batteryOptimizationGranted = true)
+            )
+        )
+        assertEquals(false, TodayStatusMapper.toNativeState(exempt)["batteryOptimized"])
+    }
 
     @Test
     fun `page report fromMap accepts only true false for hasServerData`() {
@@ -331,6 +363,7 @@ class TodayViewModelTest {
         assertEquals(
             setOf(
                 "collectionMode",
+                "batteryOptimized",
                 "triggerReason",
                 "nextLocationAt",
                 "pending",

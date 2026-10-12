@@ -6,6 +6,7 @@ import android.content.pm.PackageManager
 import android.os.Build
 import androidx.core.content.ContextCompat
 import com.pim.core.models.DaemonHeartbeatRequest
+import com.pim.core.models.DaemonSourceState
 import com.pim.core.network.ApiService
 import dagger.hilt.android.qualifiers.ApplicationContext
 import org.json.JSONObject
@@ -53,8 +54,10 @@ class MobileHeartbeatReporter @Inject constructor(
                 state.lastAttemptedUploadAt,
                 state.lastError,
                 state.pendingQueueCount,
-                "Unknown",
-                "Unknown",
+                // 语义保持不变：当前没有可信的采集状态来源，仍上报契约内的 UNKNOWN
+                // （不臆造 Available/Unavailable/Paused —— 见审计 F-B-06 观察）。
+                DaemonSourceState.UNKNOWN,
+                DaemonSourceState.UNKNOWN,
                 !usagePermissionGranted,
                 statusJson
             )

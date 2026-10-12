@@ -42,6 +42,15 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 
+/*
+ * PW-07a §12.4：桥上的旧行为 RED。
+ *
+ * 本文件仍然调用**今天的** `AndroidWebMessageBridge` 构造函数（不改构造、不改 handler）。
+ * 旧断言里「token.request/token.refresh 返回 accessToken」「触发刷新」「返回 login_expired」
+ * 「刷新抛 CancellationException 时向外传播」已按 B1–B4 改成固定 `auth_unavailable` +
+ * 刷新操作 0 次的行为断言；它们在今天的产品代码上编译通过并**失败**（回复里仍带样例令牌 /
+ * 刷新操作仍被调用）。「构造函数不再接收会话与刷新参数」是实施阶段的编译结果，不是 RED。
+ */
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
 class AndroidWebMessageBridgeTest {
@@ -57,7 +66,7 @@ class AndroidWebMessageBridgeTest {
     }
 
     @Test
-    fun `token request returns access token for valid session`() = runBlocking {
+    fun `B1 token request returns auth_unavailable and no token bytes`() = runBlocking {
         val authStore = TestAuthSessionStore()
         authStore.save(ACCESS_TOKEN, REFRESH_TOKEN, FAR_FUTURE, TRUSTED_ORIGIN)
         val settings = ServerSettingsStore(context, authStore)
@@ -72,14 +81,18 @@ class AndroidWebMessageBridgeTest {
 
         val obj = parse(response)
         assertEquals("req1", obj["id"]?.jsonPrimitive?.contentOrNull)
-        assertTrue(obj["ok"]?.jsonPrimitive?.boolean ?: false)
-        assertEquals(ACCESS_TOKEN, obj["accessToken"]?.jsonPrimitive?.contentOrNull)
-        assertNull(obj["refreshToken"])
-        assertNull(obj["errorCode"])
+        assertFalse(
+            "旧行为把 access token 交给页面；PW-07a 后必须 ok:false，实际 $response",
+            obj["ok"]?.jsonPrimitive?.boolean ?: true
+        )
+        assertEquals("auth_unavailable", obj["errorCode"]?.jsonPrimitive?.contentOrNull)
+        assertNull(obj["accessToken"])
+        assertFalse("回复正文不得含 access token 字节", response.contains(ACCESS_TOKEN))
+        assertFalse("回复正文不得含 refresh token 字节", response.contains(REFRESH_TOKEN))
     }
 
     @Test
-    fun `token request without session returns login_expired`() = runBlocking {
+    fun `B1b token request without session returns auth_unavailable and no token bytes`() = runBlocking {
         val authStore = TestAuthSessionStore()
         val settings = ServerSettingsStore(context, authStore)
         settings.setBaseUrl(SERVER_URL)
@@ -94,12 +107,17 @@ class AndroidWebMessageBridgeTest {
         val obj = parse(response)
         assertEquals("req2", obj["id"]?.jsonPrimitive?.contentOrNull)
         assertFalse(obj["ok"]?.jsonPrimitive?.boolean ?: true)
-        assertEquals("login_expired", obj["errorCode"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(
+            "无会话也必须回 auth_unavailable，不再是 login_expired",
+            "auth_unavailable",
+            obj["errorCode"]?.jsonPrimitive?.contentOrNull
+        )
         assertNull(obj["accessToken"])
+        assertFalse(response.contains(ACCESS_TOKEN))
     }
 
     @Test
-    fun `token request triggers only one refresh when token is expired`() = runBlocking {
+    fun `B3 token request never calls the refresh operation and never rewrites the session`() = runBlocking {
         val authStore = TestAuthSessionStore()
         authStore.save(ACCESS_TOKEN, REFRESH_TOKEN, 100L, TRUSTED_ORIGIN)
         val now = { 200L }
@@ -113,21 +131,24 @@ class AndroidWebMessageBridgeTest {
         settings.setBaseUrl(SERVER_URL)
         val bridge = createBridge(authStore = authStore, refreshCoordinator = coordinator, settings = settings)
 
+        val before = authStore.snapshot()
         val response = bridge.handleMessage(
             """{"version":1,"id":"req3","type":"token.request"}""",
             TRUSTED_ORIGIN,
             true
         )
+        val after = authStore.snapshot()
 
+        assertEquals("刷新操作调用次数必须为 0，实际 $refreshCount", 0, refreshCount)
+        assertEquals("逻辑会话快照前后必须相等", before, after)
         val obj = parse(response)
-        assertEquals(1, refreshCount)
-        assertEquals("req3", obj["id"]?.jsonPrimitive?.contentOrNull)
-        assertTrue(obj["ok"]?.jsonPrimitive?.boolean ?: false)
-        assertEquals("refreshed-access", obj["accessToken"]?.jsonPrimitive?.contentOrNull)
+        assertFalse(obj["ok"]?.jsonPrimitive?.boolean ?: true)
+        assertEquals("auth_unavailable", obj["errorCode"]?.jsonPrimitive?.contentOrNull)
+        assertFalse(response.contains("refreshed-access"))
     }
 
     @Test
-    fun `token refresh succeeds`() = runBlocking {
+    fun `B2 token refresh returns auth_unavailable and no token bytes`() = runBlocking {
         val authStore = TestAuthSessionStore()
         authStore.save(ACCESS_TOKEN, REFRESH_TOKEN, FAR_FUTURE, TRUSTED_ORIGIN)
         val operation = AuthRefreshOperation { _, _ ->
@@ -146,13 +167,19 @@ class AndroidWebMessageBridgeTest {
 
         val obj = parse(response)
         assertEquals("req4", obj["id"]?.jsonPrimitive?.contentOrNull)
-        assertTrue(obj["ok"]?.jsonPrimitive?.boolean ?: false)
-        assertEquals("refreshed-access", obj["accessToken"]?.jsonPrimitive?.contentOrNull)
-        assertNull(obj["refreshToken"])
+        assertFalse(
+            "旧行为把刷新后的 access token 交给页面；PW-07a 后必须 ok:false，实际 $response",
+            obj["ok"]?.jsonPrimitive?.boolean ?: true
+        )
+        assertEquals("auth_unavailable", obj["errorCode"]?.jsonPrimitive?.contentOrNull)
+        assertNull(obj["accessToken"])
+        assertFalse(response.contains("refreshed-access"))
+        assertFalse(response.contains(ACCESS_TOKEN))
+        assertFalse(response.contains(REFRESH_TOKEN))
     }
 
     @Test
-    fun `token refresh when rejected returns login_expired`() = runBlocking {
+    fun `B2b token refresh when rejected returns auth_unavailable instead of login_expired`() = runBlocking {
         val authStore = TestAuthSessionStore()
         authStore.save(ACCESS_TOKEN, REFRESH_TOKEN, FAR_FUTURE, TRUSTED_ORIGIN)
         val operation = AuthRefreshOperation { _, _ -> AuthRefreshResult.Rejected }
@@ -170,8 +197,13 @@ class AndroidWebMessageBridgeTest {
         val obj = parse(response)
         assertEquals("req5", obj["id"]?.jsonPrimitive?.contentOrNull)
         assertFalse(obj["ok"]?.jsonPrimitive?.boolean ?: true)
-        assertEquals("login_expired", obj["errorCode"]?.jsonPrimitive?.contentOrNull)
+        assertEquals(
+            "刷新被拒也必须回 auth_unavailable，不再是 login_expired",
+            "auth_unavailable",
+            obj["errorCode"]?.jsonPrimitive?.contentOrNull
+        )
         assertNull(obj["accessToken"])
+        assertFalse(response.contains(ACCESS_TOKEN))
     }
 
     @Test
@@ -355,6 +387,7 @@ class AndroidWebMessageBridgeTest {
                     "collectionMode" to "foreground",
                     "uploading" to true,
                     "pending" to 5,
+                    "batteryOptimized" to true,
                     "secret" to "must-not-cross"
                 )
             }
@@ -373,6 +406,7 @@ class AndroidWebMessageBridgeTest {
         assertEquals("foreground", state?.get("collectionMode")?.jsonPrimitive?.contentOrNull)
         assertEquals(true, state?.get("uploading")?.jsonPrimitive?.boolean)
         assertEquals(5, state?.get("pending")?.jsonPrimitive?.int)
+        assertEquals(true, state?.get("batteryOptimized")?.jsonPrimitive?.boolean)
         assertNull(state?.get("secret"))
     }
 
@@ -416,7 +450,7 @@ class AndroidWebMessageBridgeTest {
     }
 
     @Test
-    fun `response never contains refresh token`() = runBlocking {
+    fun `B1c no token message type returns any token byte to the page`() = runBlocking {
         val authStore = TestAuthSessionStore()
         authStore.save(ACCESS_TOKEN, REFRESH_TOKEN, FAR_FUTURE, TRUSTED_ORIGIN)
         val settings = ServerSettingsStore(context, authStore)
@@ -429,6 +463,9 @@ class AndroidWebMessageBridgeTest {
             true
         )
         assertNull(parse(response)["refreshToken"])
+        assertNull(parse(response)["accessToken"])
+        assertFalse(response.contains(ACCESS_TOKEN))
+        assertFalse(response.contains(REFRESH_TOKEN))
 
         val operation = AuthRefreshOperation { _, _ ->
             AuthRefreshResult.Success(AuthTokens("new-access", "new-refresh", FAR_FUTURE))
@@ -442,6 +479,9 @@ class AndroidWebMessageBridgeTest {
             true
         )
         assertNull(parse(response2)["refreshToken"])
+        assertNull(parse(response2)["accessToken"])
+        assertFalse(response2.contains(ACCESS_TOKEN))
+        assertFalse(response2.contains("new-access"))
     }
 
     @Test
@@ -543,10 +583,14 @@ class AndroidWebMessageBridgeTest {
     }
 
     @Test
-    fun `token request refresh exception returns auth_unavailable`() = runBlocking {
+    fun `B4 a throwing refresh operation is not called and the reply is still auth_unavailable`() = runBlocking {
         val authStore = TestAuthSessionStore()
         authStore.save(ACCESS_TOKEN, REFRESH_TOKEN, 100L, TRUSTED_ORIGIN)
-        val operation = AuthRefreshOperation { _, _ -> throw IllegalStateException("network down") }
+        var refreshCalls = 0
+        val operation = AuthRefreshOperation { _, _ ->
+            refreshCalls++
+            throw IllegalStateException("refresh must not be reached for token.* messages")
+        }
         val coordinator = AuthRefreshCoordinator(authStore, operation, nowMillis = { 200L })
         val settings = ServerSettingsStore(context, authStore)
         settings.setBaseUrl(SERVER_URL)
@@ -559,20 +603,27 @@ class AndroidWebMessageBridgeTest {
                 true
             )
         }
-        assertTrue(outcome.isSuccess)
-        val obj = parse(outcome.getOrThrow())
+        assertTrue("令牌回复必须是固定失败，不得抛异常：$outcome", outcome.isSuccess)
+        val raw = outcome.getOrThrow()
+        val obj = parse(raw)
         assertEquals("req-auth-unavailable", obj["id"]?.jsonPrimitive?.contentOrNull)
+        assertEquals("刷新操作调用次数必须为 0，实际 $refreshCalls", 0, refreshCalls)
         assertFalse(obj["ok"]?.jsonPrimitive?.boolean ?: true)
         assertEquals("auth_unavailable", obj["errorCode"]?.jsonPrimitive?.contentOrNull)
         assertNull(obj["accessToken"])
         assertNull(obj["refreshToken"])
+        assertFalse(raw.contains(ACCESS_TOKEN))
     }
 
     @Test
-    fun `token request cancellation still propagates`() = runBlocking {
+    fun `B4b cancellation from the refresh operation is unreachable because refresh is never called`() = runBlocking {
         val authStore = TestAuthSessionStore()
         authStore.save(ACCESS_TOKEN, REFRESH_TOKEN, 100L, TRUSTED_ORIGIN)
-        val operation = AuthRefreshOperation { _, _ -> throw CancellationException("cancelled") }
+        var refreshCalls = 0
+        val operation = AuthRefreshOperation { _, _ ->
+            refreshCalls++
+            throw CancellationException("cancelled")
+        }
         val coordinator = AuthRefreshCoordinator(authStore, operation, nowMillis = { 200L })
         val settings = ServerSettingsStore(context, authStore)
         settings.setBaseUrl(SERVER_URL)
@@ -585,8 +636,14 @@ class AndroidWebMessageBridgeTest {
                 true
             )
         }
-        assertTrue(outcome.isFailure)
-        assertTrue(outcome.exceptionOrNull() is CancellationException)
+        assertTrue(
+            "PW-07a 后 token.request 不再触发刷新，因此不得再抛出 CancellationException：$outcome",
+            outcome.isSuccess
+        )
+        assertEquals("刷新操作调用次数必须为 0，实际 $refreshCalls", 0, refreshCalls)
+        val obj = parse(outcome.getOrThrow())
+        assertFalse(obj["ok"]?.jsonPrimitive?.boolean ?: true)
+        assertEquals("auth_unavailable", obj["errorCode"]?.jsonPrimitive?.contentOrNull)
     }
 
     // --- helpers ---
@@ -595,6 +652,14 @@ class AndroidWebMessageBridgeTest {
         return json.parseToJsonElement(raw).jsonObject
     }
 
+    /*
+     * 规格 §7 的实施阶段编译结果：`AndroidWebMessageBridge` 构造已删除
+     * `authSessionStore` 与 `refreshCoordinator`（令牌回复固定 auth_unavailable，不再读会话、
+     * 不再刷新）。B3/B4/B4b 传进来的 `refreshCoordinator` 因此只剩「记录型夹具」作用：
+     * 它证明「一旦被调用就会计数」，而桥已不再持有它，所以计数必须保持 0。
+     * 这一步只改调用方式，不替代任何安全断言。
+     */
+    @Suppress("UNUSED_PARAMETER")
     private fun createBridge(
         authStore: AuthSessionStore = TestAuthSessionStore(),
         refreshCoordinator: AuthRefreshCoordinator? = null,
@@ -606,14 +671,7 @@ class AndroidWebMessageBridgeTest {
         val resolvedSettings = settings ?: ServerSettingsStore(context, authStore).also {
             it.setBaseUrl(SERVER_URL)
         }
-        val coord = refreshCoordinator ?: AuthRefreshCoordinator(
-            authStore,
-            AuthRefreshOperation { _, _ -> error("refresh not expected") },
-            nowMillis = { 0L }
-        )
         return AndroidWebMessageBridge(
-            authSessionStore = authStore,
-            refreshCoordinator = coord,
             serverSettingsStore = resolvedSettings,
             scope = scope,
             nativeStateProvider = nativeStateProvider,

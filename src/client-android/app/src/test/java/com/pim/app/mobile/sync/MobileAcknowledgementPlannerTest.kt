@@ -3,8 +3,8 @@ package com.pim.app.mobile.sync
 import com.pim.app.data.MobileAppMetadataEntity
 import com.pim.app.data.MobileUsageEventEntity
 import com.pim.app.data.MobileUsageSummaryEntity
-import com.pim.core.models.MobileIngestItemResult
-import com.pim.core.models.MobileIngestResponse
+import com.pim.core.contract.MobileIngestItemResult
+import com.pim.core.contract.MobileUsageIngestResult
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Test
@@ -14,17 +14,41 @@ class MobileAcknowledgementPlannerTest {
     fun partialResponseSeparatesConfirmedRetryAndDeadLetterKeys() {
         val plan: MobileAcknowledgementPlan = MobileAcknowledgementPlanner.plan(
             sentKeys = setOf("11", "12", "13", "14"),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
                 batchId = "batch-1",
                 acceptedCount = 1,
                 skippedCount = 1,
                 rejectedCount = 1,
                 failedCount = 1,
                 itemResults = listOf(
-                    MobileIngestItemResult("11", "usage-event", "accepted", "accepted", "OK"),
-                    MobileIngestItemResult("12", "usage-event", "rejected", "invalid-time", "bad time"),
-                    MobileIngestItemResult("13", "usage-event", "failed", "temporary", "retry"),
-                    MobileIngestItemResult("14", "usage-event", "skipped", "duplicate", "duplicate")
+                    MobileIngestItemResult(
+                        clientItemKey = "11",
+                        entityType = "usage-event",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "12",
+                        entityType = "usage-event",
+                        outcome = "rejected",
+                        code = "invalid-time",
+                        message = "bad time",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "13",
+                        entityType = "usage-event",
+                        outcome = "failed",
+                        code = "temporary",
+                        message = "retry",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "14",
+                        entityType = "usage-event",
+                        outcome = "skipped",
+                        code = "duplicate",
+                        message = "duplicate",
+                    )
                 )
             )
         )
@@ -43,15 +67,34 @@ class MobileAcknowledgementPlannerTest {
 
         val plan: MobileTypedAcknowledgementPlan = MobileAcknowledgementPlanner.planTyped(
             sentItems = setOf(event, summary, app),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
                 batchId = "batch-typed",
                 acceptedCount = 1,
                 rejectedCount = 1,
                 failedCount = 1,
                 itemResults = listOf(
-                    MobileIngestItemResult("1", "usage-event", "accepted", "accepted", "OK"),
-                    MobileIngestItemResult("1", "usage-summary", "rejected", "invalid-time", "bad time"),
-                    MobileIngestItemResult("1", "app-metadata", "failed", "temporary", "retry")
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-event",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-summary",
+                        outcome = "rejected",
+                        code = "invalid-time",
+                        message = "bad time",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "app-metadata",
+                        outcome = "failed",
+                        code = "temporary",
+                        message = "retry",
+                    )
                 )
             )
         )
@@ -69,11 +112,20 @@ class MobileAcknowledgementPlannerTest {
 
         val plan = MobileAcknowledgementPlanner.planTyped(
             sentItems = setOf(event, summary),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
                 batchId = "batch-missing",
                 acceptedCount = 1,
                 itemResults = listOf(
-                    MobileIngestItemResult("1", "usage-event", "accepted", "accepted", "OK")
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-event",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    )
                 )
             )
         )
@@ -91,14 +143,34 @@ class MobileAcknowledgementPlannerTest {
 
         val plan = MobileAcknowledgementPlanner.planTyped(
             sentItems = setOf(event, summary),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                failedCount = 0,
                 batchId = "batch-duplicate",
                 acceptedCount = 2,
                 rejectedCount = 1,
                 itemResults = listOf(
-                    MobileIngestItemResult("1", "usage-event", "accepted", "accepted", "OK"),
-                    MobileIngestItemResult("1", "usage-event", "rejected", "invalid-time", "bad time"),
-                    MobileIngestItemResult("2", "usage-summary", "accepted", "accepted", "OK")
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-event",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-event",
+                        outcome = "rejected",
+                        code = "invalid-time",
+                        message = "bad time",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "2",
+                        entityType = "usage-summary",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    )
                 )
             )
         )
@@ -116,12 +188,27 @@ class MobileAcknowledgementPlannerTest {
 
         val plan = MobileAcknowledgementPlanner.planTyped(
             sentItems = setOf(event, summary),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
                 batchId = "batch-outcome",
                 acceptedCount = 1,
                 itemResults = listOf(
-                    MobileIngestItemResult("1", "usage-event", "mystery", "mystery", "unknown"),
-                    MobileIngestItemResult("2", "usage-summary", "accepted", "accepted", "OK")
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-event",
+                        outcome = "mystery",
+                        code = "mystery",
+                        message = "unknown",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "2",
+                        entityType = "usage-summary",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    )
                 )
             )
         )
@@ -135,22 +222,39 @@ class MobileAcknowledgementPlannerTest {
     fun explicitItemResultsMustMatchEveryAggregateCount() {
         val event = MobileAcknowledgementItem("usage-event", "1")
         val itemResults = listOf(
-            MobileIngestItemResult("1", "usage-event", "accepted", "accepted", "OK")
+            MobileIngestItemResult(
+                clientItemKey = "1",
+                entityType = "usage-event",
+                outcome = "accepted",
+                code = "accepted",
+                message = "OK",
+            )
         )
         val inconsistentResponses = listOf(
-            MobileIngestResponse(batchId = "all-zero", itemResults = itemResults),
-            MobileIngestResponse(
+            MobileUsageIngestResult(
+                acceptedCount = 0,
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,batchId = "all-zero", itemResults = itemResults),
+            MobileUsageIngestResult(
+                acceptedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
                 batchId = "wrong-outcome-count",
                 skippedCount = 1,
                 itemResults = itemResults
             ),
-            MobileIngestResponse(
+            MobileUsageIngestResult(
+                skippedCount = 0,
+                failedCount = 0,
                 batchId = "hidden-rejection",
                 acceptedCount = 1,
                 rejectedCount = 1,
                 itemResults = itemResults
             ),
-            MobileIngestResponse(
+            MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
                 batchId = "hidden-failure",
                 acceptedCount = 1,
                 failedCount = 1,
@@ -173,11 +277,20 @@ class MobileAcknowledgementPlannerTest {
 
         val plan = MobileAcknowledgementPlanner.planTyped(
             sentItems = setOf(event),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
                 batchId = "batch-mismatch",
                 acceptedCount = 1,
                 itemResults = listOf(
-                    MobileIngestItemResult("1", "usage-summary", "accepted", "accepted", "OK")
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-summary",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    )
                 )
             )
         )
@@ -193,11 +306,20 @@ class MobileAcknowledgementPlannerTest {
 
         val plan = MobileAcknowledgementPlanner.planTyped(
             sentItems = setOf(event),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
                 batchId = "batch-unknown-type",
                 acceptedCount = 1,
                 itemResults = listOf(
-                    MobileIngestItemResult("1", "future-entity", "accepted", "accepted", "OK")
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "future-entity",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    )
                 )
             )
         )
@@ -214,13 +336,34 @@ class MobileAcknowledgementPlannerTest {
 
         val plan = MobileAcknowledgementPlanner.planTyped(
             sentItems = setOf(event, summary),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
                 batchId = "batch-extra",
                 acceptedCount = 3,
                 itemResults = listOf(
-                    MobileIngestItemResult("1", "usage-event", "accepted", "accepted", "OK"),
-                    MobileIngestItemResult("2", "usage-summary", "accepted", "accepted", "OK"),
-                    MobileIngestItemResult("3", "app-metadata", "accepted", "accepted", "unexpected")
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-event",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "2",
+                        entityType = "usage-summary",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "3",
+                        entityType = "app-metadata",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "unexpected",
+                    )
                 )
             )
         )
@@ -240,7 +383,10 @@ class MobileAcknowledgementPlannerTest {
 
         val plan = MobileAcknowledgementPlanner.planTyped(
             sentItems = sentItems,
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                rejectedCount = 0,
+                failedCount = 0,
+                itemResults = emptyList(),
                 batchId = "batch-aggregate-typed",
                 acceptedCount = 1,
                 skippedCount = 1
@@ -261,7 +407,11 @@ class MobileAcknowledgementPlannerTest {
 
         val plan = MobileAcknowledgementPlanner.planTyped(
             sentItems = sentItems,
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
+                itemResults = emptyList(),
                 batchId = "batch-aggregate-typed",
                 acceptedCount = 1
             )
@@ -276,13 +426,27 @@ class MobileAcknowledgementPlannerTest {
     fun legacyBareKeyPathRejectsCrossTypeDuplicates() {
         val plan = MobileAcknowledgementPlanner.plan(
             sentKeys = setOf("1"),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                failedCount = 0,
                 batchId = "batch-legacy-cross-type",
                 acceptedCount = 1,
                 rejectedCount = 1,
                 itemResults = listOf(
-                    MobileIngestItemResult("1", "usage-event", "accepted", "accepted", "OK"),
-                    MobileIngestItemResult("1", "usage-summary", "rejected", "invalid-time", "bad time")
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-event",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-summary",
+                        outcome = "rejected",
+                        code = "invalid-time",
+                        message = "bad time",
+                    )
                 )
             )
         )
@@ -297,11 +461,20 @@ class MobileAcknowledgementPlannerTest {
     fun legacyBareKeyPathRejectsMismatchedEntityType() {
         val plan = MobileAcknowledgementPlanner.plan(
             sentKeys = setOf("1"),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
                 batchId = "batch-legacy-mismatch",
                 acceptedCount = 1,
                 itemResults = listOf(
-                    MobileIngestItemResult("1", "usage-summary", "accepted", "accepted", "OK")
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-summary",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    )
                 )
             )
         )
@@ -315,12 +488,27 @@ class MobileAcknowledgementPlannerTest {
     fun legacyBareKeyPathFlagsUnexpectedExtraResult() {
         val plan = MobileAcknowledgementPlanner.plan(
             sentKeys = setOf("1"),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
                 batchId = "batch-legacy-extra",
                 acceptedCount = 2,
                 itemResults = listOf(
-                    MobileIngestItemResult("1", "usage-event", "accepted", "accepted", "OK"),
-                    MobileIngestItemResult("2", "usage-event", "accepted", "accepted", "unexpected")
+                    MobileIngestItemResult(
+                        clientItemKey = "1",
+                        entityType = "usage-event",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "OK",
+                    ),
+                    MobileIngestItemResult(
+                        clientItemKey = "2",
+                        entityType = "usage-event",
+                        outcome = "accepted",
+                        code = "accepted",
+                        message = "unexpected",
+                    )
                 )
             )
         )
@@ -334,7 +522,10 @@ class MobileAcknowledgementPlannerTest {
     fun aggregateOnlySuccessConfirmsEverySentKey() {
         val plan = MobileAcknowledgementPlanner.plan(
             sentKeys = setOf("11", "12", "13"),
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                rejectedCount = 0,
+                failedCount = 0,
+                itemResults = emptyList(),
                 batchId = "batch-legacy",
                 acceptedCount = 2,
                 skippedCount = 1
@@ -353,7 +544,11 @@ class MobileAcknowledgementPlannerTest {
 
         val plan = MobileAcknowledgementPlanner.plan(
             sentKeys = sentKeys,
-            response = MobileIngestResponse(
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
+                itemResults = emptyList(),
                 batchId = "batch-legacy",
                 acceptedCount = 2
             )

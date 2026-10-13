@@ -7,11 +7,11 @@ import com.pim.app.data.AppDatabase
 import com.pim.app.data.MobileDataDao
 import com.pim.app.data.MobileLocationPointEntity
 import com.pim.app.data.MobileSyncStatus
-import com.pim.core.models.ApiResponse
-import com.pim.core.models.MobileIngestItemResult
-import com.pim.core.models.MobileLocationPointRequest
-import com.pim.core.models.MobileLocationPointsUploadRequest
-import com.pim.core.models.MobileLocationPointsUploadResult
+import com.pim.core.contract.MobileLocationPointsUploadResultApiResponse
+import com.pim.core.contract.MobileIngestItemResult
+import com.pim.core.contract.MobileLocationPointRequest
+import com.pim.core.contract.MobileLocationPointsUploadRequest
+import com.pim.core.contract.MobileLocationPointsUploadResult
 import com.pim.core.network.ApiService
 import java.io.IOException
 import java.lang.reflect.Proxy
@@ -233,7 +233,7 @@ class LocationBatchUploadTest {
     fun `业务错误码响应整批退到队尾不删行`() = runTest {
         seed(count = 2)
         val api = batchApi {
-            ApiResponse<MobileLocationPointsUploadResult>(code = 5000, message = "server busy", data = null)
+            MobileLocationPointsUploadResultApiResponse(code = 5000, message = "server busy", data = null)
         }
 
         val updates = coordinator(api).uploadPending()
@@ -410,8 +410,8 @@ class LocationBatchUploadTest {
         message = message
     )
 
-    private fun success(items: List<MobileIngestItemResult>): ApiResponse<MobileLocationPointsUploadResult> =
-        ApiResponse(
+    private fun success(items: List<MobileIngestItemResult>): MobileLocationPointsUploadResultApiResponse =
+        MobileLocationPointsUploadResultApiResponse(
             code = 0,
             message = "ok",
             data = MobileLocationPointsUploadResult(
@@ -429,7 +429,7 @@ class LocationBatchUploadTest {
     /** 记录每次请求的批大小，并按 [handler] 生成响应（handler 可抛异常模拟失败）。 */
     private fun batchApi(
         sizes: MutableList<Int> = mutableListOf(),
-        handler: (List<MobileLocationPointRequest>) -> ApiResponse<MobileLocationPointsUploadResult>
+        handler: (List<MobileLocationPointRequest>) -> MobileLocationPointsUploadResultApiResponse
     ): ApiService = Proxy.newProxyInstance(
         ApiService::class.java.classLoader,
         arrayOf(ApiService::class.java)

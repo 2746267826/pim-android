@@ -105,10 +105,51 @@ jobs:
           bash scripts/ci/check-contract-freshness.sh
           echo "✅ 契约快照与 provenance 均与 pim-api 当前上游一致"
 
+  # 契约生成物一致性（只读 check + 离线行为测试）：用仓内 contract/openapi.json
+  # 重新生成一次 Kotlin DTO，与随提交进仓的
+  # core/src/main/java/com/pim/core/contract/ContractModels.kt 做**逐字节比较**。
+  #
+  # 为什么必须独立成 job：契约新鲜度只证明「快照字节没落后」，不证明「客户端 DTO 跟得上契约」。
+  # 契约改了、生成物没重新生成（或有人手工改了生成物）→ 本 job 红；
+  # 人工执行 scripts/ci/generate-contract-kotlin.sh 并提交即恢复。
+  # 生成器只用 python3 标准库：离线、确定性、不装 npm/不跑 gradle。
+  #
+  # 与编译期门禁 `verifyContractEndpoints`（gradle，挂在 :core/:app/:features:calendar 的
+  # 编译任务之前，校验端点/路径参数/查询参数）分工：这里管「DTO 生成物与契约一致」，
+  # 那里管「代码里写的端点/参数确实在契约里」。两者都进 CI Gate。
+  contract-codegen:
+    name: Contract codegen freshness
+    needs: [resolve-version]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # PyYAML 只给行为测试解析真实 ci.yml 的结构用（生成器本身只用标准库）。
+      - name: Install test prerequisites (PyYAML)
+        run: python3 -m pip install --disable-pip-version-check PyYAML
+
+      # 先跑目标行为测试（离线 fixture；证明一致=绿 / 手工改动=红 / 契约变了没重生成=红 /
+      # 生成物缺失=红 / 清单里编造端点=生成器拒绝 / CI 必需检查链接线正确）
+      - name: Contract codegen behaviour tests
+        run: |
+          set -euo pipefail
+          bash scripts/ci/test-contract-kotlin.sh
+
+      # 再跑真实只读 check：重新生成到仓外临时目录，与仓内生成物逐字节比对
+      - name: Verify generated Kotlin DTOs match the contract snapshot
+        run: |
+          set -euo pipefail
+          bash scripts/ci/check-contract-kotlin.sh
+          echo "✅ 生成物与 contract/openapi.json 逐字节一致"
+
   # 汇总门禁：任一子任务失败即整体失败，避免"看起来绿了"。
   gate:
     name: CI Gate
-    needs: [resolve-version, build-android, build-shell-android, contract-freshness]
+    needs: [resolve-version, build-android, build-shell-android, contract-freshness, contract-codegen]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -118,6 +159,7 @@ jobs:
           R_APK: ${{ needs.build-android.result }}
           R_SHELL: ${{ needs.build-shell-android.result }}
           R_FRESHNESS: ${{ needs.contract-freshness.result }}
+          R_CODEGEN: ${{ needs.contract-codegen.result }}
         run: |
           set -uo pipefail
           fail=0
@@ -134,6 +176,7 @@ jobs:
           check "build-android" "$R_APK"
           check "build-shell-android" "$R_SHELL"
           check "contract-freshness" "$R_FRESHNESS"
+          check "contract-codegen" "$R_CODEGEN"
 
           if [ "$fail" -ne 0 ]; then
             echo ""
@@ -151,14 +194,14 @@ jobs:
     # 合并到 master 就发版（与 pim-api 一致）。原先写成 tag 触发，但拆仓后
     # 「每次合并 = 一个版本」是既定口径，tag 由 gh release create 自动创建。
     # 构建失败时不发版；PR 时 is_release 为 false，自然跳过。
-    # contract-freshness 也必须在 needs 里：否则 master 上的 release 只依赖两个构建 job，
-    # 会在契约新鲜度失败时照样发版（绕过本 check）。
+    # contract-freshness / contract-codegen 也必须在 needs 里：否则 master 上的 release 只依赖两个构建 job，
+    # 会在契约快照或生成物对不上时照样发版（绕过这两道 check）。
     if: |
       always() &&
       needs.resolve-version.outputs.is_release == 'true' &&
       !contains(needs.*.result, 'failure') &&
       !contains(needs.*.result, 'cancelled')
-    needs: [resolve-version, build-android, build-shell-android, contract-freshness]
+    needs: [resolve-version, build-android, build-shell-android, contract-freshness, contract-codegen]
     runs-on: ubuntu-latest
     permissions:
       contents: write

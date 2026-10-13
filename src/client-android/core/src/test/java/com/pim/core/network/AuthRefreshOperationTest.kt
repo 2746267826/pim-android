@@ -5,8 +5,7 @@ import com.pim.core.auth.AuthRefreshResult
 import com.pim.core.auth.AuthSessionSnapshot
 import com.pim.core.auth.AuthSessionStore
 import com.pim.core.auth.AuthTokens
-import com.pim.core.models.AuthResponse
-import com.pim.core.models.RefreshRequest
+import com.pim.core.contract.RefreshRequest
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -50,7 +49,7 @@ class AuthRefreshOperationTest {
         val apiService = apiService(OkHttpClient())
 
         val result = runCatching {
-            apiService.refresh(RefreshRequest("refresh-secret")) as Any
+            apiService.refresh(RefreshRequest(refreshToken = "refresh-secret")) as Any
         }
 
         assertTrue("HTTP 401 must be inspectable by the native refresh operation", result.isSuccess)
@@ -88,7 +87,7 @@ class AuthRefreshOperationTest {
                 .setResponseCode(200)
                 .setHeader("Content-Type", "application/json")
                 .setBody(
-                    """{"code":0,"message":"OK","data":{"accessToken":"token-b","refreshToken":"refresh-b","expiresAt":"2099-01-01T00:00:00Z"}}"""
+                    refreshPayload("token-b", "refresh-b", "2099-01-01T00:00:00Z")
                 )
         )
         val apiService = apiService(OkHttpClient())
@@ -159,10 +158,10 @@ class AuthRefreshOperationTest {
     @Test
     fun invalidRefreshPayloadsAreRejectedBeforeSessionCommit() = runBlocking {
         val invalidPayloads = listOf(
-            """{"code":0,"message":"OK","data":{"accessToken":"","refreshToken":"refresh-b","expiresAt":"1970-01-01T00:00:02Z"}}""",
-            """{"code":0,"message":"OK","data":{"accessToken":"access-b","refreshToken":"","expiresAt":"1970-01-01T00:00:02Z"}}""",
-            """{"code":0,"message":"OK","data":{"accessToken":"access-b","refreshToken":"refresh-b","expiresAt":"invalid"}}""",
-            """{"code":0,"message":"OK","data":{"accessToken":"access-b","refreshToken":"refresh-b","expiresAt":"1970-01-01T00:00:01Z"}}"""
+            refreshPayload("", "refresh-b", "1970-01-01T00:00:02Z"),
+            refreshPayload("access-b", "", "1970-01-01T00:00:02Z"),
+            refreshPayload("access-b", "refresh-b", "invalid"),
+            refreshPayload("access-b", "refresh-b", "1970-01-01T00:00:01Z")
         )
         val apiService = apiService(OkHttpClient())
         val operation = RetrofitAuthRefreshOperation(
@@ -201,7 +200,7 @@ class AuthRefreshOperationTest {
                 .setResponseCode(200)
                 .setHeader("Content-Type", "application/json")
                 .setBody(
-                    """{"code":0,"message":"OK","data":{"accessToken":"token-b","refreshToken":"refresh-b","expiresAt":"2099-01-01T00:00:00Z"}}"""
+                    refreshPayload("token-b", "refresh-b", "2099-01-01T00:00:00Z")
                 )
         )
         val serviceA = apiService(OkHttpClient())
@@ -289,6 +288,18 @@ class AuthRefreshOperationTest {
             return true
         }
     }
+
+    /**
+     * 刷新响应的测试报文按契约形状来：`AuthResponse.required` 含 `user`，
+     * 生成模型不会为缺字段的报文开后门（见 `AuthResponseSerializationTest`）。
+     */
+    private fun refreshPayload(
+        accessToken: String,
+        refreshToken: String,
+        expiresAt: String
+    ): String = """{"code":0,"message":"OK","data":{"accessToken":"$accessToken",""" +
+        """"refreshToken":"$refreshToken","expiresAt":"$expiresAt",""" +
+        """"user":{"id":"user-1","username":"alice","displayName":"Alice","role":"user"}}}"""
 
     private companion object {
         const val TEST_SERVER_IDENTITY = "https://pim.example"

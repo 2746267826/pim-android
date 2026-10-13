@@ -2,8 +2,8 @@ package com.pim.app.mobile.sync
 
 import com.pim.app.data.MobileDataDao
 import com.pim.app.data.MobileSyncStatus
-import com.pim.core.models.MobileIngestItemResult
-import com.pim.core.models.MobileIngestResponse
+import com.pim.core.contract.MobileIngestItemResult
+import com.pim.core.contract.MobileUsageIngestResult
 
 data class MobileAcknowledgementItem(
     val entityType: String,
@@ -32,7 +32,7 @@ object MobileAcknowledgementPlanner {
     // Bare keys predate typed acknowledgements and represent usage-event rows.
     fun plan(
         sentKeys: Set<String>,
-        response: MobileIngestResponse
+        response: MobileUsageIngestResult
     ): MobileAcknowledgementPlan {
         val typedPlan = planTyped(
             sentItems = sentKeys.mapTo(linkedSetOf()) {
@@ -50,7 +50,7 @@ object MobileAcknowledgementPlanner {
 
     fun planTyped(
         sentItems: Set<MobileAcknowledgementItem>,
-        response: MobileIngestResponse
+        response: MobileUsageIngestResult
     ): MobileTypedAcknowledgementPlan {
         if (sentItems.any { it.entityType !in KnownEntityTypes || it.clientItemKey.isBlank() }) {
             return ambiguous(sentItems)
@@ -139,7 +139,7 @@ object MobileAcknowledgementPlanner {
         itemErrors = sentItems.associateWith { "server-ack-ambiguous" }
     )
 
-    private fun explicitCountsMatch(response: MobileIngestResponse): Boolean {
+    private fun explicitCountsMatch(response: MobileUsageIngestResult): Boolean {
         val accepted = response.itemResults.count { it.outcome == "accepted" }
         val skipped = response.itemResults.count { it.outcome == "skipped" }
         val rejected = response.itemResults.count { it.outcome == "rejected" }
@@ -240,7 +240,7 @@ suspend fun applyAcknowledgementPlan(
 suspend fun processUsageAcknowledgements(
     dao: MobileDataDao,
     sentItems: Set<MobileAcknowledgementItem>,
-    response: MobileIngestResponse
+    response: MobileUsageIngestResult
 ) {
     val plan = MobileAcknowledgementPlanner.planTyped(sentItems, response)
     applyAcknowledgementPlan(dao, plan)

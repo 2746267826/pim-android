@@ -668,18 +668,23 @@ record "ci_step_red_on_stale_snapshot" $([ "$STEP_RC" -ne 0 ] && echo 0 || echo 
 step_run "$WORK/c1" master "http://127.0.0.1:1"
 record "ci_step_red_on_fetch_failure" $([ "$STEP_RC" -ne 0 ] && echo 0 || echo 1) "rc=$STEP_RC when the source is unreachable"
 
-# gate：把 contract-freshness 置为 failure / skipped，gate 必须非 0（失败传播到 required check）
-gate_run() { # gate_run <R_RESOLVE> <R_APK> <R_SHELL> <R_FRESH>
-  ( env R_RESOLVE="$1" R_APK="$2" R_SHELL="$3" R_FRESHNESS="$4" bash -e -o pipefail "$GATE" ) > "$WORK/gate.log" 2>&1
+# gate：逐个把必需 job 置为 failure / skipped，gate 必须非 0（失败传播到 required check）
+gate_run() { # gate_run <R_RESOLVE> <R_APK> <R_SHELL> <R_FRESH> <R_CODEGEN>
+  ( env R_RESOLVE="$1" R_APK="$2" R_SHELL="$3" R_FRESHNESS="$4" R_CODEGEN="$5" \
+      bash -e -o pipefail "$GATE" ) > "$WORK/gate.log" 2>&1
   GATE_RC=$?
 }
-gate_run success success success success
-record "gate_green_when_jobs_success" $([ "$GATE_RC" -eq 0 ] && echo 0 || echo 1) "rc=$GATE_RC with R_FRESHNESS=success"
-gate_run success success success failure
+gate_run success success success success success
+record "gate_green_when_jobs_success" $([ "$GATE_RC" -eq 0 ] && echo 0 || echo 1) "rc=$GATE_RC with all required jobs=success"
+gate_run success success success failure success
 record "gate_red_when_freshness_failed" $([ "$GATE_RC" -ne 0 ] && echo 0 || echo 1) "rc=$GATE_RC with R_FRESHNESS=failure (freshness failure propagates)"
-gate_run success success success skipped
+gate_run success success success skipped success
 record "gate_red_when_freshness_skipped" $([ "$GATE_RC" -ne 0 ] && echo 0 || echo 1) "rc=$GATE_RC with R_FRESHNESS=skipped"
-gate_run success failure success success
+gate_run success success success success failure
+record "gate_red_when_codegen_failed" $([ "$GATE_RC" -ne 0 ] && echo 0 || echo 1) "rc=$GATE_RC with R_CODEGEN=failure (codegen freshness failure propagates)"
+gate_run success success success success skipped
+record "gate_red_when_codegen_skipped" $([ "$GATE_RC" -ne 0 ] && echo 0 || echo 1) "rc=$GATE_RC with R_CODEGEN=skipped"
+gate_run success failure success success success
 record "gate_still_red_when_android_build_failed" $([ "$GATE_RC" -ne 0 ] && echo 0 || echo 1) "rc=$GATE_RC with R_APK=failure (old mandatory jobs still gate)"
 
 # ============================== 汇总 =======================================

@@ -3,9 +3,8 @@ package com.pim.core.network
 import com.pim.core.auth.AuthRefreshOperation
 import com.pim.core.auth.AuthRefreshResult
 import com.pim.core.auth.AuthTokens
-import com.pim.core.models.ApiResponse
-import com.pim.core.models.AuthResponse
-import com.pim.core.models.RefreshRequest
+import com.pim.core.contract.AuthResponseApiResponse
+import com.pim.core.contract.RefreshRequest
 import retrofit2.HttpException
 import retrofit2.Response
 import java.time.Instant
@@ -14,14 +13,14 @@ class RetrofitAuthRefreshOperation(
     private val refreshCall: suspend (
         serverIdentity: String,
         request: RefreshRequest
-    ) -> Response<ApiResponse<AuthResponse>>,
+    ) -> Response<AuthResponseApiResponse>,
     private val nowMillis: () -> Long = System::currentTimeMillis
 ) : AuthRefreshOperation {
     override suspend fun refresh(
         refreshToken: String,
         serverIdentity: String
     ): AuthRefreshResult {
-        val response = refreshCall(serverIdentity, RefreshRequest(refreshToken))
+        val response = refreshCall(serverIdentity, RefreshRequest(refreshToken = refreshToken))
         if (response.code() == 401) return AuthRefreshResult.Rejected
         if (!response.isSuccessful) throw HttpException(response)
 

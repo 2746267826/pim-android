@@ -11,9 +11,9 @@ import com.pim.app.data.MobileLocationDroppedDiagnosticEntity
 import com.pim.app.data.MobileSyncStatus
 import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.settings.TrackingSettingsStore
-import com.pim.core.models.ApiResponse
-import com.pim.core.models.MobileForensicsIngestResponse
-import com.pim.core.models.MobileForensicsUploadRequest
+import com.pim.core.contract.MobileForensicsIngestResult
+import com.pim.core.contract.MobileForensicsIngestResultApiResponse
+import com.pim.core.contract.MobileForensicsUploadRequest
 import com.pim.core.network.ApiService
 import java.lang.reflect.Proxy
 import kotlinx.coroutines.test.runTest
@@ -74,7 +74,7 @@ class ForensicUploadCoordinatorTest {
      * 动态代理可以直接实现 `suspend` 方法——这正是生产代码里 `dynamicApiService()` 的做法。
      */
     private fun fakeApi(
-        respond: (MobileForensicsUploadRequest) -> ApiResponse<MobileForensicsIngestResponse>
+        respond: (MobileForensicsUploadRequest) -> MobileForensicsIngestResultApiResponse
     ): ApiService = Proxy.newProxyInstance(
         ApiService::class.java.classLoader,
         arrayOf(ApiService::class.java)
@@ -96,10 +96,10 @@ class ForensicUploadCoordinatorTest {
         acceptedKeys: List<String> = emptyList(),
         skippedKeys: List<String> = emptyList(),
         rejectedKeys: List<String> = emptyList()
-    ) = ApiResponse(
+    ) = MobileForensicsIngestResultApiResponse(
         code = 0,
         message = "ok",
-        data = MobileForensicsIngestResponse(
+        data = MobileForensicsIngestResult(
             acceptedCount = acceptedKeys.size,
             skippedCount = skippedKeys.size,
             rejectedCount = rejectedKeys.size,
@@ -111,7 +111,7 @@ class ForensicUploadCoordinatorTest {
         )
     )
 
-    private fun coordinator(respond: (MobileForensicsUploadRequest) -> ApiResponse<MobileForensicsIngestResponse>) =
+    private fun coordinator(respond: (MobileForensicsUploadRequest) -> MobileForensicsIngestResultApiResponse) =
         ForensicUploadCoordinator(
             context = context,
             api = fakeApi(respond),
@@ -134,15 +134,16 @@ class ForensicUploadCoordinatorTest {
         var call = 0
         val uploaded = coordinator { request ->
             call++
-            if (call == 1) ack(acceptedKeys = request.events.map { it.clientItemKey }) else ack()
+            if (call == 1) ack(acceptedKeys = request.events.orEmpty().map { it.clientItemKey }) else ack()
         }.uploadPending()
 
         assertEquals(3, uploaded)
         val first = captured.first()
-        assertEquals(3, first.events.size)
-        assertTrue(first.events.any { it.eventType == ForensicEventTypes.HEARTBEAT })
-        assertTrue(first.events.any { it.eventType == ForensicEventTypes.PROCESS_EXIT })
-        assertTrue(first.events.any { it.payloadJson!!.contains("REASON_LOW_MEMORY") })
+        // 契约里 events 是可空数组（服务端可能不发）：测试按「没有就是空」读，语义与旧默认值一致。
+        assertEquals(3, first.events.orEmpty().size)
+        assertTrue(first.events.orEmpty().any { it.eventType == ForensicEventTypes.HEARTBEAT })
+        assertTrue(first.events.orEmpty().any { it.eventType == ForensicEventTypes.PROCESS_EXIT })
+        assertTrue(first.events.orEmpty().any { it.payloadJson!!.contains("REASON_LOW_MEMORY") })
         assertTrue(first.batchId!!.startsWith("android-forensics-"))
         assertEquals(0, ledger.pendingCount())
     }
@@ -214,7 +215,7 @@ class ForensicUploadCoordinatorTest {
             }
         }.uploadPending()
 
-        val summaries = captured.first().droppedReasonSummaries
+        val summaries = captured.first().droppedReasonSummaries.orEmpty()
         val today = summaries.filter { it.count > 0 }
         assertEquals(2, today.size)
         assertEquals(

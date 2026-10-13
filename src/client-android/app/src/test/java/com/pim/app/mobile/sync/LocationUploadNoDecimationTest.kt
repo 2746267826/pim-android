@@ -7,11 +7,11 @@ import com.pim.app.data.AppDatabase
 import com.pim.app.data.MobileDataDao
 import com.pim.app.data.MobileLocationPointEntity
 import com.pim.app.data.MobileSyncStatus
-import com.pim.core.models.ApiResponse
-import com.pim.core.models.MobileIngestItemResult
-import com.pim.core.models.MobileLocationPointRequest
-import com.pim.core.models.MobileLocationPointsUploadRequest
-import com.pim.core.models.MobileLocationPointsUploadResult
+import com.pim.core.contract.MobileLocationPointsUploadResultApiResponse
+import com.pim.core.contract.MobileIngestItemResult
+import com.pim.core.contract.MobileLocationPointRequest
+import com.pim.core.contract.MobileLocationPointsUploadRequest
+import com.pim.core.contract.MobileLocationPointsUploadResult
 import com.pim.core.network.ApiService
 import java.lang.reflect.Proxy
 import kotlinx.coroutines.test.runTest
@@ -188,7 +188,7 @@ class LocationUploadNoDecimationTest {
                             message = "Accepted."
                         )
                     }
-                    ApiResponse<Any>(
+                    MobileLocationPointsUploadResultApiResponse(
                         code = 0,
                         message = "ok",
                         data = MobileLocationPointsUploadResult(

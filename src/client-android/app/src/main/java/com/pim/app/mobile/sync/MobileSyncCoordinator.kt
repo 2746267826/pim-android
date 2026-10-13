@@ -23,13 +23,13 @@ import com.pim.app.mobile.usage.AppMetadataCollector
 import com.pim.app.mobile.usage.UsageAccessChecker
 import com.pim.app.mobile.usage.UsageEventCollector
 import com.pim.core.auth.TokenManager
-import com.pim.core.models.MobileAppMetadataDto
-import com.pim.core.models.MobileDeviceRegisterRequest
-import com.pim.core.models.MobileGapRequest
-import com.pim.core.models.MobileIngestResponse
-import com.pim.core.models.MobileUsageEventDto
-import com.pim.core.models.MobileUsageEventsUploadRequest
-import com.pim.core.models.MobileUsageSummaryDto
+import com.pim.core.contract.MobileAppMetadataDto
+import com.pim.core.contract.MobileDeviceRegisterRequest
+import com.pim.core.contract.MobileGapRequest
+import com.pim.core.contract.MobileUsageEventDto
+import com.pim.core.contract.MobileUsageEventsUploadRequest
+import com.pim.core.contract.MobileUsageIngestResult
+import com.pim.core.contract.MobileUsageSummaryDto
 import com.pim.core.network.ApiService
 import com.pim.core.settings.ServerSettingsStore
 import com.pim.core.util.toCauseChainMessage
@@ -280,16 +280,16 @@ class MobileSyncCoordinator @Inject constructor(
             persistState(oldQueueState?.let { gapChecking.merge(it) } ?: gapChecking)
             val gapResponse = api.getMobileGaps(
                 MobileGapRequest(
-                    deviceIdentity.deviceId,
-                    iso(rangeStartUtc),
-                    iso(rangeEndUtc),
-                    capabilityJson(hasUsageAccess)
+                    deviceId = deviceIdentity.deviceId,
+                    rangeStartUtc = iso(rangeStartUtc),
+                    rangeEndUtc = iso(rangeEndUtc),
+                    capabilityJson = capabilityJson(hasUsageAccess)
                 )
             )
 
             val gapData = gapResponse.data
             if (gapResponse.code != 0 || gapData == null) {
-                throw IllegalStateException(gapResponse.message.ifBlank { "服务器缺口查询失败。" })
+                throw IllegalStateException(gapResponse.message.orEmpty().ifBlank { "服务器缺口查询失败。" })
             }
 
             val serverWindows = gapData.windows.mapNotNull { window ->
@@ -617,13 +617,15 @@ class MobileSyncCoordinator @Inject constructor(
         }
         val batchId = stableBatchId(deviceId, windowStartUtc, windowEndUtc, sentItems)
         val request = MobileUsageEventsUploadRequest(
-            deviceId,
-            batchId,
-            windowStartUtc,
-            windowEndUtc,
-            apps.map { it.toDto() },
-            events.mapIndexed { index, event -> event.toDto(eventIds[index].toString()) },
-            summaries.mapIndexed { index, summary -> summary.toDto(summaryIds[index].toString()) }
+            deviceId = deviceId,
+            clientBatchId = batchId,
+            sourceWindowStartUtc = windowStartUtc,
+            sourceWindowEndUtc = windowEndUtc,
+            apps = apps.map { it.toDto() },
+            events = events.mapIndexed { index, event -> event.toDto(eventIds[index].toString()) },
+            fallbackSummaries = summaries.mapIndexed { index, summary ->
+                summary.toDto(summaryIds[index].toString())
+            }
         )
 
         val response = try {
@@ -657,7 +659,7 @@ class MobileSyncCoordinator @Inject constructor(
         }
         val ingest = response.data
         if (response.code != 0 || ingest == null) {
-            val message = response.message.ifBlank { "Usage upload failed." }
+            val message = response.message.orEmpty().ifBlank { "Usage upload failed." }
             markUsageFailed(eventIds, summaryIds, apps, message)
             logs.warn(
                 "mobile-sync",
@@ -712,21 +714,21 @@ class MobileSyncCoordinator @Inject constructor(
     ) {
         val response = api.registerMobileDevice(
             MobileDeviceRegisterRequest(
-                identity.deviceId,
-                identity.androidIdHash,
-                displayName(profile),
-                profile.manufacturer,
-                profile.brand,
-                profile.model,
-                profile.androidVersion,
-                profile.sdkInt,
-                profile.appVersionName ?: "unknown",
-                profile.rawJson
+                deviceId = identity.deviceId,
+                androidIdHash = identity.androidIdHash,
+                displayName = displayName(profile),
+                manufacturer = profile.manufacturer,
+                brand = profile.brand,
+                model = profile.model,
+                androidVersion = profile.androidVersion,
+                sdkInt = profile.sdkInt,
+                appVersion = profile.appVersionName ?: "unknown",
+                metadataJson = profile.rawJson
             )
         )
 
         if (response.code != 0 || response.data == null) {
-            val message = response.message.ifBlank { "Device registration failed." }
+            val message = response.message.orEmpty().ifBlank { "Device registration failed." }
             mobileDataDao.updateDeviceProfileSyncStatus(
                 syncStatus = MobileSyncStatus.FAILED,
                 lastError = message
@@ -1218,7 +1220,7 @@ fun splitGapWindowForUpload(
     return windows
 }
 
-internal fun MobileIngestResponse.toState(
+internal fun MobileUsageIngestResult.toState(
     batchId: String,
     windowStartUtc: String,
     windowEndUtc: String,
@@ -1268,44 +1270,44 @@ internal fun sortedMergeOutcome(a: MobileSyncOutcome, b: MobileSyncOutcome): Mob
 
 internal fun MobileUsageEventEntity.toDto(clientItemKey: String = id.toString()): MobileUsageEventDto {
     return MobileUsageEventDto(
-        packageName,
-        eventName,
-        iso(eventTimeUtc),
-        className,
-        iso(collectedAtUtc),
-        rawJson,
-        clientItemKey
+        packageName = packageName,
+        eventType = eventName,
+        eventTimestampUtc = iso(eventTimeUtc),
+        className = className,
+        collectedAtUtc = iso(collectedAtUtc),
+        rawJson = rawJson,
+        clientItemKey = clientItemKey
     )
 }
 
 internal fun MobileUsageSummaryEntity.toDto(clientItemKey: String = id.toString()): MobileUsageSummaryDto {
     return MobileUsageSummaryDto(
-        packageName,
-        iso(windowStartUtc),
-        iso(windowEndUtc),
-        totalTimeForegroundMs,
-        iso(lastTimeUsedUtc),
-        source.replace('_', '-'),
-        rawJson,
-        clientItemKey
+        packageName = packageName,
+        windowStartUtc = iso(windowStartUtc),
+        windowEndUtc = iso(windowEndUtc),
+        totalTimeForegroundMs = totalTimeForegroundMs,
+        lastTimeUsedUtc = iso(lastTimeUsedUtc),
+        sourceKind = source.replace('_', '-'),
+        rawJson = rawJson,
+        clientItemKey = clientItemKey
     )
 }
 
 internal fun MobileAppMetadataEntity.toDto(): MobileAppMetadataDto {
     val categoryName = androidCategoryName(category)
     return MobileAppMetadataDto(
-        packageName,
-        label,
-        versionName,
-        versionCode,
-        isSystemApp,
-        categoryName,
-        installerPackageName,
-        iso(firstInstallTimeUtc),
-        iso(lastUpdateTimeUtc),
-        mergeCategoryName(rawJson, categoryName),
-        iso(collectedAtUtc),
-        "$packageName@$versionCode"
+        packageName = packageName,
+        displayName = label,
+        versionName = versionName,
+        versionCode = versionCode,
+        isSystemApp = isSystemApp,
+        categoryName = categoryName,
+        installerPackageName = installerPackageName,
+        firstInstallTimeUtc = iso(firstInstallTimeUtc),
+        lastUpdateTimeUtc = iso(lastUpdateTimeUtc),
+        rawJson = mergeCategoryName(rawJson, categoryName),
+        // 契约 `MobileAppMetadataDto` 没有 collectedAtUtc 字段（旧手写模型自造），不再发送。
+        clientItemKey = "$packageName@$versionCode"
     )
 }
 

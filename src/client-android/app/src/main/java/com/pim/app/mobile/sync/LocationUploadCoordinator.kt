@@ -7,9 +7,9 @@ import com.pim.app.data.AppDatabase
 import com.pim.app.data.MobileDataDao
 import com.pim.app.data.MobileLocationPointEntity
 import com.pim.app.data.MobileSyncStatus
-import com.pim.core.models.MobileIngestItemResult
-import com.pim.core.models.MobileLocationPointRequest
-import com.pim.core.models.MobileLocationPointsUploadRequest
+import com.pim.core.contract.MobileIngestItemResult
+import com.pim.core.contract.MobileLocationPointRequest
+import com.pim.core.contract.MobileLocationPointsUploadRequest
 import com.pim.core.network.ApiService
 import com.pim.core.util.toCauseChainMessage
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -183,7 +183,7 @@ class LocationUploadCoordinator @Inject constructor(
     ) {
         val response = try {
             api.uploadMobileLocationsBatch(
-                MobileLocationPointsUploadRequest(chunk.map { it.second })
+                MobileLocationPointsUploadRequest(points = chunk.map { it.second })
             )
         } catch (ex: Exception) {
             if (ex is CancellationException) throw ex
@@ -209,7 +209,7 @@ class LocationUploadCoordinator @Inject constructor(
         val items = response.data?.itemResults
         if (response.code != 0 || items == null) {
             // HTTP 200 但业务码非 0（当前服务端不产生该形态，防御性分支）：退到队尾重试。
-            val message = response.message.ifBlank { "batch request rejected" }
+            val message = response.message.orEmpty().ifBlank { "batch request rejected" }
             outcome.deferred(chunk.map { it.first.id }, "batch-request-rejected: $message")
             return
         }

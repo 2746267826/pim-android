@@ -7,7 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.pim.core.auth.AuthSessionSnapshot
 import com.pim.core.auth.AuthSessionStore
 import com.pim.core.auth.AuthTokens
-import com.pim.core.models.RefreshRequest
+import com.pim.core.contract.RefreshRequest
 import com.pim.core.network.ApiClientProvider
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
@@ -99,7 +99,7 @@ class ServerSettingsSecurityTest {
 
             val response = provider
                 .refreshApiServiceForServer(serverAIdentity)
-                .refresh(RefreshRequest("refresh-a"))
+                .refresh(RefreshRequest(refreshToken = "refresh-a"))
 
             assertEquals(401, response.code())
             assertEquals(1, serverA.requestCount)

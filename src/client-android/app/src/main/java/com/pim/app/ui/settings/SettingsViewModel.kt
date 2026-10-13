@@ -26,7 +26,7 @@ import com.pim.app.schedule.ScheduleCacheStore
 import com.pim.app.status.PermissionStatusSnapshot
 import com.pim.app.status.PolicyTransitionHistorySource
 import com.pim.app.status.PolicyTransitionSnapshot
-import com.pim.core.models.ClientShellLatestResponse
+import com.pim.core.contract.ClientShellLatestResponse
 import com.pim.core.network.ApiService
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerUrlValidator

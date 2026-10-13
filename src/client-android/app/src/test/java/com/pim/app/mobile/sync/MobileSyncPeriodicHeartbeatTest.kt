@@ -23,7 +23,8 @@ import com.pim.app.mobile.usage.UsageEventCollector
 import com.pim.app.settings.TrackingSettingsStore
 import com.pim.core.auth.SecurePreferencesFactory
 import com.pim.core.auth.TokenManager
-import com.pim.core.models.ApiResponse
+import com.pim.core.contract.DaemonHeartbeatDtoApiResponse
+import com.pim.core.contract.MobileLocationPointsUploadResultApiResponse
 import com.pim.core.network.ApiService
 import com.pim.core.settings.ServerSettingsStore
 import java.lang.reflect.Proxy
@@ -79,9 +80,10 @@ class MobileSyncPeriodicHeartbeatTest {
         arrayOf(ApiService::class.java)
     ) { _, method, _ ->
         when (method.name) {
-            "sendHeartbeat" -> ApiResponse<Any>(code = 0, message = "ok", data = null)
+            "sendHeartbeat" -> DaemonHeartbeatDtoApiResponse(code = 0, message = "ok", data = null)
             // 定位点批量补传：本测试队列为空时不会被调用；显式声明确保"意外调用"仍然可见。
-            "uploadMobileLocationsBatch" -> ApiResponse<Any>(code = 0, message = "ok", data = null)
+            "uploadMobileLocationsBatch" ->
+                MobileLocationPointsUploadResultApiResponse(code = 0, message = "ok", data = null)
             "toString" -> "StubApiService"
             "hashCode" -> System.identityHashCode(this)
             "equals" -> false

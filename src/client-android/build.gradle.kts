@@ -53,6 +53,22 @@ private val NON_JSON_RESPONSE_TYPES = setOf("ResponseBody", "Unit")
 /** 契约请求体不是 JSON 时允许的 `@Body` 类型。 */
 private val NON_JSON_REQUEST_TYPES = setOf("RequestBody")
 
+/**
+ * 把「参数名/请求体形态」交给运行时的注解：门禁无法核对它们会不会传出契约外的东西，
+ * 因此一律拒绝（真需要就扩展本门禁，而不是绕过）。
+ */
+private val REJECTED_RETROFIT_ANNOTATIONS = mapOf(
+    "QueryMap" to "@QueryMap 可以发送契约里没有的任意查询键，门禁无法逐个核对；请改成逐个 @Query。",
+    "QueryName" to "@QueryName 会把参数值当成查询键，门禁无法核对键名；请改成显式 @Query。",
+    "Field" to "@Field 发送表单字段，契约里没有对应声明。",
+    "FieldMap" to "@FieldMap 可以发送契约里没有的任意表单字段。",
+    "FormUrlEncoded" to "@FormUrlEncoded 表单体与契约的 JSON 请求体不一致。",
+    "Multipart" to "@Multipart 与契约声明的请求体不一致。",
+    "Part" to "@Part 与契约声明的请求体不一致。",
+    "PartMap" to "@PartMap 可以发送契约里没有的任意 part。",
+    "HeaderMap" to "@HeaderMap 可以发送契约里没有的任意请求头。"
+)
+
 private data class ContractOperation(
     val method: String,
     val path: String,
@@ -133,6 +149,8 @@ private data class RetrofitCall(
     val referencedSchemaNames: Set<String>,
     /** 参数列表的掩码文本（参数注解覆盖度自检用）。 */
     val maskedParameters: String,
+    /** 解析阶段就发现的问题（例如注解参数不是单一字符串字面量）。 */
+    val argumentProblems: List<String>,
     val line: Int
 ) {
     val hasBody: Boolean get() = bodyType != null
@@ -232,11 +250,21 @@ private fun maskSource(input: String): MaskedSource {
                 while (i < input.length && input[i] != '\n') { blank(input[i]); i++ }
             }
             c == '/' && i + 1 < input.length && input[i + 1] == '*' -> {
-                blank(input[i]); blank(input[i + 1]); i += 2
-                while (i < input.length && !(input[i] == '*' && i + 1 < input.length && input[i + 1] == '/')) {
-                    blank(input[i]); i++
+                // Kotlin 允许块注释嵌套：必须计深度，否则外层注释会被提前结束，
+                // 后面的真实注解会被吞成字符串（Codex review 构造过这种写法）。
+                var depth = 0
+                while (i < input.length) {
+                    if (input[i] == '/' && i + 1 < input.length && input[i + 1] == '*') {
+                        depth++
+                        blank(input[i]); blank(input[i + 1]); i += 2
+                    } else if (input[i] == '*' && i + 1 < input.length && input[i + 1] == '/') {
+                        depth--
+                        blank(input[i]); blank(input[i + 1]); i += 2
+                        if (depth == 0) break
+                    } else {
+                        blank(input[i]); i++
+                    }
                 }
-                if (i < input.length) { blank(input[i]); blank(input[i + 1]); i += 2 }
             }
             c == '"' && input.startsWith("\"\"\"", i) -> {
                 repeat(3) { blank(' '); i++ }
@@ -266,6 +294,30 @@ private fun firstStringLiteral(source: MaskedSource, original: String, from: Int
     return original.substring(range.first, range.last + 1)
 }
 
+/**
+ * 注解参数是不是「单一字符串字面量」。
+ *
+ * `@POST("auth/login" + "/invented")` 这种拼接只看第一个字面量会看错端点，因此：
+ * 去掉第一个字面量（含引号）与可选的 `name =` 前缀后，剩下的掩码文本里不允许再出现 `+` 或别的字面量。
+ */
+private fun isSingleStringLiteralArgument(
+    source: MaskedSource,
+    maskedParenContent: String,
+    parenStart: Int
+): Boolean {
+    if (maskedParenContent.isEmpty()) return true
+    val contentEnd = parenStart + maskedParenContent.length
+    val literal = source.stringLiterals.firstOrNull { it.first in parenStart until contentEnd }
+        ?: return false
+    val extraLiterals = source.stringLiterals.count { it.first in (literal.last + 2) until contentEnd }
+    val localStart = (literal.first - 1 - parenStart).coerceIn(0, maskedParenContent.length)
+    val localEnd = (literal.last + 1 - parenStart).coerceIn(-1, maskedParenContent.length - 1)
+    if (localEnd + 1 < localStart) return false
+    val remainder = maskedParenContent.removeRange(localStart, localEnd + 1)
+        .replace(Regex("""^\s*\w+\s*=\s*"""), "")
+    return !remainder.contains('+') && extraLiterals == 0
+}
+
 /** 从 `openParen` 出发做括号配平，返回配对的 `)` 下标（找不到时返回文本末尾）。 */
 private fun matchingParen(text: String, openParen: Int): Int {
     var depth = 0
@@ -293,8 +345,8 @@ private fun annotationStringValues(
     annotationName: String,
     from: Int,
     to: Int
-): List<String> {
-    val values = mutableListOf<String>()
+): List<Pair<String, Boolean>> {
+    val values = mutableListOf<Pair<String, Boolean>>()
     val masked = source.text
     val regex = annotationPattern(annotationName)
     for (match in regex.findAll(masked, from)) {
@@ -302,7 +354,11 @@ private fun annotationStringValues(
         val openParen = masked.indexOf('(', match.range.first)
         if (openParen < 0 || openParen >= to) continue
         val closeParen = matchingParen(masked, openParen)
-        firstStringLiteral(source, original, openParen + 1, closeParen)?.let { values += it }
+        val value = firstStringLiteral(source, original, openParen + 1, closeParen) ?: continue
+        val single = isSingleStringLiteralArgument(
+            source, masked.substring(openParen + 1, closeParen), openParen + 1
+        )
+        values += value to single
     }
     return values
 }
@@ -327,7 +383,7 @@ private fun findRetrofitCalls(source: MaskedSource, original: String, schemaName
     for (match in annotationHeader.findAll(masked)) {
         val annotationOpen = masked.indexOf('(', match.range.first)
         val annotationClose = matchingParen(masked, annotationOpen)
-        val afterAnnotation = annotationClose + 1
+        val afterAnnotation = (annotationClose + 1).coerceAtMost(masked.length)
         val funMatch = Regex("""\bfun\s+(\w+)\s*\(""").find(masked, afterAnnotation) ?: continue
         // 注解后面紧跟的必须是同一个函数声明：中间再出现注解说明这是另一个方法。
         val between = masked.substring(afterAnnotation, funMatch.range.first)
@@ -342,16 +398,28 @@ private fun findRetrofitCalls(source: MaskedSource, original: String, schemaName
         val returnType = extractReturnType(masked, closeParen)
         val bodyType = Regex("""@(?:[\w.]+\.)?Body\s*(?:\(\s*\))?\s+\w+\s*:\s*([^,)=]+)""")
             .find(maskedParameters)?.groupValues?.get(1)?.trim()
+        val argumentProblems = mutableListOf<String>()
+        if (!isSingleStringLiteralArgument(
+                source, masked.substring(annotationOpen + 1, annotationClose), annotationOpen + 1
+            )
+        ) {
+            argumentProblems += "端点不是单一字符串字面量（拼接/多字面量无法核对）"
+        }
+        val pathValues = annotationStringValues(source, original, "Path", openParen + 1, closeParen)
+        val queryValues = annotationStringValues(source, original, "Query", openParen + 1, closeParen)
+        if (pathValues.any { !it.second }) argumentProblems += "@Path 不是单一字符串字面量（拼接/多字面量无法核对）"
+        if (queryValues.any { !it.second }) argumentProblems += "@Query 不是单一字符串字面量（拼接/多字面量无法核对）"
         calls += RetrofitCall(
             method = match.groupValues[1],
             rawPath = rawPath,
             functionName = funMatch.groupValues[1],
-            pathVariables = annotationStringValues(source, original, "Path", openParen + 1, closeParen).toSet(),
-            queryParameters = annotationStringValues(source, original, "Query", openParen + 1, closeParen),
+            pathVariables = pathValues.map { it.first }.toSet(),
+            queryParameters = queryValues.map { it.first },
             bodyType = bodyType,
             returnType = normalizeType(returnType),
             referencedSchemaNames = contractNamesIn(maskedParameters + " " + returnType, schemaNames),
             maskedParameters = maskedParameters,
+            argumentProblems = argumentProblems,
             line = masked.take(match.range.first).count { it == '\n' } + 1
         )
     }
@@ -411,6 +479,11 @@ private fun verifyKotlinFileCoverage(
     if (Regex("""@(?:[\w.]+\.)?Url\b""").containsMatchIn(masked)) {
         problems += "$relativeFile 使用了 @Url：动态 URL 无法在编译期核对契约，等于绕开接口门禁。"
     }
+    for ((name, why) in REJECTED_RETROFIT_ANNOTATIONS) {
+        if (Regex("""@(?:[\w.]+\.)?$name\b""").containsMatchIn(masked)) {
+            problems += "$relativeFile 使用了 @$name：$why"
+        }
+    }
     for (name in RETROFIT_ANNOTATIONS) {
         val total = annotationPattern(name).findAll(masked).count()
         val parsed = calls.count { it.method == name }
@@ -460,16 +533,16 @@ private fun verifyContractTypeNameShadowing(
 ) {
     if (relativeFile.replace('\\', '/').contains("com/pim/core/contract/")) return
     val declared = mutableListOf<Pair<String, String>>()
-    Regex("""\btypealias\s+(\w+)""").findAll(masked).forEach {
+    Regex("""\btypealias\s+`?(\w+)`?""").findAll(masked).forEach {
         declared += it.groupValues[1] to "typealias"
     }
     Regex("""\bimport\s+[\w.]*?(\w+)\s+as\s+(\w+)""").findAll(masked).forEach {
         declared += it.groupValues[2] to "import ... as"
     }
-    Regex("""\b(?:data\s+|sealed\s+|abstract\s+|open\s+)?class\s+(\w+)""").findAll(masked).forEach {
+    Regex("""\b(?:data\s+|sealed\s+|abstract\s+|open\s+)?class\s+`?(\w+)`?""").findAll(masked).forEach {
         declared += it.groupValues[1] to "class"
     }
-    Regex("""\binterface\s+(\w+)""").findAll(masked).forEach {
+    Regex("""\binterface\s+`?(\w+)`?""").findAll(masked).forEach {
         declared += it.groupValues[1] to "interface"
     }
     if (Regex("""\bimport\s+retrofit2\.http\.\w+\s+as\s+\w+""").containsMatchIn(masked)) {
@@ -491,6 +564,7 @@ private fun verifyRetrofitCalls(
     problems: MutableList<String>
 ) {
     val location = "$relativeFile:${call.line} (${call.functionName})"
+    call.argumentProblems.forEach { problems += "$location $it。" }
     val path = resolvedPath(call.rawPath)
     val operation = operations["${call.method} $path"]
     if (operation == null) {
@@ -870,6 +944,81 @@ private fun verifyContractEndpointGuardSelfTest(contractFile: File, contract: Co
         )
         check(renamedAnnotationImport.any { it.contains("改名导入") }) {
             "契约门禁自检失败：把 Retrofit 注解改名导入（import ... as ...）绕过了扫描器"
+        }
+
+        val queryMap = problemsFor(
+            """
+            interface Sample {
+                @POST("$postPath")
+                suspend fun sample(@QueryMap flags: Map<String, String>, @Body request: $postRequest): $postResponse
+            }
+            """.trimIndent()
+        )
+        check(queryMap.any { it.contains("@QueryMap") }) {
+            "契约门禁自检失败：@QueryMap 可以发送任意契约外查询键，必须被拦下"
+        }
+
+        val concatenatedEndpoint = problemsFor(
+            """
+            interface Sample {
+                @POST("$postPath" + "/invented")
+                suspend fun sample(@Body request: $postRequest): $postResponse
+            }
+            """.trimIndent()
+        )
+        check(concatenatedEndpoint.any { it.contains("不是单一字符串字面量") }) {
+            "契约门禁自检失败：端点用字面量拼接（@POST(\"a\" + \"b\")）没有被拦下"
+        }
+
+        val concatenatedQuery = problemsFor(
+            """
+            interface Sample {
+                @GET("$getPath")
+                suspend fun sample(@Query("start" + "Flag") flag: String? = null): $getResponse
+            }
+            """.trimIndent()
+        )
+        check(concatenatedQuery.any { it.contains("不是单一字符串字面量") }) {
+            "契约门禁自检失败：@Query 用字面量拼接没有被拦下"
+        }
+
+        val backtickedAlias = problemsFor(
+            """
+            typealias `$postRequest` = List<com.pim.core.contract.$postRequest>
+
+            interface Sample {
+                @POST("$postPath")
+                suspend fun sample(@Body request: `$postRequest`): $postResponse
+            }
+            """.trimIndent()
+        )
+        check(backtickedAlias.any { it.contains("顶替了契约类型名") }) {
+            "契约门禁自检失败：反引号声明的同名 typealias 绕过了顶替检查"
+        }
+
+        val nestedComment = problemsFor(
+            """
+            /* outer /* inner */ " */ @POST("pc/whatever")
+            suspend fun fabricated(): Unit
+            """.trimIndent()
+        )
+        check(nestedComment.any { it.contains("不存在的端点") }) {
+            "契约门禁自检失败：嵌套块注释写法让真实注解被吞掉/被跳过"
+        }
+
+        val qualifiedQuery = problemsFor(
+            """
+            interface Sample {
+                @POST("$postPath")
+                suspend fun sample(
+                    @retrofit2.http.Query("pcFlag") flag: String? = null,
+                    @Body request: $postRequest
+                ): $postResponse
+            }
+            """.trimIndent()
+        )
+        check(qualifiedQuery.any { it.contains("未声明的查询参数") }) {
+            "契约门禁自检失败：全限定 @retrofit2.http.Query 没有被识别"
         }
 
         val stringOnly = problemsFor(

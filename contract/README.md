@@ -89,14 +89,13 @@ scripts/ci/test-contract-kotlin.sh
   `@Body` 或返回类型与该 operation 的 schema **结构**不一致（多包一层 `List<...>`、换成 `String`
   这类非契约类型都算）→ **编译失败**。查询参数名按大小写不敏感比对（契约里 analytics 系参数是 PascalCase，
   客户端发 camelCase）。
-  它用文本扫描而不是 Kotlin PSI，因此对"看不懂的东西"一律 fail-closed，当前会拦下：
-  解析不出来的注解形态、`@HTTP(...)`、`@Url`、`@QueryMap`/`@QueryName`/`@Field(Map)`/`@Part(Map)`/
-  `@FormUrlEncoded`/`@Multipart`/`@HeaderMap` 这类"把参数名交给运行时"的形态、
-  注解参数不是单一字符串字面量（如 `@POST("a" + "b")`）、
-  `@Path`/`@Query`/`@Body` 解析数量对不上、
-  以及**用本地同名 `typealias`/`class`/`interface`/导入改名顶替契约类型名**。
-  全限定注解（`@retrofit2.http.POST("...")`）与跨行签名按正常写法识别；
-  把 Retrofit 注解改名导入（`import retrofit2.http.POST as X`）会被拒绝。
+  它用文本扫描而不是 Kotlin PSI，因此对"看不懂的东西"一律 fail-closed。**当前实际拦得住的**是：
+  无括号的 HTTP 注解（`@POST`，Retrofit 里 `value` 默认空串，普通遗漏就可能踩到）与"看到几处、解析出几处"对不上；
+  `@HTTP(...)`、`@Url`；`@QueryMap`/`@QueryName`/`@Field(Map)`/`@Part(Map)`/`@FormUrlEncoded`/`@Multipart`/`@HeaderMap`
+  这类"把参数名/请求体形态交给运行时"的形态；注解参数不是单一字符串字面量（`@POST("a" + "b")`、`@POST(("a"))`）；
+  `@Path`/`@Query`/`@Body` 的解析数量对不上；本地同名 `typealias`/`class`/`interface`/`object` 或改名导入顶替契约类型名；
+  以及把 Retrofit 注解改名导入（`import retrofit2.http.POST as X`，含反引号别名）。
+  全限定注解（`@retrofit2.http.POST("...")`）与跨行签名按正常写法识别。
 - **门禁自带自检**：任务每次运行都会先把 fixture 写进临时目录、**走同一个文件扫描入口**跑一遍
   （合法写法不得误报；编造端点/参数/类型、注释分隔、全限定注解、改名导入、字面量拼接、
   本地同名顶替、`@QueryMap` 等必须被拦下），自检失败即编译失败 ——

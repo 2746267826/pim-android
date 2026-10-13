@@ -42,7 +42,7 @@ private val RETROFIT_ANNOTATIONS = setOf("GET", "POST", "PUT", "DELETE", "PATCH"
 
 /** 出现在源码任何位置（含注释分隔写法）都要被门禁看见的注解名字。 */
 private val RETROFIT_ANNOTATION_PREFIX =
-    Regex("""@(?:[\w.]+\.)?(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\s*\(""")
+    Regex("""@(?:[\w.]+\.)?(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\b""")
 
 /** 与 [RETROFIT_ANNOTATION_PREFIX] 同一口径：允许 `@retrofit2.http.GET("x")` 这类全限定写法。 */
 private fun annotationPattern(name: String): Regex = Regex("""@(?:[\w.]+\.)?$name\s*\(""")
@@ -315,7 +315,8 @@ private fun isSingleStringLiteralArgument(
     if (localEnd + 1 < localStart) return false
     val remainder = maskedParenContent.removeRange(localStart, localEnd + 1)
         .replace(Regex("""^\s*\w+\s*=\s*"""), "")
-    return !remainder.contains('+') && extraLiterals == 0
+    return !remainder.contains('+') && !remainder.contains('(') && !remainder.contains(')') &&
+        extraLiterals == 0
 }
 
 /** 从 `openParen` 出发做括号配平，返回配对的 `)` 下标（找不到时返回文本末尾）。 */
@@ -472,7 +473,7 @@ private fun verifyKotlinFileCoverage(
     calls: List<RetrofitCall>,
     problems: MutableList<String>
 ) {
-    if (annotationPattern("HTTP").containsMatchIn(masked)) {
+    if (Regex("""@(?:[\w.]+\.)?HTTP\b""").containsMatchIn(masked)) {
         problems += "$relativeFile 使用了 @HTTP(...)：本门禁无法把自由形态的 method/path 与契约核对。" +
             "请改用 @GET/@POST/@PUT/@DELETE/@PATCH（要新形态请先扩展 verifyContractEndpoints）。"
     }
@@ -485,7 +486,7 @@ private fun verifyKotlinFileCoverage(
         }
     }
     for (name in RETROFIT_ANNOTATIONS) {
-        val total = annotationPattern(name).findAll(masked).count()
+        val total = Regex("""@(?:[\w.]+\.)?$name\b""").findAll(masked).count()
         val parsed = calls.count { it.method == name }
         if (total != parsed) {
             problems += "$relativeFile 有 $total 处 @$name，但只解析出 $parsed 处（写法超出本门禁的解析范围，" +
@@ -503,7 +504,7 @@ private fun verifyParameterAnnotationCoverage(
     val location = "$relativeFile:${call.line} (${call.functionName})"
     val maskedParameters = call.maskedParameters
     for (name in listOf("Path", "Query")) {
-        val total = annotationPattern(name).findAll(maskedParameters).count()
+        val total = Regex("""@(?:[\w.]+\.)?$name\b""").findAll(maskedParameters).count()
         val parsed = if (name == "Path") call.pathVariables.size else call.queryParameters.size
         if (total != parsed) {
             problems += "$location 有 $total 处 @$name，但只解析出 $parsed 处（写法超出本门禁的解析范围）。"
@@ -549,7 +550,7 @@ private fun verifyContractTypeNameShadowing(
     Regex("""\bobject\s+`?(\w+)`?""").findAll(masked).forEach {
         declared += it.groupValues[1] to "object"
     }
-    if (Regex("""\bimport\s+retrofit2\.http\.\w+\s+as\s+\w+""").containsMatchIn(masked)) {
+    if (Regex("""\bimport\s+retrofit2\.http\.\w+\s+as\s+`?\w+`?""").containsMatchIn(masked)) {
         problems += "$relativeFile 把 retrofit2 注解改名导入（import retrofit2.http.X as Y）：" +
             "改名后的注解本门禁看不见，等于绕开接口门禁。请用原名导入。"
     }
@@ -1034,6 +1035,33 @@ private fun verifyContractEndpointGuardSelfTest(contractFile: File, contract: Co
         )
         check(shadowingObject.any { it.contains("顶替了契约类型名") }) {
             "契约门禁自检失败：本地 object 同名顶替契约类型没有被拦下"
+        }
+
+        val bareAnnotation = problemsFor(
+            """
+            interface Sample {
+                @retrofit2.http.POST
+                suspend fun probe(
+                    @retrofit2.http.Url url: String,
+                    @retrofit2.http.Body request: $postRequest
+                ): $postResponse
+            }
+            """.trimIndent()
+        )
+        check(bareAnnotation.any { it.contains("@Url") }) {
+            "契约门禁自检失败：无括号的 HTTP 注解（@POST 省略 value）让整文件跳过检查"
+        }
+
+        val parenthesisedArgument = problemsFor(
+            """
+            interface Sample {
+                @POST(("pc/whatever"))
+                suspend fun probe(@Body request: $postRequest): $postResponse
+            }
+            """.trimIndent()
+        )
+        check(parenthesisedArgument.any { it.contains("不是单一字符串字面量") }) {
+            "契约门禁自检失败：注解参数被括号包裹（@POST((\"x\"))）没有被拦下"
         }
 
         val stringOnly = problemsFor(

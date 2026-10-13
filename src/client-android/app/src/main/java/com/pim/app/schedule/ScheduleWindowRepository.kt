@@ -1,7 +1,7 @@
 package com.pim.app.schedule
 
 import com.pim.app.location.policy.ScheduleWindow
-import com.pim.core.models.EventResponse
+import com.pim.core.contract.EventResponse
 import com.pim.core.network.ApiService
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
@@ -264,8 +264,13 @@ class ScheduleWindowRepository @Inject constructor(
             }
             val paged = response.data
             if (paged == null) break
-            allEvents.addAll(paged.items)
-            if (paged.items.isEmpty() || allEvents.size >= paged.totalCount || page >= paged.totalPages || page >= 20) break
+            // 契约 `EventResponsePagedResult` 的所有属性都是可选的（服务端可能不发），
+            // 缺省按「空页 / 0」处理，语义与旧模型里的默认值一致。
+            val items = paged.items.orEmpty()
+            val totalCount = paged.totalCount ?: 0
+            val totalPages = paged.totalPages ?: 0
+            allEvents.addAll(items)
+            if (items.isEmpty() || allEvents.size >= totalCount || page >= totalPages || page >= 20) break
             page++
         }
         // Defensive: if server reported truncation but items empty, fall through with collected
@@ -431,12 +436,12 @@ class ScheduleWindowRepository @Inject constructor(
         while (true) {
             val response = apiService.getEvents(start = startIso, end = endIso, page = page, pageSize = 100)
             if (response.code != 0) {
-                error(response.message.ifBlank { "加载日程失败" })
+                error(response.message.orEmpty().ifBlank { "加载日程失败" })
             }
             val paged = response.data
-            if (paged == null || paged.items.isEmpty()) break
-            allEvents.addAll(paged.items)
-            if (allEvents.size >= paged.totalCount || page >= paged.totalPages || page >= 20) break
+            if (paged == null || paged.items.isNullOrEmpty()) break
+            allEvents.addAll(paged.items.orEmpty())
+            if (allEvents.size >= (paged.totalCount ?: 0) || page >= (paged.totalPages ?: 0) || page >= 20) break
             page++
         }
         return mapEvents(allEvents)

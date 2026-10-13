@@ -1,15 +1,15 @@
 package com.pim.app.notifications
 
-import com.pim.core.models.ApiResponse
-import com.pim.core.models.EndpointNotificationActionRequestDto
-import com.pim.core.models.EndpointNotificationActionResponseDto
+import com.pim.core.contract.EndpointNotificationActionRequest
+import com.pim.core.contract.EndpointNotificationActionResponse
+import com.pim.core.contract.EndpointNotificationActionResponseApiResponse
 import com.pim.core.network.ApiService
 
 class EndpointNotificationActionDispatcher(
     private val sender: suspend (
         String,
-        EndpointNotificationActionRequestDto
-    ) -> ApiResponse<EndpointNotificationActionResponseDto>
+        EndpointNotificationActionRequest
+    ) -> EndpointNotificationActionResponseApiResponse
 ) {
     constructor(apiService: ApiService) : this(apiService::sendEndpointNotificationAction)
 
@@ -20,10 +20,10 @@ class EndpointNotificationActionDispatcher(
         confirmationId: String?,
         relatedObjectType: String?,
         relatedObjectId: String?
-    ): EndpointNotificationActionResponseDto? {
+    ): EndpointNotificationActionResponse? {
         val response = sender(
             deviceId,
-            EndpointNotificationActionRequestDto(
+            EndpointNotificationActionRequest(
                 action = action,
                 riskLevel = riskLevel,
                 confirmationId = confirmationId,

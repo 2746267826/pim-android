@@ -3,9 +3,9 @@ package com.pim.app.schedule
 import com.pim.app.notifications.NotificationRoute
 import com.pim.app.notifications.EndpointNotificationActionDispatcher
 import com.pim.app.notifications.PimNotificationRouter
-import com.pim.core.models.ApiResponse
-import com.pim.core.models.EndpointNotificationActionRequestDto
-import com.pim.core.models.EndpointNotificationActionResponseDto
+import com.pim.core.contract.EndpointNotificationActionRequest
+import com.pim.core.contract.EndpointNotificationActionResponse
+import com.pim.core.contract.EndpointNotificationActionResponseApiResponse
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
@@ -34,14 +34,18 @@ class AndroidNotificationActionRouterTest {
     @Test
     fun lowRiskDispatcherCallsEndpointNotificationActionApi() = runBlocking {
         var capturedDeviceId = ""
-        var capturedRequest: EndpointNotificationActionRequestDto? = null
+        var capturedRequest: EndpointNotificationActionRequest? = null
         val dispatcher = EndpointNotificationActionDispatcher { deviceId, request ->
             capturedDeviceId = deviceId
             capturedRequest = request
-            ApiResponse(
+            EndpointNotificationActionResponseApiResponse(
                 code = 0,
                 message = "OK",
-                data = EndpointNotificationActionResponseDto("Executed", null, "recorded")
+                data = EndpointNotificationActionResponse(
+                    result = "Executed",
+                    detailUrl = null,
+                    message = "recorded"
+                )
             )
         }
 

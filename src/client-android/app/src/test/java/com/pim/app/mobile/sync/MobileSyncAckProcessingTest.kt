@@ -10,8 +10,8 @@ import com.pim.app.data.MobileLocationPointEntity
 import com.pim.app.data.MobileSyncStatus
 import com.pim.app.data.MobileUsageEventEntity
 import com.pim.app.data.MobileUsageSummaryEntity
-import com.pim.core.models.MobileIngestItemResult
-import com.pim.core.models.MobileIngestResponse
+import com.pim.core.contract.MobileIngestItemResult
+import com.pim.core.contract.MobileUsageIngestResult
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
@@ -53,13 +53,34 @@ class MobileSyncAckProcessingTest {
             MobileAcknowledgementItem("usage-event", eventIds[0].toString()),
             MobileAcknowledgementItem("usage-summary", summaryIds[0].toString()),
             MobileAcknowledgementItem("app-metadata", "com.a@1")
-        ), MobileIngestResponse(
+        ), MobileUsageIngestResult(
+            skippedCount = 0,
+            rejectedCount = 0,
+            failedCount = 0,
             batchId = "test",
             acceptedCount = 3,
             itemResults = listOf(
-                MobileIngestItemResult(eventIds[0].toString(), "usage-event", "accepted", "0", "ok"),
-                MobileIngestItemResult(summaryIds[0].toString(), "usage-summary", "accepted", "0", "ok"),
-                MobileIngestItemResult("com.a@1", "app-metadata", "accepted", "0", "ok")
+                MobileIngestItemResult(
+                    clientItemKey = eventIds[0].toString(),
+                    entityType = "usage-event",
+                    outcome = "accepted",
+                    code = "0",
+                    message = "ok",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = summaryIds[0].toString(),
+                    entityType = "usage-summary",
+                    outcome = "accepted",
+                    code = "0",
+                    message = "ok",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = "com.a@1",
+                    entityType = "app-metadata",
+                    outcome = "accepted",
+                    code = "0",
+                    message = "ok",
+                )
             )
         ))
 
@@ -89,20 +110,62 @@ class MobileSyncAckProcessingTest {
             MobileAcknowledgementItem("app-metadata", "com.bar@1")
         )
 
-        val response = MobileIngestResponse(
+        val response = MobileUsageIngestResult(
             batchId = "test",
             acceptedCount = 3,
             skippedCount = 1,
             rejectedCount = 1,
             failedCount = 2,
             itemResults = listOf(
-                MobileIngestItemResult(ids[0].toString(), "usage-event", "accepted", "0", "ok"),
-                MobileIngestItemResult(ids[1].toString(), "usage-event", "rejected", "INVALID", "bad data"),
-                MobileIngestItemResult(ids[2].toString(), "usage-event", "failed", "ERR", "temp failure"),
-                MobileIngestItemResult(summaryIds[0].toString(), "usage-summary", "accepted", "0", "ok"),
-                MobileIngestItemResult(summaryIds[1].toString(), "usage-summary", "failed", "ERR", "server err"),
-                MobileIngestItemResult("com.foo@1", "app-metadata", "accepted", "0", "ok"),
-                MobileIngestItemResult("com.bar@1", "app-metadata", "skipped", "0", "duplicate")
+                MobileIngestItemResult(
+                    clientItemKey = ids[0].toString(),
+                    entityType = "usage-event",
+                    outcome = "accepted",
+                    code = "0",
+                    message = "ok",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = ids[1].toString(),
+                    entityType = "usage-event",
+                    outcome = "rejected",
+                    code = "INVALID",
+                    message = "bad data",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = ids[2].toString(),
+                    entityType = "usage-event",
+                    outcome = "failed",
+                    code = "ERR",
+                    message = "temp failure",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = summaryIds[0].toString(),
+                    entityType = "usage-summary",
+                    outcome = "accepted",
+                    code = "0",
+                    message = "ok",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = summaryIds[1].toString(),
+                    entityType = "usage-summary",
+                    outcome = "failed",
+                    code = "ERR",
+                    message = "server err",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = "com.foo@1",
+                    entityType = "app-metadata",
+                    outcome = "accepted",
+                    code = "0",
+                    message = "ok",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = "com.bar@1",
+                    entityType = "app-metadata",
+                    outcome = "skipped",
+                    code = "0",
+                    message = "duplicate",
+                )
             )
         )
 
@@ -134,13 +197,27 @@ class MobileSyncAckProcessingTest {
         processUsageAcknowledgements(dao, linkedSetOf(
             MobileAcknowledgementItem("usage-event", ids[0].toString()),
             MobileAcknowledgementItem("usage-event", ids[1].toString())
-        ), MobileIngestResponse(
+        ), MobileUsageIngestResult(
+            acceptedCount = 0,
+            skippedCount = 0,
             batchId = "test",
             rejectedCount = 1,
             failedCount = 1,
             itemResults = listOf(
-                MobileIngestItemResult(ids[0].toString(), "usage-event", "rejected", "", ""),
-                MobileIngestItemResult(ids[1].toString(), "usage-event", "failed", "", "")
+                MobileIngestItemResult(
+                    clientItemKey = ids[0].toString(),
+                    entityType = "usage-event",
+                    outcome = "rejected",
+                    code = "",
+                    message = "",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = ids[1].toString(),
+                    entityType = "usage-event",
+                    outcome = "failed",
+                    code = "",
+                    message = "",
+                )
             )
         ))
 
@@ -156,13 +233,27 @@ class MobileSyncAckProcessingTest {
         processUsageAcknowledgements(dao, linkedSetOf(
             MobileAcknowledgementItem("usage-event", ids[0].toString()),
             MobileAcknowledgementItem("usage-event", ids[1].toString())
-        ), MobileIngestResponse(
+        ), MobileUsageIngestResult(
+            acceptedCount = 0,
+            skippedCount = 0,
             batchId = "test",
             rejectedCount = 1,
             failedCount = 1,
             itemResults = listOf(
-                MobileIngestItemResult(ids[0].toString(), "usage-event", "rejected", "ERR_CODE", ""),
-                MobileIngestItemResult(ids[1].toString(), "usage-event", "failed", "", "some msg")
+                MobileIngestItemResult(
+                    clientItemKey = ids[0].toString(),
+                    entityType = "usage-event",
+                    outcome = "rejected",
+                    code = "ERR_CODE",
+                    message = "",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = ids[1].toString(),
+                    entityType = "usage-event",
+                    outcome = "failed",
+                    code = "",
+                    message = "some msg",
+                )
             )
         ))
 
@@ -181,13 +272,27 @@ class MobileSyncAckProcessingTest {
         processUsageAcknowledgements(dao, linkedSetOf(
             MobileAcknowledgementItem("usage-event", key),
             MobileAcknowledgementItem("usage-summary", key)
-        ), MobileIngestResponse(
+        ), MobileUsageIngestResult(
+            skippedCount = 0,
+            failedCount = 0,
             batchId = "test",
             acceptedCount = 1,
             rejectedCount = 1,
             itemResults = listOf(
-                MobileIngestItemResult(key, "usage-event", "accepted", "0", "ok"),
-                MobileIngestItemResult(key, "usage-summary", "rejected", "INVALID", "bad")
+                MobileIngestItemResult(
+                    clientItemKey = key,
+                    entityType = "usage-event",
+                    outcome = "accepted",
+                    code = "0",
+                    message = "ok",
+                ),
+                MobileIngestItemResult(
+                    clientItemKey = key,
+                    entityType = "usage-summary",
+                    outcome = "rejected",
+                    code = "INVALID",
+                    message = "bad",
+                )
             )
         ))
 

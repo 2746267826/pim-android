@@ -1,8 +1,7 @@
 package com.pim.core.auth
 
-import com.pim.core.models.ApiResponse
-import com.pim.core.models.AuthResponse
-import com.pim.core.models.LoginRequest
+import com.pim.core.contract.AuthResponseApiResponse
+import com.pim.core.contract.LoginRequest
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSessionCommitResult
 import com.pim.core.settings.ServerSettingsStore
@@ -14,7 +13,7 @@ fun interface ServerBoundLoginTransport {
     suspend fun login(
         serverIdentity: String,
         request: LoginRequest
-    ): ApiResponse<AuthResponse>
+    ): AuthResponseApiResponse
 }
 
 sealed interface ServerBoundLoginResult {
@@ -40,7 +39,7 @@ class ServerBoundLoginCoordinator @Inject constructor(
         val response = try {
             transport.login(
                 serverIdentity,
-                LoginRequest(username.trim(), password)
+                LoginRequest(username = username.trim(), password = password)
             )
         } catch (failure: CancellationException) {
             throw failure
@@ -50,7 +49,7 @@ class ServerBoundLoginCoordinator @Inject constructor(
         val auth = response.data
         if (response.code != 0 || auth == null) {
             return ServerBoundLoginResult.Failure(
-                IllegalStateException(response.message.ifBlank { "Login failed" })
+                IllegalStateException(response.message.orEmpty().ifBlank { "Login failed" })
             )
         }
 

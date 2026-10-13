@@ -1,9 +1,9 @@
 package com.pim.app.mobile.summary
 
 import com.pim.app.data.MobileDataDao
-import com.pim.core.models.MobileLocationAnalyticsOverviewResponse
-import com.pim.core.models.MobileLocationTrackDto
-import com.pim.core.models.MobileUsageSummaryResponse
+import com.pim.core.contract.MobileLocationAnalyticsOverviewResponse
+import com.pim.core.contract.MobileLocationTrackDto
+import com.pim.core.contract.MobileUsageSummaryResponse
 import com.pim.core.network.ApiService
 import java.time.Instant
 import java.time.LocalDate

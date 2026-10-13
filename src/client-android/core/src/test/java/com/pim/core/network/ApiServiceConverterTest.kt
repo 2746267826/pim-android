@@ -1,7 +1,7 @@
 package com.pim.core.network
 
 import com.jakewharton.retrofit2.converter.kotlinx.serialization.asConverterFactory
-import com.pim.core.models.LoginRequest
+import com.pim.core.contract.LoginRequest
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
 import okhttp3.MediaType.Companion.toMediaType
@@ -13,7 +13,7 @@ import retrofit2.Retrofit
 class ApiServiceConverterTest {
     @Test
     fun loginRequestSerializerWritesJson() {
-        val json = Json.encodeToString(LoginRequest("alice", "secret"))
+        val json = Json.encodeToString(LoginRequest(username = "alice", password = "secret"))
 
         assertTrue(json, json.contains("\"username\":\"alice\""))
         assertTrue(json, json.contains("\"password\":\"secret\""))
@@ -31,7 +31,7 @@ class ApiServiceConverterTest {
             emptyArray<Annotation>(),
             emptyArray<Annotation>()
         )
-        val body = converter.convert(LoginRequest("alice", "secret")) ?: error("Converter returned null")
+        val body = converter.convert(LoginRequest(username = "alice", password = "secret")) ?: error("Converter returned null")
         val buffer = Buffer()
 
         body.writeTo(buffer)

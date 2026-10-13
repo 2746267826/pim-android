@@ -233,10 +233,13 @@ class MobileSyncOutcomeMappingTest {
 
     @Test
     fun `toState with failedCount gt 0 returns RETRY`() {
-        val resp = com.pim.core.models.MobileIngestResponse(
+        val resp = com.pim.core.contract.MobileUsageIngestResult(
             batchId = "batch1",
             acceptedCount = 1,
-            failedCount = 2
+            skippedCount = 0,
+            rejectedCount = 0,
+            failedCount = 2,
+            itemResults = emptyList()
         )
         val state = resp.toState("bId", "start", "end", 5, 3, 0)
         assertEquals(MobileSyncOutcome.RETRY, state.outcome)
@@ -244,11 +247,13 @@ class MobileSyncOutcomeMappingTest {
 
     @Test
     fun `toState with only rejectedCount gt 0 returns SUCCESS`() {
-        val resp = com.pim.core.models.MobileIngestResponse(
+        val resp = com.pim.core.contract.MobileUsageIngestResult(
             batchId = "batch1",
             acceptedCount = 1,
+            skippedCount = 0,
             rejectedCount = 1,
-            failedCount = 0
+            failedCount = 0,
+            itemResults = emptyList()
         )
         val state = resp.toState("bId", "start", "end", 5, 3, 0)
         assertEquals(MobileSyncOutcome.SUCCESS, state.outcome)
@@ -256,9 +261,13 @@ class MobileSyncOutcomeMappingTest {
 
     @Test
     fun `toState all zero counts returns SUCCESS`() {
-        val resp = com.pim.core.models.MobileIngestResponse(
+        val resp = com.pim.core.contract.MobileUsageIngestResult(
             batchId = "batch1",
-            acceptedCount = 0
+            acceptedCount = 0,
+            skippedCount = 0,
+            rejectedCount = 0,
+            failedCount = 0,
+            itemResults = emptyList()
         )
         val state = resp.toState("bId", "start", "end", 0, 0, 0)
         assertEquals(MobileSyncOutcome.SUCCESS, state.outcome)
@@ -266,10 +275,13 @@ class MobileSyncOutcomeMappingTest {
 
     @Test
     fun `toState with skipped returns SUCCESS when no failed`() {
-        val resp = com.pim.core.models.MobileIngestResponse(
+        val resp = com.pim.core.contract.MobileUsageIngestResult(
             batchId = "batch1",
             acceptedCount = 3,
-            skippedCount = 2
+            skippedCount = 2,
+            rejectedCount = 0,
+            failedCount = 0,
+            itemResults = emptyList()
         )
         val state = resp.toState("bId", "start", "end", 5, 3, 0)
         assertEquals(MobileSyncOutcome.SUCCESS, state.outcome)

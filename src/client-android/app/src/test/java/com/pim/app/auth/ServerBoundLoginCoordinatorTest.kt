@@ -8,9 +8,10 @@ import com.pim.core.auth.ServerBoundLoginCoordinator
 import com.pim.core.auth.ServerBoundLoginResult
 import com.pim.core.auth.ServerBoundLoginTransport
 import com.pim.core.auth.TokenManager
-import com.pim.core.models.ApiResponse
-import com.pim.core.models.AuthResponse
-import com.pim.core.models.LoginRequest
+import com.pim.core.contract.AuthResponse
+import com.pim.core.contract.AuthResponseApiResponse
+import com.pim.core.contract.LoginRequest
+import com.pim.core.contract.UserInfo
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
 import java.util.concurrent.CountDownLatch
@@ -67,7 +68,7 @@ class ServerBoundLoginCoordinatorTest {
         assertEquals(ServerBoundLoginResult.StaleServer, login.await())
         assertEquals(SERVER_B_URL, settings.getBaseUrl())
         assertEquals(PimServerEndpoints.from(SERVER_A_URL).trustedOrigin, transport.serverIdentity.get())
-        assertEquals(LoginRequest("alice", "secret"), transport.request.get())
+        assertEquals(LoginRequest(username = "alice", password = "secret"), transport.request.get())
         assertNull(tokenManager.snapshot().tokens)
         assertNull(tokenManager.snapshot().serverIdentity)
     }
@@ -135,14 +136,20 @@ class ServerBoundLoginCoordinatorTest {
         )
     }
 
-    private fun successfulResponse(): ApiResponse<AuthResponse> {
-        return ApiResponse(
+    private fun successfulResponse(): AuthResponseApiResponse {
+        return AuthResponseApiResponse(
             code = 0,
             message = "ok",
             data = AuthResponse(
                 accessToken = "access-a",
                 refreshToken = "refresh-a",
-                expiresAt = "2099-01-01T00:00:00Z"
+                expiresAt = "2099-01-01T00:00:00Z",
+                user = UserInfo(
+                    id = "user-a",
+                    username = "alice",
+                    displayName = "Alice",
+                    role = "user"
+                )
             )
         )
     }
@@ -155,7 +162,7 @@ class ServerBoundLoginCoordinatorTest {
 }
 
 private class BlockingLoginTransport(
-    private val response: ApiResponse<AuthResponse>
+    private val response: AuthResponseApiResponse
 ) : ServerBoundLoginTransport {
     val entered = CountDownLatch(1)
     val release = CountDownLatch(1)
@@ -165,7 +172,7 @@ private class BlockingLoginTransport(
     override suspend fun login(
         serverIdentity: String,
         request: LoginRequest
-    ): ApiResponse<AuthResponse> {
+    ): AuthResponseApiResponse {
         this.serverIdentity.set(serverIdentity)
         this.request.set(request)
         entered.countDown()

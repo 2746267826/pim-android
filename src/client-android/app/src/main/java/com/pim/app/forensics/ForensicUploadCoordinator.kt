@@ -8,9 +8,9 @@ import com.pim.app.data.ForensicEventDao
 import com.pim.app.data.MobileSyncStatus
 import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.mobile.sync.sha256Hex
-import com.pim.core.models.MobileDroppedReasonSummaryDto
-import com.pim.core.models.MobileForensicEventDto
-import com.pim.core.models.MobileForensicsUploadRequest
+import com.pim.core.contract.MobileDroppedReasonSummaryItem
+import com.pim.core.contract.MobileForensicEventUploadItem
+import com.pim.core.contract.MobileForensicsUploadRequest
 import com.pim.core.network.ApiService
 import com.pim.core.util.toCauseChainMessage
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -78,7 +78,7 @@ class ForensicUploadCoordinator internal constructor(
             deviceId = deviceId,
             batchId = batchId,
             events = pending.map { entity ->
-                MobileForensicEventDto(
+                MobileForensicEventUploadItem(
                     clientItemKey = entity.clientItemKey,
                     eventType = entity.eventType,
                     occurredAtUtc = iso(entity.occurredAtUtc),
@@ -101,7 +101,7 @@ class ForensicUploadCoordinator internal constructor(
 
         val body = response.data
         if (response.code != 0 || body == null) {
-            val message = response.message.ifBlank { "取证事件上报失败。" }
+            val message = response.message.orEmpty().ifBlank { "取证事件上报失败。" }
             markFailed(pending.map { it.clientItemKey }, message)
             logs.warn("forensics-sync", "取证事件上报被拒绝：$message")
             return 0
@@ -170,7 +170,7 @@ class ForensicUploadCoordinator internal constructor(
      * 覆盖窗口内的**全部**本地日（缺的填 0），因此设备端删掉明细后服务端也会归零，
      * 不会留下一份越用越偏的陈旧统计；同一份快照重复上报是覆盖写，不会翻倍（幂等）。
      */
-    suspend fun buildDroppedReasonSummaries(): List<MobileDroppedReasonSummaryDto> {
+    suspend fun buildDroppedReasonSummaries(): List<MobileDroppedReasonSummaryItem> {
         val zone = ZoneId.systemDefault()
         val now = nowUtcMillis()
         val windowStart = now - WINDOW_DAYS * DAY_MILLIS
@@ -209,7 +209,7 @@ class ForensicUploadCoordinator internal constructor(
             .sorted()
             .flatMap { day ->
                 reasons.map { reason ->
-                    MobileDroppedReasonSummaryDto(
+                    MobileDroppedReasonSummaryItem(
                         localDate = day,
                         reason = reason,
                         count = byDayAndReason[day to reason] ?: 0

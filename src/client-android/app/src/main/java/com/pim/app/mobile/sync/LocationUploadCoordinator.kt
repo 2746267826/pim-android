@@ -183,7 +183,7 @@ class LocationUploadCoordinator @Inject constructor(
     ) {
         val response = try {
             api.uploadMobileLocationsBatch(
-                MobileLocationPointsUploadRequest(chunk.map { it.second })
+                MobileLocationPointsUploadRequest(points = chunk.map { it.second })
             )
         } catch (ex: Exception) {
             if (ex is CancellationException) throw ex

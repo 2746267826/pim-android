@@ -16,13 +16,27 @@ This repository is shared by multiple agent conversations. Keep `master` useful 
 
 ### 门禁怎么过
 - 四个公开仓（api / web / android / windows）的 `master` 有两把锁：**`CI Gate`** 与 **`PIM Independent Acceptance`**。
-- `CI Gate` 逐个 check `resolve-version` / `build-android` / `build-shell-android` / `contract-freshness`，任一失败或 skipped 即 Gate 红；`release` 也依赖这四个 job，契约陈旧时不发版。
+- `CI Gate` 逐个 check `resolve-version` / `build-android` / `build-shell-android` / `contract-freshness` / `contract-codegen`，任一失败或 skipped 即 Gate 红；`release` 也依赖这五个 job，契约陈旧或生成物对不上时不发版。
 - **CI 全绿 ≠ 可以合并**：PR 此时仍会显示 `BLOCKED`，因为还差第二把锁的盖章。
 - 该 Check Run 只能由独立验收身份发布，**agent 没有权限**。交付后在 PR 里写明「等待独立验收」即可 ——
   **不要重试、不要绕过、不要为了让门禁变绿去改 ruleset 或 `.github/workflows/*`。**
 
-### 本仓特有的一条
-- `core/models/*.kt` 等 DTO 为**手写**。改任何与后端交互的代码前，必须对照本仓 `contract/openapi.json` 核对字段名、类型与可空性 —— 写错不会编译报错，只会在运行时失败。
+### 本仓特有的一条：接口边界是「契约生成 + 编译期门禁」，不是手写
+- 与后端交互的 DTO 由 `contract/openapi.json` **生成**，落在
+  `src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt`（包 `com.pim.core.contract`）。
+  文件头写着「本文件由工具生成，请勿手工修改」——**不要手改**，改了 CI 的 `Contract codegen freshness` 会红。
+- 生成/校验入口：
+  - `scripts/contract/client-operations.json` —— 客户端用到的 operation 清单（METHOD + 契约路径）；
+  - `scripts/contract/generate-kotlin.py` —— 生成器（只用 python3 标准库，离线、确定性）；
+  - `scripts/ci/generate-contract-kotlin.sh` —— 人工重新生成（唯一写入口）；
+  - `scripts/ci/check-contract-kotlin.sh` —— CI 用的只读校验（重新生成到仓外临时目录后逐字节比对）；
+  - `scripts/ci/test-contract-kotlin.sh` —— 该门禁的行为测试（一致=绿 / 手工改动=红 / 契约变了没重生成=红 …）。
+- **编译期拦截**：`ApiService.kt` 的端点、`@Path`、`@Query`、`@Body` 由 gradle 任务
+  `verifyContractEndpoints`（`src/client-android/build.gradle.kts`，挂在各模块编译任务之前）
+  对照契约逐个校验 —— 契约里不存在的端点/参数会**编译失败**；字段名/类型写错则本来就编译不过
+  （DTO 是生成的）。
+- 因此改接口相关代码的正确姿势是：先对照契约（或刷新快照并重跑生成脚本），再改 `ApiService.kt` 与调用点。
+  需要契约里没有的东西 → 按上面「需要新接口时不要自己造」找后端，不要在客户端造一个。
 
 ## Communication And Planning
 

@@ -34,43 +34,78 @@
 `PIM_CONTRACT_SOURCE_PATH`）；默认值就是真实上游 `2746267826/pim-api@master`，CI 不设任何覆盖。
 把仓内文件当权威源的**测试旁路在 CI 下会被直接拒绝**（配置错误，不是静默变绿）。
 
-> 本仓**没有** `generated.ts`、**没有** openapi-typescript 生成步骤 —— 客户端模型是手写的，
-> 所以本设施刷新/校验的产物只有**两个**：`contract/openapi.json` 与 `contract/provenance.json`，
-> 不安装 npm、不生成代码。
+> 本仓从 2026-10 起与 pim-web 同构：**客户端 DTO 由契约生成、生成物随提交进仓**。
+> 生成物是 `src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt`，
+> 由 `scripts/ci/check-contract-kotlin.sh` 在 CI 里逐字节复核（见下文「生成物与门禁」）。
+> 本设施刷新/校验的输入仍然是**两个**文件：`contract/openapi.json` 与 `contract/provenance.json`；
+> 生成步骤只用 python3 标准库，不安装 npm，也不在 CI 里跑 gradle。
 
 ## 怎么刷新
 
 后端契约更新后（用户告知，或你发现契约里缺了已有字段）：
 
 ```bash
-scripts/ci/fetch-contract.sh
+scripts/ci/fetch-contract.sh          # 刷新 contract/openapi.json + contract/provenance.json
+scripts/ci/generate-contract-kotlin.sh # 用新快照重新生成 Kotlin DTO
 ```
 
-脚本会把**两个**产物先写在仓外临时目录、全部校验通过后才安装进仓：
+刷新脚本会把**两个**产物先写在仓外临时目录、全部校验通过后才安装进仓：
 `contract/openapi.json`（上游原始字节）与 `contract/provenance.json`（来源记录）。
-**刷新后请一并提交这两个文件**，并在 PR 里说明刷新原因。
+**刷新后请一并提交这三个文件（快照、来源记录、生成的 Kotlin DTO）**，并在 PR 里说明刷新原因。
 若解析 ref / 取源 / payload 形状任一失败，脚本**一个字节都不写**，原有产物保持原样。
 
 只读校验（CI 用的就是它，绝不写仓）：
 
 ```bash
-scripts/ci/check-contract-freshness.sh
+scripts/ci/check-contract-freshness.sh   # 快照是否与上游一致
+scripts/ci/check-contract-kotlin.sh      # 生成物是否与仓内快照一致
 ```
 
-行为测试（离线 fixture 上游，证明一致=绿 / 陈旧=红 / 取不到源=红 / 旁路被拒）：
+行为测试（离线 fixture，证明一致=绿 / 陈旧=红 / 取不到源=红 / 旁路被拒 / 生成物漂移=红）：
 
 ```bash
 scripts/ci/test-contract-freshness.sh
+scripts/ci/test-contract-kotlin.sh
 ```
 
-「谁写」= `fetch-contract.sh`（人工 refresh）；「谁只读」= `check-contract-freshness.sh`（CI）。
+「谁写」= `fetch-contract.sh` + `generate-contract-kotlin.sh`（人工 refresh）；
+「谁只读」= `check-contract-freshness.sh` + `check-contract-kotlin.sh`（CI）。
+
+## 生成物与门禁
+
+- **生成物**：`src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt`
+  （包 `com.pim.core.contract`）。文件头带「本文件由工具生成，请勿手工修改」，
+  **手工改动会被 CI 的 `Contract codegen freshness` job 逐字节比对抓出来**。
+- **生成什么**：`scripts/contract/client-operations.json` 里声明的客户端 operation 的 schema 闭包
+  （当前 33 个 operation → 99 个类型）。规则是机械的：`required` 且不属于请求方向的 `readOnly`
+  → 非空、无默认值；其余 → 可空 `= null`；string enum → Kotlin enum（`@SerialName` 固定 wire 值）；
+  整数 enum → `typealias` 到 `Int`（契约没给成员名，不臆造）。
+  清单里写了契约中不存在的 METHOD/路径 → 生成器**直接报错**，不会产出半张契约。
+- **CI 校验**：job `contract-codegen`（`Contract codegen freshness`）在 push/pull_request/workflow_dispatch
+  上都执行，并接进 `CI Gate` 与 `release` 的 `needs`：用仓内快照重新生成一次，与仓内生成物逐字节比对。
+- **编译期门禁**：gradle 任务 `verifyContractEndpoints`（`src/client-android/build.gradle.kts`）
+  挂在 `:core` / `:app` / `features:calendar` 的编译任务之前，把源码里每个 Retrofit 注解与契约核对：
+  端点不存在 / 方法不对 / `@Path` 名字与路径模板不符 / `@Query` 名字契约里没有 /
+  契约要求必填请求体而方法没有 `@Body`（或反之）→ **编译失败**。
+  查询参数名按大小写不敏感比对（契约里 analytics 系参数是 PascalCase，客户端发 camelCase）。
+- 快照刷新后忘记重新生成 → `contract-codegen` 红；契约里没有的端点/参数 → 编译红。
+  两者都不是「跳过」，是必须修的真问题。
 
 ## 注意
 
-- 手写模型对不上契约时，编译/构建不会报错，问题只会在运行时出现。改接口相关代码前，先对照本文件。
-- 契约新鲜度只证明**快照字节**与上游一致，**不证明**手写模型符合契约 —— 后者见下面的报告。
+- 接口边界（`ApiService.kt` + 它用到的 DTO）现在是**契约生成 + 编译期门禁**：
+  字段名/类型写错编译不过，契约里没有的端点/参数由 `verifyContractEndpoints` 在编译期拦下。
+  改接口相关代码前仍然先对照本文件 —— 门禁只保证「与契约一致」，不保证「这个接口就是你要的业务语义」。
+- 契约新鲜度只证明**快照字节**与上游一致；生成物一致性只证明**生成物**与快照一致。
+  两者都不证明**业务调用点**用对了字段语义。
+- 目前仍为手写、且**不在**生成范围内的：`MobileSyncState` 等状态模型、DAO 实体、以及各 Repository
+  的内部模型（工单口径：只锁接口边界这一层）。
 
-## 手写模型一致性报告
+## 手写模型一致性报告（历史基线）
+
+> 下面两份报告记录的是**改造前**手写模型与契约的静态差异核对（2026-10-12，刷新快照时同步产出），
+> 现状已改为契约生成。报告保留作为「当时到底差在哪」的证据；其中列出的偏差多数已由生成模型消除，
+> 少数仍成立的行为结论（如 `readOnly` 字段不该出现在请求里、整数枚举的形状冲突）在 PR 里被显式复核。
 
 刷新快照时同步核对了本仓手写模型与契约的静态差异，**只报告、不修产品**：
 

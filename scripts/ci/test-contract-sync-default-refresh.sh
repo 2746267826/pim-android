@@ -31,7 +31,9 @@ contains() { if [[ "$3" == *"$2"* ]]; then echo "  ✅ $1"; pass=$((pass+1)); el
 
 GEN_PATH="src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt"
 REPO_SLUG="2746267826/pim-android"
-ORIGIN_URL="https://github.com/${REPO_SLUG}.git"
+# origin 的路径刻意是 <tmp>/github.com/<owner>/<repo>.git：脚本会校验远端目标身份，
+# 而任何 URL 重写（insteadOf / pushInsteadOf）都会被它拒绝，所以 fixture 不能用重写。
+ORIGIN_DIR="$TMP/github.com/${REPO_SLUG}.git"
 REF="4054a1b51af0f2b3e19fd5ab8f4e2f42d4a4bbdd"   # 任意 40 位 SHA；ref-pinned 时不再联网解析
 
 # --- 本地上游：bare 仓（供 ref 解析）+ file:// raw 目录（供取字节）----------
@@ -63,11 +65,11 @@ printf '// STALE-GENERATED-CONTENT\n' > "$WORK/$GEN_PATH"
 G="git -C $WORK"
 $G init -q 2>/dev/null || true
 $G config user.email "dev@pim.local"; $G config user.name "PIM Dev"; $G config commit.gpgsign false
-$G config "url.$TMP/origin.git.insteadOf" "$ORIGIN_URL"
-git init -q --bare "$TMP/origin.git"
+mkdir -p "$(dirname "$ORIGIN_DIR")"
+git init -q --bare "$ORIGIN_DIR"
 $G add -A && $G commit -qm "init"
 $G branch -M master
-$G remote add origin "$ORIGIN_URL"
+$G remote add origin "$ORIGIN_DIR"
 $G push -q -u origin master
 
 mkdir -p "$TMP/bin"
@@ -102,7 +104,7 @@ check "默认链路 → result=pr-opened（过期生成物被重新生成 → �
 contains "默认链路 → 真的跑了 generate-contract-kotlin.sh" "generate-contract-kotlin.sh" "$OUT"
 contains "默认链路 → 快照 sha256 与通知一致" "$EXPECT_SHA256" "$OUT"
 
-PUSHED_GEN="$(git -C "$TMP/origin.git" show "refs/heads/$BRANCH:$GEN_PATH" 2>/dev/null || echo none)"
+PUSHED_GEN="$(git -C "$ORIGIN_DIR" show "refs/heads/$BRANCH:$GEN_PATH" 2>/dev/null || echo none)"
 check "默认链路 → 推送的生成物不再是过期内容" "clean" \
   "$([ "${PUSHED_GEN}" != "none" ] && [[ "$PUSHED_GEN" != *"STALE-GENERATED-CONTENT"* ]] && echo clean || echo stale)"
 check "默认链路 → 推送的生成物与仓内现有生成物一致（生成器真的是权威）" "same" \

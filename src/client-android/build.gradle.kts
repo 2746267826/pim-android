@@ -63,10 +63,58 @@ private data class ContractOperation(
 )
 
 private data class ContractOperations(
-    val byKey: Map<String, ContractOperation>,
-    /** 契约 components.schemas 的全部名字：用来识别签名里引用了哪个契约类型。 */
-    val schemaNames: Set<String>
+    val byKey: Map<String, ContractOperation>
 )
+
+/** 客户端 operation 清单：与 scripts/contract/generate-kotlin.py 用的是同一份。 */
+private fun clientOperationsFile(contractFile: File): File =
+    contractFile.parentFile.parentFile.resolve("scripts/contract/client-operations.json")
+
+@Suppress("UNCHECKED_CAST")
+private fun loadClientOperations(operationsFile: File): Set<String> {
+    if (!operationsFile.isFile) {
+        throw GradleException("客户端 operation 清单不存在：$operationsFile")
+    }
+    val root = groovy.json.JsonSlurper().parse(operationsFile) as? Map<String, Any?>
+        ?: throw GradleException("客户端 operation 清单不是 JSON 对象：$operationsFile")
+    val operations = root["operations"] as? List<*> ?: throw GradleException("清单缺少 operations：$operationsFile")
+    return operations.mapNotNull { entry ->
+        val map = entry as? Map<*, *> ?: return@mapNotNull null
+        val method = (map["method"] as? String)?.uppercase() ?: return@mapNotNull null
+        val path = map["path"] as? String ?: return@mapNotNull null
+        "$method $path"
+    }.toSet()
+}
+
+/** 生成物路径：与 scripts/contract/generate-kotlin.py 的输出一致。 */
+private fun generatedModelsFile(contractFile: File): File =
+    contractFile.parentFile.parentFile.resolve(
+        "src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt"
+    )
+
+/**
+ * 生成物里实际声明了哪些契约类型（闭包内的 99 个）。
+ *
+ * 注意**不能**拿契约的全部 `components.schemas`（566 个）当集合：客户端本地类只要恰好和某个
+ * 未接入的契约 schema 同名（例如 `DeviceLivenessSummary`），就会被误判成"顶替契约类型"。
+ * 门禁只该管"真的生成进客户端的类型"。
+ */
+private fun loadGeneratedTypeNames(modelsFile: File): Set<String> {
+    if (!modelsFile.isFile) {
+        throw GradleException(
+            "契约生成物不存在：$modelsFile（请运行 bash scripts/ci/generate-contract-kotlin.sh）"
+        )
+    }
+    val declarations = Regex(
+        """^(?:data\s+class|enum\s+class|value\s+class|sealed\s+interface|interface|typealias)\s+(\w+)""",
+        RegexOption.MULTILINE
+    )
+    val names = declarations.findAll(modelsFile.readText()).map { it.groupValues[1] }.toSet()
+    if (names.isEmpty()) {
+        throw GradleException("契约生成物里没有解析出任何类型：$modelsFile")
+    }
+    return names
+}
 
 private data class RetrofitCall(
     val method: String,
@@ -114,7 +162,6 @@ private fun loadContractOperations(contractFile: File): ContractOperations {
         ?: throw GradleException("契约快照不是 JSON 对象：$contractFile")
     val paths = root["paths"] as? Map<String, Any?>
         ?: throw GradleException("契约快照缺少 paths：$contractFile")
-    val schemas = ((root["components"] as? Map<*, *>)?.get("schemas") as? Map<*, *>) ?: emptyMap<Any?, Any?>()
 
     val operations = linkedMapOf<String, ContractOperation>()
     for ((path, itemValue) in paths) {
@@ -153,7 +200,7 @@ private fun loadContractOperations(contractFile: File): ContractOperations {
     if (operations.isEmpty()) {
         throw GradleException("契约快照里没有任何 operation：$contractFile")
     }
-    return ContractOperations(operations, schemas.keys.filterIsInstance<String>().toSet())
+    return ContractOperations(operations)
 }
 
 /**
@@ -163,39 +210,57 @@ private fun loadContractOperations(contractFile: File): ContractOperations {
  * 直接扫原文会把它们当成真注解；反过来，`@POST /*c*/ ("x")` 这种**注释分隔**的写法又必须被看见。
  * 掩码后偏移量与原文一一对应：结构从掩码读，参数值再从原文取，两边都不丢。
  */
-private fun maskCommentsAndStrings(text: String): String {
-    val out = StringBuilder(text.length)
+private data class MaskedSource(
+    /** 等长掩码文本：注释与字符串字面量内容都变成空格，其余原样。 */
+    val text: String,
+    /** **真实**字符串字面量的内容区间（注释里的引号不算），用于从原文取值。 */
+    val stringLiterals: List<IntRange>
+)
+
+private fun maskSource(input: String): MaskedSource {
+    val out = StringBuilder(input.length)
+    val literals = mutableListOf<IntRange>()
     var i = 0
     fun blank(ch: Char) { out.append(if (ch == '\n') '\n' else ' ') }
-    while (i < text.length) {
-        val c = text[i]
+    while (i < input.length) {
+        val c = input[i]
         when {
-            c == '/' && i + 1 < text.length && text[i + 1] == '/' -> {
-                while (i < text.length && text[i] != '\n') { blank(text[i]); i++ }
+            c == '/' && i + 1 < input.length && input[i + 1] == '/' -> {
+                while (i < input.length && input[i] != '\n') { blank(input[i]); i++ }
             }
-            c == '/' && i + 1 < text.length && text[i + 1] == '*' -> {
-                blank(text[i]); blank(text[i + 1]); i += 2
-                while (i < text.length && !(text[i] == '*' && i + 1 < text.length && text[i + 1] == '/')) {
-                    blank(text[i]); i++
+            c == '/' && i + 1 < input.length && input[i + 1] == '*' -> {
+                blank(input[i]); blank(input[i + 1]); i += 2
+                while (i < input.length && !(input[i] == '*' && i + 1 < input.length && input[i + 1] == '/')) {
+                    blank(input[i]); i++
                 }
-                if (i < text.length) { blank(text[i]); blank(text[i + 1]); i += 2 }
+                if (i < input.length) { blank(input[i]); blank(input[i + 1]); i += 2 }
             }
-            c == '"' && text.startsWith("\"\"\"", i) -> {
+            c == '"' && input.startsWith("\"\"\"", i) -> {
                 repeat(3) { blank(' '); i++ }
-                while (i < text.length && !text.startsWith("\"\"\"", i)) { blank(text[i]); i++ }
-                if (i < text.length) { repeat(3) { blank(' '); i++ } }
+                val start = i
+                while (i < input.length && !input.startsWith("\"\"\"", i)) { blank(input[i]); i++ }
+                if (i > start) literals += start until i
+                if (i < input.length) { repeat(3) { blank(' '); i++ } }
             }
             c == '"' -> {
                 blank(' '); i++
-                while (i < text.length && text[i] != '"' && text[i] != '\n') {
-                    if (text[i] == '\\' && i + 1 < text.length) { blank(' '); blank(' '); i += 2 } else { blank(text[i]); i++ }
+                val start = i
+                while (i < input.length && input[i] != '"' && input[i] != '\n') {
+                    if (input[i] == '\\' && i + 1 < input.length) { blank(' '); blank(' '); i += 2 } else { blank(input[i]); i++ }
                 }
-                if (i < text.length && text[i] == '"') { blank(' '); i++ }
+                if (i > start) literals += start until i
+                if (i < input.length && input[i] == '"') { blank(' '); i++ }
             }
             else -> { out.append(c); i++ }
         }
     }
-    return out.toString()
+    return MaskedSource(out.toString(), literals)
+}
+
+/** 取区间内**第一个真实字符串字面量**的值（注释里的引号不是字面量，因此不会被误读）。 */
+private fun firstStringLiteral(source: MaskedSource, original: String, from: Int, to: Int): String? {
+    val range = source.stringLiterals.firstOrNull { it.first in from until to } ?: return null
+    return original.substring(range.first, range.last + 1)
 }
 
 /** 从 `openParen` 出发做括号配平，返回配对的 `)` 下标（找不到时返回文本末尾）。 */
@@ -219,15 +284,22 @@ private fun matchingParen(text: String, openParen: Int): Int {
  * 读出 `@Name("...")` 形式的注解值：**结构定位在掩码文本上**（因此注释/换行/多余空白都无所谓），
  * 取值再从等长的原文里切同一段 —— 掩码只吃掉了字符串内容，偏移不变。
  */
-private fun annotationStringValues(masked: String, original: String, annotationName: String): List<String> {
+private fun annotationStringValues(
+    source: MaskedSource,
+    original: String,
+    annotationName: String,
+    from: Int,
+    to: Int
+): List<String> {
     val values = mutableListOf<String>()
+    val masked = source.text
     val regex = Regex("""@$annotationName\s*\(""")
-    for (match in regex.findAll(masked)) {
+    for (match in regex.findAll(masked, from)) {
+        if (match.range.first >= to) break
         val openParen = masked.indexOf('(', match.range.first)
-        if (openParen < 0) continue
+        if (openParen < 0 || openParen >= to) continue
         val closeParen = matchingParen(masked, openParen)
-        val slice = original.substring(openParen + 1, minOf(closeParen, original.length))
-        Regex(""""([^"]*)"""").find(slice)?.let { values += it.groupValues[1] }
+        firstStringLiteral(source, original, openParen + 1, closeParen)?.let { values += it }
     }
     return values
 }
@@ -245,11 +317,14 @@ private fun normalizeType(type: String): String =
  *
  * `masked` 与 `original` 等长：结构（注解/函数/括号）从 `masked` 读，注解的参数值从 `original` 读。
  */
-private fun findRetrofitCalls(original: String, masked: String, schemaNames: Set<String>): List<RetrofitCall> {
+private fun findRetrofitCalls(source: MaskedSource, original: String, schemaNames: Set<String>): List<RetrofitCall> {
+    val masked = source.text
     val calls = mutableListOf<RetrofitCall>()
-    val annotation = Regex("""@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*([^)]*)\)""")
-    for (match in annotation.findAll(masked)) {
-        val afterAnnotation = match.range.last + 1
+    val annotationHeader = Regex("""@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(""")
+    for (match in annotationHeader.findAll(masked)) {
+        val annotationOpen = masked.indexOf('(', match.range.first)
+        val annotationClose = matchingParen(masked, annotationOpen)
+        val afterAnnotation = annotationClose + 1
         val funMatch = Regex("""\bfun\s+(\w+)\s*\(""").find(masked, afterAnnotation) ?: continue
         // 注解后面紧跟的必须是同一个函数声明：中间再出现注解说明这是另一个方法。
         val between = masked.substring(afterAnnotation, funMatch.range.first)
@@ -257,8 +332,8 @@ private fun findRetrofitCalls(original: String, masked: String, schemaNames: Set
 
         val openParen = masked.indexOf('(', funMatch.range.first)
         val closeParen = matchingParen(masked, openParen)
-        val annotationText = original.substring(match.range.first, minOf(match.range.last + 1, original.length))
-        val rawPath = Regex(""""([^"]*)"""").find(annotationText)?.groupValues?.get(1) ?: continue
+        // 端点取「注解括号内第一个**真实**字符串字面量」：注释里的 `/* "x" */` 不会被误读。
+        val rawPath = firstStringLiteral(source, original, annotationOpen + 1, annotationClose) ?: continue
         val parameters = original.substring(openParen + 1, minOf(closeParen, original.length))
         val maskedParameters = masked.substring(openParen + 1, minOf(closeParen, masked.length))
         val returnType = extractReturnType(masked, closeParen)
@@ -268,8 +343,8 @@ private fun findRetrofitCalls(original: String, masked: String, schemaNames: Set
             method = match.groupValues[1],
             rawPath = rawPath,
             functionName = funMatch.groupValues[1],
-            pathVariables = annotationStringValues(maskedParameters, parameters, "Path").toSet(),
-            queryParameters = annotationStringValues(maskedParameters, parameters, "Query"),
+            pathVariables = annotationStringValues(source, original, "Path", openParen + 1, closeParen).toSet(),
+            queryParameters = annotationStringValues(source, original, "Query", openParen + 1, closeParen),
             bodyType = bodyType,
             returnType = normalizeType(returnType),
             referencedSchemaNames = contractNamesIn(maskedParameters + " " + returnType, schemaNames),
@@ -367,6 +442,41 @@ private fun verifyParameterAnnotationCoverage(
     }
 }
 
+/**
+ * 契约类型名不能被「本地别名/本地类」顶替。
+ *
+ * 文本扫描认的是类型**名字**，所以 `typealias LoginRequest = List<...>` 这种写法会让
+ * 「@Body 是 LoginRequest」看起来成立、实际结构却是另一个东西。既然门禁不是编译器，
+ * 就把这种同名顶替一律拒掉（生成文件自身的 `typealias PimHealthStatus = Int` 除外）。
+ */
+private fun verifyContractTypeNameShadowing(
+    relativeFile: String,
+    masked: String,
+    schemaNames: Set<String>,
+    problems: MutableList<String>
+) {
+    if (relativeFile.replace('\\', '/').contains("com/pim/core/contract/")) return
+    val declared = mutableListOf<Pair<String, String>>()
+    Regex("""\btypealias\s+(\w+)""").findAll(masked).forEach {
+        declared += it.groupValues[1] to "typealias"
+    }
+    Regex("""\bimport\s+[\w.]*?(\w+)\s+as\s+(\w+)""").findAll(masked).forEach {
+        declared += it.groupValues[2] to "import ... as"
+    }
+    Regex("""\b(?:data\s+|sealed\s+|abstract\s+|open\s+)?class\s+(\w+)""").findAll(masked).forEach {
+        declared += it.groupValues[1] to "class"
+    }
+    Regex("""\binterface\s+(\w+)""").findAll(masked).forEach {
+        declared += it.groupValues[1] to "interface"
+    }
+    declared.filter { it.first in schemaNames }
+        .distinct()
+        .forEach { (name, kind) ->
+            problems += "$relativeFile 用本地 $kind 顶替了契约类型名 $name：文本门禁认的是类型名，" +
+                "同名顶替会让「类型与契约一致」的检查失效。请改用生成类型本身（或换个名字）。"
+        }
+}
+
 private fun verifyRetrofitCalls(
     relativeFile: String,
     call: RetrofitCall,
@@ -452,20 +562,42 @@ private fun verifyRetrofitCalls(
 
 private fun verifyContractEndpoints(contractFile: File, sourcesRoot: File): List<String> {
     val contract = loadContractOperations(contractFile)
+    val generatedTypes = loadGeneratedTypeNames(generatedModelsFile(contractFile))
     val problems = mutableListOf<String>()
-    if (!sourcesRoot.isDirectory) return emptyList()
+
+    // 客户端清单里的 operation 必须在契约里存在，且它的类型必须在生成物里：
+    // 前者拦住「清单里编造端点」，后者拦住「契约改了但没重新生成」（与 CI 门禁双保险）。
+    loadClientOperations(clientOperationsFile(contractFile)).sorted().forEach { key ->
+        val operation = contract.byKey[key]
+        if (operation == null) {
+            problems += "scripts/contract/client-operations.json 里的 $key 在契约里不存在：" +
+                "需要新接口请先让后端在 pim-api 实现并刷新契约快照。"
+            return@forEach
+        }
+        val expected = listOfNotNull(operation.requestSchema) + operation.responseSchemas
+        val missing = expected.filterNot { it in generatedTypes }
+        if (missing.isNotEmpty()) {
+            problems += "契约生成物缺少 $key 的类型 ${missing.sorted()}：" +
+                "请运行 bash scripts/ci/generate-contract-kotlin.sh 重新生成并提交。"
+        }
+    }
+
+    if (!sourcesRoot.isDirectory) return problems
     sourcesRoot.walkTopDown()
         .filter { it.isFile && it.extension == "kt" }
         .sortedBy { it.path }
         .forEach { file ->
             val original = file.readText()
-            val masked = maskCommentsAndStrings(original)
+            val source = maskSource(original)
+            val masked = source.text
+            val relative = file.relativeTo(sourcesRoot).path
+            // 同名顶替检查对**每个文件**都要做（顶替类型名的文件自己可能一个注解都没有）。
+            verifyContractTypeNameShadowing(relative, masked, generatedTypes, problems)
             // 预筛选走**掩码后**的文本：注释分隔写法（`@POST /*c*/ ("x")`）与 `@HTTP(...)` 都必须被看见。
             if (!RETROFIT_ANNOTATION_PREFIX.containsMatchIn(masked)) {
                 return@forEach
             }
-            val relative = file.relativeTo(sourcesRoot).path
-            val calls = findRetrofitCalls(original, masked, contract.schemaNames)
+            val calls = findRetrofitCalls(source, original, generatedTypes)
             verifyKotlinFileCoverage(relative, masked, calls, problems)
             calls.forEach { call ->
                 verifyParameterAnnotationCoverage(relative, call, problems)
@@ -668,6 +800,44 @@ private fun verifyContractEndpointGuardSelfTest(contractFile: File, contract: Co
             """.trimIndent()
         )
         check(emptyBodyAnnotation.isEmpty()) { "契约门禁自检失败：@Body() 的合法写法被误报：$emptyBodyAnnotation" }
+
+        val commentEmbeddedString = problemsFor(
+            """
+            interface Sample {
+                @POST(/* "$postPath" */ "pc/whatever")
+                suspend fun fabricated(@Body request: $postRequest): $postResponse
+            }
+            """.trimIndent()
+        )
+        check(commentEmbeddedString.any { it.contains("不存在的端点") }) {
+            "契约门禁自检失败：注解括号里注释中的字符串被当成了端点值"
+        }
+
+        val commentEmbeddedQueryString = problemsFor(
+            """
+            interface Sample {
+                @GET("$getPath")
+                suspend fun sample(@Query(/* "x" */ "pcFlag") pcFlag: String? = null): $getResponse
+            }
+            """.trimIndent()
+        )
+        check(commentEmbeddedQueryString.any { it.contains("未声明的查询参数") }) {
+            "契约门禁自检失败：@Query 括号里注释中的字符串被当成了参数名"
+        }
+
+        val shadowedTypeName = problemsFor(
+            """
+            typealias $postRequest = List<com.pim.core.contract.$postRequest>
+
+            interface Sample {
+                @POST("$postPath")
+                suspend fun sample(@Body request: $postRequest): $postResponse
+            }
+            """.trimIndent()
+        )
+        check(shadowedTypeName.any { it.contains("顶替了契约类型名") }) {
+            "契约门禁自检失败：本地同名 typealias 顶替契约类型没有被拦下"
+        }
 
         val stringOnly = problemsFor(
             """

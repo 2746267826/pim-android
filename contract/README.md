@@ -86,13 +86,18 @@ scripts/ci/test-contract-kotlin.sh
 - **编译期门禁**：gradle 任务 `verifyContractEndpoints`（`src/client-android/build.gradle.kts`）
   挂在 `:core` / `:app` / `features:calendar` 的编译任务之前，把源码里每个 Retrofit 注解与契约核对：
   端点不存在 / 方法不对 / `@Path` 名字与路径模板不符 / `@Query` 名字契约里没有 /
-  `@Body` 或返回类型与该 operation 的 schema 不一致（含用 `String`、`Unit` 这类非契约类型糊过去）→ **编译失败**。
-  查询参数名按大小写不敏感比对（契约里 analytics 系参数是 PascalCase，客户端发 camelCase）。
-  它用文本扫描而不是 Kotlin PSI，因此自带覆盖度自检：解析不出来的注解形态、`@HTTP(...)`、`@Url`
-  一律报错而不是放过。**约定**：Retrofit 接口方法请保持标准形态
-  （`@GET("path")` + 具体契约类型签名 + `@Body`/`@Query`/`@Path` 注解参数），别用注解常量拼接、
-  动态 URL 或非常规跨行泛型 —— 那会被门禁判为「无法核对」而拦住。
-- 快照刷新后忘记重新生成 → `contract-codegen` 红；契约里没有的端点/参数 → 编译红。
+  `@Body` 或返回类型与该 operation 的 schema **结构**不一致（多包一层 `List<...>`、换成 `String`
+  这类非契约类型都算）→ **编译失败**。查询参数名按大小写不敏感比对（契约里 analytics 系参数是 PascalCase，
+  客户端发 camelCase）。
+  它用文本扫描而不是 Kotlin PSI，因此对"看不懂的东西"一律 fail-closed：解析不出来的注解形态、
+  `@HTTP(...)`、`@Url`、参数注解（`@Path`/`@Query`/`@Body`）解析数量对不上、
+  以及**用本地同名 `typealias`/`class`/`interface`/导入改名顶替契约类型名**都会被拦下。
+- **门禁自带自检**：任务每次运行都会先把 fixture 写进临时目录、**走同一个文件扫描入口**跑一遍
+  （合法写法不得误报、编造端点/参数/类型/注释分隔写法/同名顶替必须被拦下），自检失败即编译失败 ——
+  这是为了避免「门禁退化成一个永远 PASS 的摆设」。
+- **约定**：Retrofit 接口方法请保持标准形态（`@GET("path")` + 具体契约类型签名 + `@Body`/`@Query`/`@Path`
+  注解参数），别用注解常量拼接、动态 URL 或本地同名类型顶替；那会被门禁判为「无法核对」而拦住。
+- 快照刷新后忘记重新生成 → `contract-codegen` 红；契约里没有的端点/参数/类型 → 编译红。
   两者都不是「跳过」，是必须修的真问题。
 
 ## 为什么自己写生成器（而不是 openapi-generator / kotlinpoet）

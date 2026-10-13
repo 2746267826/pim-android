@@ -42,7 +42,10 @@ private val RETROFIT_ANNOTATIONS = setOf("GET", "POST", "PUT", "DELETE", "PATCH"
 
 /** 出现在源码任何位置（含注释分隔写法）都要被门禁看见的注解名字。 */
 private val RETROFIT_ANNOTATION_PREFIX =
-    Regex("""@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\s*\(?""")
+    Regex("""@(?:[\w.]+\.)?(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS|HTTP)\s*\(""")
+
+/** 与 [RETROFIT_ANNOTATION_PREFIX] 同一口径：允许 `@retrofit2.http.GET("x")` 这类全限定写法。 */
+private fun annotationPattern(name: String): Regex = Regex("""@(?:[\w.]+\.)?$name\s*\(""")
 
 /** 契约 2xx 不是 JSON 时允许的返回类型（Retrofit 原样把响应体交回来的载体）。 */
 private val NON_JSON_RESPONSE_TYPES = setOf("ResponseBody", "Unit")
@@ -293,7 +296,7 @@ private fun annotationStringValues(
 ): List<String> {
     val values = mutableListOf<String>()
     val masked = source.text
-    val regex = Regex("""@$annotationName\s*\(""")
+    val regex = annotationPattern(annotationName)
     for (match in regex.findAll(masked, from)) {
         if (match.range.first >= to) break
         val openParen = masked.indexOf('(', match.range.first)
@@ -320,7 +323,7 @@ private fun normalizeType(type: String): String =
 private fun findRetrofitCalls(source: MaskedSource, original: String, schemaNames: Set<String>): List<RetrofitCall> {
     val masked = source.text
     val calls = mutableListOf<RetrofitCall>()
-    val annotationHeader = Regex("""@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(""")
+    val annotationHeader = Regex("""@(?:[\w.]+\.)?(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(""")
     for (match in annotationHeader.findAll(masked)) {
         val annotationOpen = masked.indexOf('(', match.range.first)
         val annotationClose = matchingParen(masked, annotationOpen)
@@ -328,7 +331,7 @@ private fun findRetrofitCalls(source: MaskedSource, original: String, schemaName
         val funMatch = Regex("""\bfun\s+(\w+)\s*\(""").find(masked, afterAnnotation) ?: continue
         // 注解后面紧跟的必须是同一个函数声明：中间再出现注解说明这是另一个方法。
         val between = masked.substring(afterAnnotation, funMatch.range.first)
-        if (between.contains(Regex("""@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\("""))) continue
+        if (between.contains(Regex("""@(?:[\w.]+\.)?(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\("""))) continue
 
         val openParen = masked.indexOf('(', funMatch.range.first)
         val closeParen = matchingParen(masked, openParen)
@@ -337,7 +340,7 @@ private fun findRetrofitCalls(source: MaskedSource, original: String, schemaName
         val parameters = original.substring(openParen + 1, minOf(closeParen, original.length))
         val maskedParameters = masked.substring(openParen + 1, minOf(closeParen, masked.length))
         val returnType = extractReturnType(masked, closeParen)
-        val bodyType = Regex("""@Body\s*(?:\(\s*\))?\s+\w+\s*:\s*([^,)=]+)""")
+        val bodyType = Regex("""@(?:[\w.]+\.)?Body\s*(?:\(\s*\))?\s+\w+\s*:\s*([^,)=]+)""")
             .find(maskedParameters)?.groupValues?.get(1)?.trim()
         calls += RetrofitCall(
             method = match.groupValues[1],
@@ -401,15 +404,15 @@ private fun verifyKotlinFileCoverage(
     calls: List<RetrofitCall>,
     problems: MutableList<String>
 ) {
-    if (Regex("""@HTTP\s*\(""").containsMatchIn(masked)) {
+    if (annotationPattern("HTTP").containsMatchIn(masked)) {
         problems += "$relativeFile 使用了 @HTTP(...)：本门禁无法把自由形态的 method/path 与契约核对。" +
             "请改用 @GET/@POST/@PUT/@DELETE/@PATCH（要新形态请先扩展 verifyContractEndpoints）。"
     }
-    if (Regex("""@Url\b""").containsMatchIn(masked)) {
+    if (Regex("""@(?:[\w.]+\.)?Url\b""").containsMatchIn(masked)) {
         problems += "$relativeFile 使用了 @Url：动态 URL 无法在编译期核对契约，等于绕开接口门禁。"
     }
     for (name in RETROFIT_ANNOTATIONS) {
-        val total = Regex("""@$name\s*\(""").findAll(masked).count()
+        val total = annotationPattern(name).findAll(masked).count()
         val parsed = calls.count { it.method == name }
         if (total != parsed) {
             problems += "$relativeFile 有 $total 处 @$name，但只解析出 $parsed 处（写法超出本门禁的解析范围，" +
@@ -427,13 +430,13 @@ private fun verifyParameterAnnotationCoverage(
     val location = "$relativeFile:${call.line} (${call.functionName})"
     val maskedParameters = call.maskedParameters
     for (name in listOf("Path", "Query")) {
-        val total = Regex("""@$name\s*\(""").findAll(maskedParameters).count()
+        val total = annotationPattern(name).findAll(maskedParameters).count()
         val parsed = if (name == "Path") call.pathVariables.size else call.queryParameters.size
         if (total != parsed) {
             problems += "$location 有 $total 处 @$name，但只解析出 $parsed 处（写法超出本门禁的解析范围）。"
         }
     }
-    val bodyAnnotations = Regex("""@Body\b""").findAll(maskedParameters).count()
+    val bodyAnnotations = Regex("""@(?:[\w.]+\.)?Body\b""").findAll(maskedParameters).count()
     if (bodyAnnotations > 0 && !call.hasBody) {
         problems += "$location 出现 @Body 但解析不出参数类型（写法超出本门禁的解析范围）。"
     }
@@ -468,6 +471,10 @@ private fun verifyContractTypeNameShadowing(
     }
     Regex("""\binterface\s+(\w+)""").findAll(masked).forEach {
         declared += it.groupValues[1] to "interface"
+    }
+    if (Regex("""\bimport\s+retrofit2\.http\.\w+\s+as\s+\w+""").containsMatchIn(masked)) {
+        problems += "$relativeFile 把 retrofit2 注解改名导入（import retrofit2.http.X as Y）：" +
+            "改名后的注解本门禁看不见，等于绕开接口门禁。请用原名导入。"
     }
     declared.filter { it.first in schemaNames }
         .distinct()
@@ -837,6 +844,32 @@ private fun verifyContractEndpointGuardSelfTest(contractFile: File, contract: Co
         )
         check(shadowedTypeName.any { it.contains("顶替了契约类型名") }) {
             "契约门禁自检失败：本地同名 typealias 顶替契约类型没有被拦下"
+        }
+
+        val qualifiedAnnotation = problemsFor(
+            """
+            interface Sample {
+                @retrofit2.http.POST("pc/whatever")
+                suspend fun fabricated(@retrofit2.http.Body request: $postRequest): $postResponse
+            }
+            """.trimIndent()
+        )
+        check(qualifiedAnnotation.any { it.contains("不存在的端点") }) {
+            "契约门禁自检失败：全限定注解写法（@retrofit2.http.POST(...)）绕过了扫描器"
+        }
+
+        val renamedAnnotationImport = problemsFor(
+            """
+            import retrofit2.http.POST as HttpPost
+
+            interface Sample {
+                @HttpPost("pc/whatever")
+                suspend fun fabricated(): Unit
+            }
+            """.trimIndent()
+        )
+        check(renamedAnnotationImport.any { it.contains("改名导入") }) {
+            "契约门禁自检失败：把 Retrofit 注解改名导入（import ... as ...）绕过了扫描器"
         }
 
         val stringOnly = problemsFor(

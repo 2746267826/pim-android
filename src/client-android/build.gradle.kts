@@ -545,6 +545,10 @@ private fun verifyContractTypeNameShadowing(
     Regex("""\binterface\s+`?(\w+)`?""").findAll(masked).forEach {
         declared += it.groupValues[1] to "interface"
     }
+    // object（含 companion object 之外的顶层/嵌套 object）同样能顶替类型名，顺手覆盖。
+    Regex("""\bobject\s+`?(\w+)`?""").findAll(masked).forEach {
+        declared += it.groupValues[1] to "object"
+    }
     if (Regex("""\bimport\s+retrofit2\.http\.\w+\s+as\s+\w+""").containsMatchIn(masked)) {
         problems += "$relativeFile 把 retrofit2 注解改名导入（import retrofit2.http.X as Y）：" +
             "改名后的注解本门禁看不见，等于绕开接口门禁。请用原名导入。"
@@ -1019,6 +1023,17 @@ private fun verifyContractEndpointGuardSelfTest(contractFile: File, contract: Co
         )
         check(qualifiedQuery.any { it.contains("未声明的查询参数") }) {
             "契约门禁自检失败：全限定 @retrofit2.http.Query 没有被识别"
+        }
+
+        val shadowingObject = problemsFor(
+            """
+            object $postRequest {
+                val payload: String = "x"
+            }
+            """.trimIndent()
+        )
+        check(shadowingObject.any { it.contains("顶替了契约类型名") }) {
+            "契约门禁自检失败：本地 object 同名顶替契约类型没有被拦下"
         }
 
         val stringOnly = problemsFor(

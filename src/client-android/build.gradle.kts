@@ -17,13 +17,16 @@ plugins {
 //   * 端点在契约里不存在 / 方法不对 → 编译失败；
 //   * `@Path` 名字与路径模板占位符对不上 → 编译失败（Retrofit 原本只在运行时炸）；
 //   * `@Query` 名字在契约里不存在 → 编译失败；
-//   * 契约要求必填请求体而方法没有 `@Body`（或反之）→ 编译失败。
+//   * `@Body` / 返回类型与契约该 operation 的 schema 对不上（包括用 `String`/`Unit` 这种非契约类型
+//     糊过去）→ 编译失败；
+//   * 用 `@HTTP(...)` / `@Url` / 扫描器看不懂的注解形态绕开核对 → 编译失败（不静默放过）。
 //
 // 口径与限制：
 //   * 相对路径按 `PimServerEndpoints` 的 API 根路径 `/api/v1/` 解析，前导 `/` 视为绝对路径；
 //   * 查询参数名**大小写不敏感**比对（契约里 analytics 系参数是 PascalCase，客户端发 camelCase，
 //     ASP.NET Core 查询串绑定大小写不敏感，沿用既有口径，不为此改产品代码）；
-//   * `@Url` / `@HTTP(method=..., path=...)` 这类动态形态不在本门禁覆盖范围内（当前仓内没有）。
+//   * 扫描基于「掩码字符串/注释 + 括号配平」的文本分析，不是 Kotlin PSI；因此自带覆盖度自检：
+//     出现次数与解析次数不一致、或出现 `@HTTP`/`@Url` 一律报错，宁可拦住也不假装核对过。
 //
 // 契约更新后需要新接口时：先让后端在 pim-api 实现并刷新快照，再在 ApiService 里加方法 ——
 // 直接编一个端点会在这里编译失败。
@@ -34,6 +37,9 @@ private val CONTRACT_API_BASE_PATH = "/api/v1/"
 private val CONTRACT_HTTP_METHODS = listOf("get", "post", "put", "delete", "patch", "head", "options")
 
 private val RETROFIT_ANNOTATIONS = setOf("GET", "POST", "PUT", "DELETE", "PATCH", "HEAD", "OPTIONS")
+
+private val RETROFIT_ANNOTATION_PREFIX =
+    Regex("""@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*""")
 
 private data class ContractOperation(
     val method: String,
@@ -59,11 +65,18 @@ private data class RetrofitCall(
     val functionName: String,
     val pathVariables: Set<String>,
     val queryParameters: List<String>,
-    val hasBody: Boolean,
+    /** `@Body` 参数的类型名（没有 `@Body` 时为 null）。 */
+    val bodyTypeName: String?,
     /** 参数列表 + 返回类型里出现的契约类型名。 */
     val referencedSchemaNames: Set<String>,
+    /** 返回类型里出现的契约类型名。 */
+    val responseSchemaNames: Set<String>,
+    /** `@Body` 类型里出现的契约类型名。 */
+    val requestSchemaNames: Set<String>,
     val line: Int
-)
+) {
+    val hasBody: Boolean get() = bodyTypeName != null
+}
 
 @Suppress("UNCHECKED_CAST")
 private fun schemaRefName(schema: Any?): String? {
@@ -184,13 +197,13 @@ private fun maskCommentsAndStrings(text: String): String {
  */
 private fun findRetrofitCalls(original: String, masked: String, schemaNames: Set<String>): List<RetrofitCall> {
     val calls = mutableListOf<RetrofitCall>()
-    val annotation = Regex("""@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\(\s*([^)]*)\)""")
+    val annotation = Regex("""@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\(\s*([^)]*)\)""")
     for (match in annotation.findAll(masked)) {
         val afterAnnotation = match.range.last + 1
         val funMatch = Regex("""\bfun\s+(\w+)\s*\(""").find(masked, afterAnnotation) ?: continue
         // 注解后面紧跟的必须是同一个函数声明：中间再出现注解说明这是另一个方法。
         val between = masked.substring(afterAnnotation, funMatch.range.first)
-        if (between.contains(Regex("""@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\("""))) continue
+        if (between.contains(Regex("""@(GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS)\s*\("""))) continue
 
         val openParen = masked.indexOf('(', funMatch.range.first)
         var depth = 0
@@ -214,6 +227,8 @@ private fun findRetrofitCalls(original: String, masked: String, schemaNames: Set
             .let { rest -> rest.indexOf(':').takeIf { it >= 0 }?.let { rest.substring(it + 1).lineSequence().first() } }
             .orEmpty()
         val signature = maskedParameters + " " + returnType
+        val bodyTypeText = Regex("""@Body\s+\w+\s*:\s*([^,)=]+)""")
+            .find(maskedParameters)?.groupValues?.get(1)?.trim()
         calls += RetrofitCall(
             method = match.groupValues[1],
             rawPath = rawPath,
@@ -222,15 +237,20 @@ private fun findRetrofitCalls(original: String, masked: String, schemaNames: Set
                 .findAll(parameters).map { it.groupValues[1] }.toSet(),
             queryParameters = Regex("""@Query\(\s*"([^"]*)"\s*\)""")
                 .findAll(parameters).map { it.groupValues[1] }.toList(),
-            hasBody = Regex("""@Body\b""").containsMatchIn(maskedParameters),
-            referencedSchemaNames = schemaNames.filter { name ->
-                Regex("""(?<![\w.])""" + Regex.escape(name) + """(?![\w])""").containsMatchIn(signature)
-            }.toSet(),
+            bodyTypeName = bodyTypeText,
+            referencedSchemaNames = contractNamesIn(signature, schemaNames),
+            responseSchemaNames = contractNamesIn(returnType, schemaNames),
+            requestSchemaNames = contractNamesIn(bodyTypeText.orEmpty(), schemaNames),
             line = masked.take(match.range.first).count { it == '\n' } + 1
         )
     }
     return calls
 }
+
+private fun contractNamesIn(text: String, schemaNames: Set<String>): Set<String> =
+    schemaNames.filter { name ->
+        Regex("""(?<![\w.])""" + Regex.escape(name) + """(?![\w])""").containsMatchIn(text)
+    }.toSet()
 
 private fun resolvedPath(rawPath: String): String =
     if (rawPath.startsWith("/")) rawPath else CONTRACT_API_BASE_PATH + rawPath
@@ -242,7 +262,7 @@ private fun verifyKotlinFileCoverage(
     calls: List<RetrofitCall>,
     problems: MutableList<String>
 ) {
-    if (Regex("""@HTTP\(""").containsMatchIn(masked)) {
+    if (Regex("""@HTTP\s*\(\s*""").containsMatchIn(masked)) {
         problems += "$relativeFile 使用了 @HTTP(...)：本门禁无法把自由形态的 method/path 与契约核对。" +
             "请改用 @GET/@POST/@PUT/@DELETE/@PATCH（要新形态请先扩展 verifyContractEndpoints）。"
     }
@@ -250,7 +270,7 @@ private fun verifyKotlinFileCoverage(
         problems += "$relativeFile 使用了 @Url：动态 URL 无法在编译期核对契约，等于绕开接口门禁。"
     }
     for (name in RETROFIT_ANNOTATIONS) {
-        val total = Regex("""@$name\(""").findAll(masked).count()
+        val total = Regex("""@$name\s*\(\s*""").findAll(masked).count()
         val parsed = calls.count { it.method == name }
         if (total != parsed) {
             problems += "$relativeFile 有 $total 处 @$name，但只解析出 $parsed 处（写法超出本门禁的解析范围，" +
@@ -291,15 +311,13 @@ private fun verifyRetrofitCalls(
             "契约里该 operation 的查询参数：${operation.queryParameters.sorted()}。"
     }
 
-    if (operation.hasRequestBody && operation.requestBodyRequired && !call.hasBody) {
-        problems += "$location 契约要求必填请求体，但方法没有 @Body。"
-    }
     if (!operation.hasRequestBody && call.hasBody) {
-        problems += "$location 契约里该 operation 没有请求体，但方法声明了 @Body。"
+        problems += "$location 契约里该 operation 没有请求体，但方法声明了 @Body（${call.bodyTypeName}）。"
     }
 
-    // 请求体/响应类型必须是该 operation 契约里声明的那个 schema
-    // （编译期类型系统只能保证「类型存在」，保证不了「这个类型就是该端点的」）。
+    // 请求体/响应类型必须是该 operation 契约里声明的那个 schema，而且**必须正好是它**：
+    // 编译期类型系统只能保证「类型存在」，保证不了「这个类型就是该端点的」；
+    // 只检查「有没有用到别的契约类型」还不够 —— 用 String/Unit 这种非契约类型同样会漏过去。
     val allowed = buildSet {
         operation.requestSchema?.let { add(it) }
         addAll(operation.responseSchemas)
@@ -313,6 +331,26 @@ private fun verifyRetrofitCalls(
         }
         problems += "$location 使用了不属于该 operation 的契约类型：${wrongTypes.sorted()}。$expected。"
     }
+
+    val expectedRequest = setOfNotNull(operation.requestSchema)
+    if (call.requestSchemaNames != expectedRequest) {
+        val expected = if (expectedRequest.isEmpty()) {
+            "该 operation 的请求体没有 JSON schema"
+        } else {
+            "契约要求 @Body 是 ${expectedRequest.sorted()}"
+        }
+        problems += "$location 的 @Body 类型与契约对不上：声明的是 ${call.bodyTypeName ?: "<无 @Body>"}" +
+            "（契约类型 ${call.requestSchemaNames.sorted()}）。$expected。"
+    }
+
+    if (call.responseSchemaNames != operation.responseSchemas) {
+        val expected = if (operation.responseSchemas.isEmpty()) {
+            "该 operation 的 2xx 不是 JSON（例如 text/calendar），返回类型不应引用任何契约 JSON schema"
+        } else {
+            "契约 2xx payload 是 ${operation.responseSchemas.sorted()}"
+        }
+        problems += "$location 的返回类型与契约对不上：引用了契约类型 ${call.responseSchemaNames.sorted()}。$expected。"
+    }
 }
 
 private fun verifyContractEndpoints(contractFile: File, sourcesRoot: File): List<String> {
@@ -324,7 +362,8 @@ private fun verifyContractEndpoints(contractFile: File, sourcesRoot: File): List
         .sortedBy { it.path }
         .forEach { file ->
             val text = file.readText()
-            if (!RETROFIT_ANNOTATIONS.any { text.contains("@$it(") }) {
+            // 预筛选：允许注解名与 '(' 之间有空白（`@POST ("x")` 是合法 Kotlin）。
+            if (!RETROFIT_ANNOTATION_PREFIX.containsMatchIn(text)) {
                 return@forEach
             }
             val relative = file.relativeTo(sourcesRoot).path
@@ -349,6 +388,10 @@ private fun verifyContractEndpointGuardSelfTest(contract: ContractOperations) {
     val samplePath = contract.byKey.keys.firstOrNull { it.startsWith("GET ") }
         ?: throw GradleException("契约门禁自检失败：契约里没有任何 GET operation")
     val sampleOperation = contract.byKey.getValue(samplePath)
+    val samplePost = contract.byKey.entries.firstOrNull { entry ->
+        entry.key.startsWith("POST ") && entry.value.requestSchema != null && entry.value.responseSchemas.isNotEmpty()
+    } ?: throw GradleException("契约门禁自检失败：契约里没有带 JSON 请求体与 JSON 响应的 POST operation")
+    val samplePostOperation = samplePost.value
 
     fun problemsFor(source: String): List<String> {
         val masked = maskCommentsAndStrings(source)
@@ -403,6 +446,47 @@ private fun verifyContractEndpointGuardSelfTest(contract: ContractOperations) {
     )
     check(dynamicForm.any { it.contains("@HTTP") }) {
         "契约门禁自检失败：@HTTP 绕过形态没有被拦下（扫描器退化）"
+    }
+
+    // 注解名与 '(' 之间可以有空白（`@POST ("x")` 是合法 Kotlin），预筛选与解析都必须照样识别。
+    val spacedAnnotation = problemsFor(
+        """
+        interface Sample {
+            @POST ("pc/whatever")
+            suspend fun spaced(@Body request: ${samplePostOperation.requestSchema}): Unit
+        }
+        """.trimIndent()
+    )
+    check(spacedAnnotation.any { it.contains("不存在的端点") }) {
+        "契约门禁自检失败：`@POST (\"...\")` 这种空白写法绕过了扫描器"
+    }
+
+    // 返回类型用非契约类型（String/Unit）时必须被拦下：契约 2xx payload 是具体的 schema。
+    val wrongReturnType = problemsFor(
+        """
+        interface Sample {
+            @POST("${samplePostOperation.path.removePrefix(CONTRACT_API_BASE_PATH)}")
+            suspend fun wrongReturn(@Body request: ${samplePostOperation.requestSchema}): String
+        }
+        """.trimIndent()
+    )
+    check(wrongReturnType.any { it.contains("返回类型与契约对不上") }) {
+        "契约门禁自检失败：把返回类型写成非契约类型（String）没有被拦下"
+    }
+
+    // 请求体类型写错成另一个契约 schema 时必须被拦下。
+    val wrongBodyType = problemsFor(
+        """
+        interface Sample {
+            @POST("${samplePostOperation.path.removePrefix(CONTRACT_API_BASE_PATH)}")
+            suspend fun wrongBody(@Body request: ${sampleOperation.responseSchemas.firstOrNull() ?: "Unit"}): ${
+            samplePostOperation.responseSchemas.firstOrNull() ?: "Unit"
+        }
+        }
+        """.trimIndent()
+    )
+    check(wrongBodyType.any { it.contains("@Body 类型与契约对不上") }) {
+        "契约门禁自检失败：把 @Body 类型换成别的契约类型没有被拦下"
     }
 
     val stringOnly = problemsFor(

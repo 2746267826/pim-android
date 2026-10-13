@@ -91,6 +91,20 @@ scripts/ci/test-contract-kotlin.sh
 - 快照刷新后忘记重新生成 → `contract-codegen` 红；契约里没有的端点/参数 → 编译红。
   两者都不是「跳过」，是必须修的真问题。
 
+## 为什么自己写生成器（而不是 openapi-generator / kotlinpoet）
+
+评估过两条路：
+
+1. **openapi-generator 的 kotlin 生成器**：功能覆盖最全，但要在 CI 里跑就得拉 jar（或把二进制提交进仓），
+   结果受生成器版本影响；默认还会产出 `apis/`、`infrastructure/` 等与这个客户端无关的一整套代码，
+   且本仓契约有 566 个 schema，全量生成会让编译时间与噪音失控，仍需要额外做「只生成闭包」的裁剪。
+2. **本仓自带的 python3 生成器**（现状）：只依赖标准库，离线可跑；输出只取决于契约字节
+   （无时间戳、无随机顺序、属性与类型都排序），因此可以逐字节比对；只生成
+   `client-operations.json` 里 33 个 operation 的闭包（99 个类型）；规则简单到能逐条写进本文档并逐字段核对。
+
+选 2：可复现性与可审计性优先于功能覆盖 —— 这个生成器的目标不是「支持任意 OpenAPI」，
+而是把这 33 个 operation 的边界钉死；真需要支持更复杂的契约形态时，再评估引入 openapi-generator。
+
 ## 注意
 
 - 接口边界（`ApiService.kt` + 它用到的 DTO）现在是**契约生成 + 编译期门禁**：

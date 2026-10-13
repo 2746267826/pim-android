@@ -338,6 +338,83 @@ private fun verifyContractEndpoints(contractFile: File, sourcesRoot: File): List
     return problems
 }
 
+/**
+ * 门禁自检：用内存 fixture 证明扫描器**真的会红**，而不是每次编译都空转。
+ *
+ * 为什么把自检放进任务里（而不是另一边写个测试）：门禁逻辑是构建脚本的一部分，
+ * 没有可用的测试宿主；放在任务里每次编译都重跑一遍，代价是毫秒级，换来的是
+ * 「扫描器被改到不再报错」这种退化会在第一次编译就暴露。
+ */
+private fun verifyContractEndpointGuardSelfTest(contract: ContractOperations) {
+    val samplePath = contract.byKey.keys.firstOrNull { it.startsWith("GET ") }
+        ?: throw GradleException("契约门禁自检失败：契约里没有任何 GET operation")
+    val sampleOperation = contract.byKey.getValue(samplePath)
+
+    fun problemsFor(source: String): List<String> {
+        val masked = maskCommentsAndStrings(source)
+        val calls = findRetrofitCalls(source, masked, contract.schemaNames)
+        val problems = mutableListOf<String>()
+        verifyKotlinFileCoverage("fixture.kt", masked, calls, problems)
+        calls.forEach { verifyRetrofitCalls("fixture.kt", it, contract.byKey, problems) }
+        return problems
+    }
+
+    val positive = problemsFor(
+        """
+        interface Sample {
+            @GET("${sampleOperation.path.removePrefix(CONTRACT_API_BASE_PATH)}")
+            suspend fun sample(): ${sampleOperation.responseSchemas.firstOrNull() ?: "Unit"}
+        }
+        """.trimIndent()
+    )
+    check(positive.isEmpty()) { "契约门禁自检失败：合法调用被误报：$positive" }
+
+    val fabricatedEndpoint = problemsFor(
+        """
+        interface Sample {
+            @GET("pc/whatever")
+            suspend fun fabricated(): Unit
+        }
+        """.trimIndent()
+    )
+    check(fabricatedEndpoint.any { it.contains("不存在的端点") }) {
+        "契约门禁自检失败：编造的端点没有被拦下（扫描器退化）"
+    }
+
+    val fabricatedQuery = problemsFor(
+        """
+        interface Sample {
+            @GET("${sampleOperation.path.removePrefix(CONTRACT_API_BASE_PATH)}")
+            suspend fun sample(@Query("pcFlag") pcFlag: String? = null): Unit
+        }
+        """.trimIndent()
+    )
+    check(fabricatedQuery.any { it.contains("未声明的查询参数") }) {
+        "契约门禁自检失败：编造的查询参数没有被拦下（扫描器退化）"
+    }
+
+    val dynamicForm = problemsFor(
+        """
+        interface Sample {
+            @HTTP(method = "GET", path = "pc/whatever", hasBody = false)
+            suspend fun dynamic(): Unit
+        }
+        """.trimIndent()
+    )
+    check(dynamicForm.any { it.contains("@HTTP") }) {
+        "契约门禁自检失败：@HTTP 绕过形态没有被拦下（扫描器退化）"
+    }
+
+    val stringOnly = problemsFor(
+        """
+        class Sample {
+            fun assertShape(text: String): Boolean = text.contains("@GET(\"pc/whatever\")")
+        }
+        """.trimIndent()
+    )
+    check(stringOnly.isEmpty()) { "契约门禁自检失败：字符串字面量里的注解文本被误报：$stringOnly" }
+}
+
 private val contractSnapshotFile = rootProject.projectDir.parentFile.parentFile.resolve("contract/openapi.json")
 
 subprojects {
@@ -350,6 +427,8 @@ subprojects {
         inputs.file(contractFile).withPropertyName("contractSnapshot")
         inputs.files(fileTree(sourcesRoot) { include("**/*.kt") }).withPropertyName("kotlinSources")
         doLast {
+            // 先自检扫描器本身（毫秒级），再扫真实源码。
+            verifyContractEndpointGuardSelfTest(loadContractOperations(contractFile))
             val problems = verifyContractEndpoints(contractFile, sourcesRoot)
             if (problems.isNotEmpty()) {
                 throw GradleException(

@@ -125,7 +125,7 @@ class EndpointHeartbeatReporterTest {
      */
     @Test
     fun observationFailureIsRecordedAsVisibleFailure() = runTest {
-        val reporter = reporter(uploadOutcomeSource = { throw IllegalStateException("observation unavailable") })
+        val reporter = reporter(uploadOutcomeSource = UploadOutcomeSource { throw IllegalStateException("observation unavailable") })
 
         assertEquals(EndpointHeartbeatOutcome.FAILED, reporter.reportIfDue(1))
 
@@ -328,7 +328,7 @@ class EndpointHeartbeatReporterTest {
         withToken: Boolean = true,
         api: ApiService? = null,
         pendingLocationPoints: Int = 0,
-        uploadOutcomeSource: UploadOutcomeSource = { uploadOutcome },
+        uploadOutcomeSource: UploadOutcomeSource? = null,
         uploadOutcome: UploadOutcome = UploadOutcome(lastError = null, hasCompletedUpload = true)
     ): EndpointHeartbeatReporter {
         val baseUrl = server.url("/api/v1/").toString()
@@ -364,7 +364,7 @@ class EndpointHeartbeatReporterTest {
             context = context,
             api = api ?: apiClientProvider.apiService(),
             identityProvider = DeviceIdentityProvider(context),
-            uploadOutcomeSource = uploadOutcomeSource,
+            uploadOutcomeSource = uploadOutcomeSource ?: UploadOutcomeSource { uploadOutcome },
             tokenManager = tokenManager,
             serverSettingsStore = serverSettings,
             logs = logs,

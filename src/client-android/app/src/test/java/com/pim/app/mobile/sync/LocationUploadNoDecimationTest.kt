@@ -160,7 +160,8 @@ class LocationUploadNoDecimationTest {
     ) = LocationUploadCoordinator(
         ApplicationProvider.getApplicationContext(),
         db,
-        recordingApi(sink, requestSizes)
+        recordingApi(sink, requestSizes),
+        DeviceIdentityProvider(ApplicationProvider.getApplicationContext())
     )
 
     /**

@@ -585,7 +585,9 @@ class ForegroundLocationService : Service() {
      * reporter 自身不抛业务异常，因此这里不需要（也不应该）吞异常。
      */
     private fun requestEndpointHeartbeat() {
-        scope.launch { endpointHeartbeatReporter.reportIfDue(pendingUploadTotal) }
+        // 只"请求"一次：真正的上报由 reporter 在自己的作用域里完成（服务可能在请求后立刻停掉自己），
+        // 队列条数也由 reporter 现读，避免用到本实例还没初始化过的缓存值。
+        endpointHeartbeatReporter.requestIfDue()
     }
 
     private fun startAutomaticLoop() {

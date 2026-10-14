@@ -41,7 +41,6 @@ import com.pim.app.location.motion.MotionSignalRepository
 import com.pim.app.location.policy.LocationPolicyMode
 import com.pim.app.location.policy.PolicyDecision
 import com.pim.app.location.policy.ScheduleWindow
-import com.pim.app.mobile.sync.EndpointHeartbeatOutcome
 import com.pim.app.mobile.sync.EndpointHeartbeatSink
 import com.pim.app.mobile.sync.MobileSyncScheduler
 import com.pim.app.notifications.LocationNotificationRenderer
@@ -3497,22 +3496,29 @@ class ForegroundLocationServiceTest {
 
         // 既有的采集循环（不是新加的定时器/服务）就是驱动点。
         invokeStartAutomaticLoop(service)
-        idleUntil { heartbeat.calls.isNotEmpty() }
+        idleUntil { heartbeat.calls.get() >= 1 }
+        assertTrue("采集循环必须请求端点心跳", heartbeat.calls.get() >= 1)
 
-        assertTrue(
-            "采集循环必须问一次端点心跳（实际 ${heartbeat.calls.size} 次）",
-            heartbeat.calls.isNotEmpty()
+        // 手动/叫醒补传路径（keepalive 叫醒走的就是它）也必须请求一次。
+        val before = heartbeat.calls.get()
+        service.onStartCommand(
+            Intent(service, ForegroundLocationService::class.java)
+                .setAction(ForegroundLocationController.ACTION_SYNC_NOW),
+            0,
+            2
         )
+        idleUntil { heartbeat.calls.get() > before }
+        assertTrue("手动/叫醒补传路径也必须请求端点心跳", heartbeat.calls.get() > before)
+
         service.onDestroy()
     }
 
-    /** 端点心跳的记录桩：只记"服务问了没有"，真实发送由 EndpointHeartbeatReporterTest 覆盖。 */
+    /** 端点心跳的记录桩：只记"服务请求了几次"，真实发送与节流由 EndpointHeartbeatReporterTest 覆盖。 */
     private class RecordingEndpointHeartbeat : EndpointHeartbeatSink {
-        val calls = java.util.Collections.synchronizedList(mutableListOf<Int?>())
+        val calls = java.util.concurrent.atomic.AtomicInteger()
 
-        override suspend fun reportIfDue(collectionCacheCount: Int?): EndpointHeartbeatOutcome {
-            calls.add(collectionCacheCount)
-            return EndpointHeartbeatOutcome.SENT
+        override fun requestIfDue() {
+            calls.incrementAndGet()
         }
     }
 

@@ -9,6 +9,7 @@ import com.pim.app.settings.TrackingSettingsStore
 import com.pim.core.auth.SecurePreferencesFactory
 import com.pim.core.auth.TokenManager
 import com.pim.core.network.ApiClientProvider
+import com.pim.core.network.ApiService
 import com.pim.core.settings.ServerSettingsStore
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.Json
@@ -68,6 +69,27 @@ class EndpointHeartbeatReporterTest {
         assertEquals("Unknown", EndpointHeartbeatReporter.resolveUploadStatus(null, false))
         assertEquals("Warning", EndpointHeartbeatReporter.resolveUploadStatus("HTTP 500", true))
         assertEquals("Warning", EndpointHeartbeatReporter.resolveUploadStatus("HTTP 500", false))
+    }
+
+    /// <summary>
+    /// 取消必须照常抛出，且**不能**被记成一次成功/失败（服务停止时取消是正常路径，
+    /// 记账里混进一条假失败会让"连续失败"失去意义）。
+    /// </summary>
+    @Test
+    fun cancellationPropagatesWithoutRecordingAnOutcome() = runTest {
+        val reporter = reporter(api = cancelingApi())
+
+        var cancelled = false
+        try {
+            reporter.reportIfDue(1)
+        } catch (_: kotlinx.coroutines.CancellationException) {
+            cancelled = true
+        }
+
+        assertTrue("取消必须向外抛", cancelled)
+        assertNull(reporter.status.value.lastSuccessAtMillis)
+        assertNull(reporter.status.value.lastError)
+        assertEquals(0, reporter.status.value.consecutiveFailures)
     }
 
     // ---- 真实 HTTP ------------------------------------------------------------
@@ -135,15 +157,41 @@ class EndpointHeartbeatReporterTest {
     @Test
     fun repeatedCallsInsideTheIntervalAreSkipped() = runTest {
         server.enqueue(jsonResponse(OK_ENVELOPE))
-        var now = CLOCK
-        val reporter = reporter(now = { now })
+        var elapsed = MONOTONIC
+        val reporter = reporter(elapsed = { elapsed })
 
         assertEquals(EndpointHeartbeatOutcome.SENT, reporter.reportIfDue(null))
-        now += EndpointHeartbeatReporter.MIN_INTERVAL_MILLIS - 1
+        elapsed += EndpointHeartbeatReporter.MIN_INTERVAL_MILLIS - 1
         assertEquals(EndpointHeartbeatOutcome.SKIPPED_NOT_DUE, reporter.reportIfDue(null))
         assertEquals(1, server.requestCount)
 
-        now += 1
+        elapsed += 1
+        server.enqueue(jsonResponse(OK_ENVELOPE))
+        assertEquals(EndpointHeartbeatOutcome.SENT, reporter.reportIfDue(null))
+        assertEquals(2, server.requestCount)
+    }
+
+    /**
+     * 节流只认**单调**时钟：墙钟被校时前后跳时，既不能提前发（浪费电与流量），
+     * 也不能长期不发（让端点页把"还活着"看成"已经死了"）。
+     */
+    @Test
+    fun throttleIgnoresWallClockJumps() = runTest {
+        var now = CLOCK
+        var elapsed = MONOTONIC
+        val reporter = reporter(now = { now }, elapsed = { elapsed })
+
+        server.enqueue(jsonResponse(OK_ENVELOPE))
+        assertEquals(EndpointHeartbeatOutcome.SENT, reporter.reportIfDue(null))
+
+        // 墙钟向前跳 6 分钟、单调时钟没走：仍然不发。
+        now += 6 * 60 * 1000L
+        assertEquals(EndpointHeartbeatOutcome.SKIPPED_NOT_DUE, reporter.reportIfDue(null))
+        assertEquals(1, server.requestCount)
+
+        // 墙钟向后跳回 6 分钟、单调时钟走满间隔：照常发。
+        now -= 6 * 60 * 1000L
+        elapsed += EndpointHeartbeatReporter.MIN_INTERVAL_MILLIS
         server.enqueue(jsonResponse(OK_ENVELOPE))
         assertEquals(EndpointHeartbeatOutcome.SENT, reporter.reportIfDue(null))
         assertEquals(2, server.requestCount)
@@ -167,8 +215,8 @@ class EndpointHeartbeatReporterTest {
     @Test
     fun serverFailureIsRecordedAndNeverThrows() = runTest {
         server.enqueue(MockResponse().setResponseCode(500).setBody("boom"))
-        var now = CLOCK
-        val reporter = reporter(now = { now })
+        var elapsed = MONOTONIC
+        val reporter = reporter(elapsed = { elapsed })
 
         assertEquals(EndpointHeartbeatOutcome.FAILED, reporter.reportIfDue(null))
         assertEquals(1, reporter.status.value.consecutiveFailures)
@@ -177,7 +225,7 @@ class EndpointHeartbeatReporterTest {
         assertNull(reporter.status.value.lastSuccessAtMillis)
         assertEquals(CLOCK, reporter.status.value.lastAttemptAtMillis)
 
-        now += EndpointHeartbeatReporter.MIN_INTERVAL_MILLIS
+        elapsed += EndpointHeartbeatReporter.MIN_INTERVAL_MILLIS
         server.enqueue(MockResponse().setResponseCode(503).setBody("still down"))
         assertEquals(EndpointHeartbeatOutcome.FAILED, reporter.reportIfDue(null))
         assertEquals(2, reporter.status.value.consecutiveFailures)
@@ -187,11 +235,13 @@ class EndpointHeartbeatReporterTest {
     fun successClearsTheFailureStreak() = runTest {
         server.enqueue(MockResponse().setResponseCode(500).setBody("boom"))
         var now = CLOCK
-        val reporter = reporter(now = { now })
+        var elapsed = MONOTONIC
+        val reporter = reporter(now = { now }, elapsed = { elapsed })
         reporter.reportIfDue(null)
         assertEquals(1, reporter.status.value.consecutiveFailures)
 
         now += EndpointHeartbeatReporter.MIN_INTERVAL_MILLIS
+        elapsed += EndpointHeartbeatReporter.MIN_INTERVAL_MILLIS
         server.enqueue(jsonResponse(OK_ENVELOPE))
         assertEquals(EndpointHeartbeatOutcome.SENT, reporter.reportIfDue(null))
 
@@ -215,13 +265,26 @@ class EndpointHeartbeatReporterTest {
 
     // ---- helpers -------------------------------------------------------------
 
+    /** 队列条数仓库用内存 flow 拼出来（与生产同一个类，只是数据源换成测试桩）。 */
+    private fun queueStatusRepository(pendingLocationPoints: Int = 0) =
+        com.pim.app.status.QueueStatusRepository(
+            locations = kotlinx.coroutines.flow.MutableStateFlow(pendingLocationPoints),
+            usageEvents = kotlinx.coroutines.flow.MutableStateFlow(0),
+            usageSummaries = kotlinx.coroutines.flow.MutableStateFlow(0),
+            appMetadata = kotlinx.coroutines.flow.MutableStateFlow(0),
+            deviceProfiles = kotlinx.coroutines.flow.MutableStateFlow(0),
+            syncBatches = kotlinx.coroutines.flow.MutableStateFlow(0)
+        )
+
     private fun bodyUploadStatus(request: okhttp3.mockwebserver.RecordedRequest): String =
         Json.parseToJsonElement(request.body.readUtf8()).jsonObject
             .getValue("uploadStatus").toString().trim('"')
 
     private fun reporter(
         now: () -> Long = { CLOCK },
+        elapsed: () -> Long = { MONOTONIC },
         withToken: Boolean = true,
+        api: ApiService? = null,
         uploadOutcome: UploadOutcome = UploadOutcome(lastError = null, hasCompletedUpload = true)
     ): EndpointHeartbeatReporter {
         val baseUrl = server.url("/api/v1/").toString()
@@ -255,15 +318,31 @@ class EndpointHeartbeatReporterTest {
 
         return EndpointHeartbeatReporter(
             context = context,
-            api = apiClientProvider.apiService(),
+            api = api ?: apiClientProvider.apiService(),
             identityProvider = DeviceIdentityProvider(context),
             uploadOutcomeSource = { uploadOutcome },
             tokenManager = tokenManager,
             serverSettingsStore = serverSettings,
             logs = logs,
-            nowUtcMillis = now
+            queueStatusRepository = queueStatusRepository(),
+            nowUtcMillis = now,
+            elapsedRealtimeMillis = elapsed
         )
     }
+
+    /** 一调用上游就被取消的 ApiService（只实现被用到的那一个方法，其余显式报错）。 */
+    private fun cancelingApi(): ApiService = java.lang.reflect.Proxy.newProxyInstance(
+        ApiService::class.java.classLoader,
+        arrayOf(ApiService::class.java)
+    ) { proxy, method, _ ->
+        when (method.name) {
+            "sendEndpointHeartbeat" -> throw kotlinx.coroutines.CancellationException("test cancellation")
+            "toString" -> "CancelingApiService"
+            "hashCode" -> System.identityHashCode(proxy)
+            "equals" -> false
+            else -> error("Unexpected API call in test: ${method.name}")
+        }
+    } as ApiService
 
     private fun jsonResponse(body: String): MockResponse = MockResponse()
         .setResponseCode(200)
@@ -272,6 +351,9 @@ class EndpointHeartbeatReporterTest {
 
     private companion object {
         const val CLOCK = 1_760_000_000_000L
+
+        /** 单调时钟起点（与墙钟无关）。 */
+        const val MONOTONIC = 5_000_000L
 
         const val OK_ENVELOPE = """
             {"code":0,"data":{"deviceId":"android-1","platform":"android","appVersion":"0.0.0(local)",

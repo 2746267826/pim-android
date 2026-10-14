@@ -10,6 +10,7 @@ import com.pim.app.data.MobileDataDao
 import com.pim.app.data.MobileLocationDroppedDiagnosticEntity
 import com.pim.app.data.MobileSyncStatus
 import com.pim.app.mobile.logs.StructuredLogRepository
+import com.pim.app.mobile.sync.DeviceIdentityProvider
 import com.pim.app.settings.TrackingSettingsStore
 import com.pim.core.contract.MobileForensicsIngestResult
 import com.pim.core.contract.MobileForensicsIngestResultApiResponse
@@ -119,7 +120,8 @@ class ForensicUploadCoordinatorTest {
             dao = dao,
             logs = logs,
             sentinelStore = ForensicSentinelStore(context),
-            nowUtcMillis = { now }
+            nowUtcMillis = { now },
+            deviceIdentityProvider = DeviceIdentityProvider(context)
         )
 
     @Test

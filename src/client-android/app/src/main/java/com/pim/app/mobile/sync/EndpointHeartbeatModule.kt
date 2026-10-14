@@ -32,4 +32,3 @@ abstract class EndpointHeartbeatModule {
     @Singleton
     abstract fun bindEndpointHeartbeatSink(impl: EndpointHeartbeatReporter): EndpointHeartbeatSink
 }
-

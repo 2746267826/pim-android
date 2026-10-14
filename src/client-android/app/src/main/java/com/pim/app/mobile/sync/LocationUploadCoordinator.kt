@@ -88,7 +88,8 @@ object LocationUploadPlanner {
 class LocationUploadCoordinator @Inject constructor(
     @ApplicationContext private val context: Context,
     private val database: AppDatabase,
-    private val api: ApiService
+    private val api: ApiService,
+    private val deviceIdentityProvider: DeviceIdentityProvider
 ) {
     private val dao: MobileDataDao = database.mobileDataDao()
 
@@ -315,16 +316,7 @@ class LocationUploadCoordinator @Inject constructor(
         ) to ""
     }
 
-    private fun deviceId(): String {
-        val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-        val seed = androidId ?: Build.FINGERPRINT ?: "android-device"
-        return "android-${sha256(seed).take(16)}"
-    }
-
-    private fun sha256(value: String): String {
-        val bytes = MessageDigest.getInstance("SHA-256").digest(value.toByteArray())
-        return bytes.joinToString("") { "%02x".format(Locale.US, it) }
-    }
+    private fun deviceId(): String = deviceIdentityProvider.current().deviceId
 
     /** 一批（或一次拆分后的子批）的逐条结果累加器。 */
     private class RowOutcome {

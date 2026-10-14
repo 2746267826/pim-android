@@ -112,13 +112,14 @@ class MobileSyncPeriodicHeartbeatTest {
             logs = logs,
             heartbeatReporter = MobileHeartbeatReporter(context, api),
             serverSettingsStore = ServerSettingsStore(context, tokenManager),
-            locationUploadCoordinator = LocationUploadCoordinator(context, db, api),
+            locationUploadCoordinator = LocationUploadCoordinator(context, db, api, DeviceIdentityProvider(context)),
             forensicUploadCoordinator = ForensicUploadCoordinator(
                 context = context,
                 api = api,
                 dao = db.forensicEventDao(),
                 logs = logs,
-                sentinelStore = ForensicSentinelStore(context)
+                sentinelStore = ForensicSentinelStore(context),
+                deviceIdentityProvider = DeviceIdentityProvider(context)
             ),
             wakeHeartbeatRecorder = heartbeatRecorder ?: WakeHeartbeatRecorder(
                 ledger = ForensicLedger(db.forensicEventDao(), logs),

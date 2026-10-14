@@ -98,6 +98,17 @@ jobs:
           set -euo pipefail
           bash scripts/ci/test-contract-freshness.sh
 
+      # 契约同步（pim-api#415）：自动刷新 → 提交 → 推分支 → 开 PR 的那一步。
+      # 它错了不会报错，只会"PR 开不出来"或"开出来被 pr-metadata 拦下"，
+      # 所以这里必须跑（真 git fixture + stub gh，离线，不需要 npm/gradle）。
+      - name: Contract sync behaviour tests
+        run: |
+          set -euo pipefail
+          bash scripts/ci/test-contract-sync-pr.sh
+          # 默认刷新链路（真 fetch-contract.sh + 真 generate-contract-kotlin.sh，
+          # 本地上游 fixture）：只跑编排测试证明不了"生成物会跟着重新生成"。
+          bash scripts/ci/test-contract-sync-default-refresh.sh
+
       # 再跑默认真实上游的只读 check（不带任何 PIM_CONTRACT_* 覆盖）
       - name: Verify client contract is up to date
         run: |

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 88a9d30066860765d23f9f5d10cd7f829e2cf3c6a957d173b02620b812da993b)
+//   契约快照 : contract/openapi.json (sha256 61778d2d9c1aad129bace72cecc21aa23c3517d7d158b2cb22d3fc15014dd006)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -26,10 +26,10 @@ data class AuthResponse(
 /** 契约 `components.schemas.AuthResponseApiResponse`（response）。 */
 @Serializable
 data class AuthResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: AuthResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.CalendarOperationResult`（response）。 */
@@ -46,10 +46,10 @@ data class CalendarOperationResult(
 /** 契约 `components.schemas.CalendarOperationResultApiResponse`（response）。 */
 @Serializable
 data class CalendarOperationResultApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: CalendarOperationResult? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.CalendarOperationSample`（response）。 */
@@ -80,19 +80,19 @@ data class CalendarResponse(
 /** 契约 `components.schemas.CalendarResponseApiResponse`（response）。 */
 @Serializable
 data class CalendarResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: CalendarResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.CalendarResponseListApiResponse`（response）。 */
 @Serializable
 data class CalendarResponseListApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: List<CalendarResponse>? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.ClientShellLatestResponse`（response）。 */
@@ -191,10 +191,10 @@ data class DaemonHeartbeatDto(
 /** 契约 `components.schemas.DaemonHeartbeatDtoApiResponse`（response）。 */
 @Serializable
 data class DaemonHeartbeatDtoApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: DaemonHeartbeatDto? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.DaemonHeartbeatRequest`（request）。 */
@@ -251,10 +251,10 @@ data class EndpointNotificationActionResponse(
 /** 契约 `components.schemas.EndpointNotificationActionResponseApiResponse`（response）。 */
 @Serializable
 data class EndpointNotificationActionResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: EndpointNotificationActionResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.EventAttachmentReferenceDto`（request+response）。 */
@@ -333,29 +333,36 @@ data class EventResponse(
 /** 契约 `components.schemas.EventResponseApiResponse`（response）。 */
 @Serializable
 data class EventResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: EventResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.EventResponsePagedResult`（response）。 */
 @Serializable
 data class EventResponsePagedResult(
-    val items: List<EventResponse>? = null,
-    val page: Int? = null,
-    val pageSize: Int? = null,
-    val totalCount: Int? = null,
-    val totalPages: Int? = null,
+    val items: List<EventResponse>,
+    val page: Int,
+    val pageSize: Int,
+    val totalCount: Int,
+    val totalPages: Int,
 )
 
 /** 契约 `components.schemas.EventResponsePagedResultApiResponse`（response）。 */
 @Serializable
 data class EventResponsePagedResultApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: EventResponsePagedResult? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.IcsImportForm`（request）。 */
+@Serializable
+data class IcsImportForm(
+    val calendarId: String? = null,
+    val file: String,
 )
 
 /** 契约 `components.schemas.ImportReport`（response）。 */
@@ -370,10 +377,10 @@ data class ImportReport(
 /** 契约 `components.schemas.ImportReportApiResponse`（response）。 */
 @Serializable
 data class ImportReportApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: ImportReport? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.ImportSkippedItem`（response）。 */
@@ -439,8 +446,7 @@ data class MobileAppUsageSummaryDto(
 data class MobileDeviceDto(
     val androidIdHash: String? = null,
     val androidVersion: String,
-    // readOnly：契约 required 只对响应生效，请求方向不发该字段。
-    val apiLevel: Int,
+    val apiLevel: Int? = null,
     val appVersion: String,
     val brand: String,
     val deviceHash: String? = null,
@@ -462,10 +468,10 @@ data class MobileDeviceDto(
 /** 契约 `components.schemas.MobileDeviceDtoApiResponse`（response）。 */
 @Serializable
 data class MobileDeviceDtoApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileDeviceDto? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileDeviceRegisterRequest`（request）。 */
@@ -473,7 +479,6 @@ data class MobileDeviceDtoApiResponse(
 data class MobileDeviceRegisterRequest(
     val androidIdHash: String? = null,
     val androidVersion: String,
-    // readOnly：契约 required 只对响应生效，请求方向不发该字段。
     val apiLevel: Int? = null,
     val appVersion: String,
     val brand: String,
@@ -520,10 +525,10 @@ data class MobileForensicsIngestResult(
 /** 契约 `components.schemas.MobileForensicsIngestResultApiResponse`（response）。 */
 @Serializable
 data class MobileForensicsIngestResultApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileForensicsIngestResult? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileForensicsUploadRequest`（request）。 */
@@ -555,10 +560,10 @@ data class MobileGapResponse(
 /** 契约 `components.schemas.MobileGapResponseApiResponse`（response）。 */
 @Serializable
 data class MobileGapResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileGapResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileGapWindowDto`（response）。 */
@@ -610,10 +615,10 @@ data class MobileLocationAnalyticsOverviewResponse(
 /** 契约 `components.schemas.MobileLocationAnalyticsOverviewResponseApiResponse`（response）。 */
 @Serializable
 data class MobileLocationAnalyticsOverviewResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileLocationAnalyticsOverviewResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileLocationHistoryResponse`（response）。 */
@@ -629,10 +634,10 @@ data class MobileLocationHistoryResponse(
 /** 契约 `components.schemas.MobileLocationHistoryResponseApiResponse`（response）。 */
 @Serializable
 data class MobileLocationHistoryResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileLocationHistoryResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileLocationPathPointDto`（response）。 */
@@ -674,10 +679,10 @@ data class MobileLocationPointDto(
 /** 契约 `components.schemas.MobileLocationPointDtoApiResponse`（response）。 */
 @Serializable
 data class MobileLocationPointDtoApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileLocationPointDto? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileLocationPointRequest`（request）。 */
@@ -689,7 +694,6 @@ data class MobileLocationPointRequest(
     val deviceId: String,
     val horizontalAccuracyMeters: Double,
     val isAutoSubmitted: Boolean,
-    // readOnly：契约 required 只对响应生效，请求方向不发该字段。
     val isMock: Boolean? = null,
     val latitude: Double,
     val longitude: Double,
@@ -721,10 +725,10 @@ data class MobileLocationPointsUploadResult(
 /** 契约 `components.schemas.MobileLocationPointsUploadResultApiResponse`（response）。 */
 @Serializable
 data class MobileLocationPointsUploadResultApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileLocationPointsUploadResult? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileLocationSegmentDto`（response）。 */
@@ -761,10 +765,10 @@ data class MobileLocationSegmentPointPageDto(
 /** 契约 `components.schemas.MobileLocationSegmentPointPageDtoApiResponse`（response）。 */
 @Serializable
 data class MobileLocationSegmentPointPageDtoApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileLocationSegmentPointPageDto? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileLocationTrackDto`（response）。 */
@@ -786,10 +790,10 @@ data class MobileLocationTrackDto(
 /** 契约 `components.schemas.MobileLocationTrackDtoIReadOnlyListApiResponse`（response）。 */
 @Serializable
 data class MobileLocationTrackDtoIReadOnlyListApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: List<MobileLocationTrackDto>? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileQualityComponentDto`（response）。 */
@@ -828,10 +832,10 @@ data class MobileQualityResponse(
 /** 契约 `components.schemas.MobileQualityResponseApiResponse`（response）。 */
 @Serializable
 data class MobileQualityResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileQualityResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileSyncBatchSummaryDto`（response）。 */
@@ -889,10 +893,10 @@ data class MobileTimelineResponse(
 /** 契约 `components.schemas.MobileTimelineResponseApiResponse`（response）。 */
 @Serializable
 data class MobileTimelineResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileTimelineResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileUsageEventDto`（request）。 */
@@ -919,9 +923,7 @@ data class MobileUsageEventsUploadRequest(
     val sourceWindowEndUtc: String,
     val sourceWindowStartUtc: String,
     val summaries: List<MobileUsageSummaryDto>? = null,
-    // readOnly：契约 required 只对响应生效，请求方向不发该字段。
     val windowEndUtc: String? = null,
-    // readOnly：契约 required 只对响应生效，请求方向不发该字段。
     val windowStartUtc: String? = null,
 )
 
@@ -939,10 +941,10 @@ data class MobileUsageIngestResult(
 /** 契约 `components.schemas.MobileUsageIngestResultApiResponse`（response）。 */
 @Serializable
 data class MobileUsageIngestResultApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileUsageIngestResult? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.MobileUsageSummaryDto`（request）。 */
@@ -954,7 +956,6 @@ data class MobileUsageSummaryDto(
     val rawJson: String,
     val sourceKind: String,
     val totalTimeForegroundMs: Long,
-    // readOnly：契约 required 只对响应生效，请求方向不发该字段。
     val totalTimeVisibleMs: Long? = null,
     val windowEndUtc: String,
     val windowStartUtc: String,
@@ -980,10 +981,10 @@ data class MobileUsageSummaryResponse(
 /** 契约 `components.schemas.MobileUsageSummaryResponseApiResponse`（response）。 */
 @Serializable
 data class MobileUsageSummaryResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: MobileUsageSummaryResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.OutlookAdditionalInfoDto`（response）。 */
@@ -1035,10 +1036,10 @@ data class OutlookSyncBatchResponse(
 /** 契约 `components.schemas.OutlookSyncBatchResponseApiResponse`（response）。 */
 @Serializable
 data class OutlookSyncBatchResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: OutlookSyncBatchResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.OutlookSyncRequest`（request）。 */
@@ -1096,29 +1097,29 @@ data class SearchResult(
 /** 契约 `components.schemas.SearchResultPagedResult`（response）。 */
 @Serializable
 data class SearchResultPagedResult(
-    val items: List<SearchResult>? = null,
-    val page: Int? = null,
-    val pageSize: Int? = null,
-    val totalCount: Int? = null,
-    val totalPages: Int? = null,
+    val items: List<SearchResult>,
+    val page: Int,
+    val pageSize: Int,
+    val totalCount: Int,
+    val totalPages: Int,
 )
 
 /** 契约 `components.schemas.SearchResultPagedResultApiResponse`（response）。 */
 @Serializable
 data class SearchResultPagedResultApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: SearchResultPagedResult? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.StringApiResponse`（response）。 */
 @Serializable
 data class StringApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: String? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.TaskResponse`（response）。 */
@@ -1146,29 +1147,29 @@ data class TaskResponse(
 /** 契约 `components.schemas.TaskResponseApiResponse`（response）。 */
 @Serializable
 data class TaskResponseApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: TaskResponse? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.TaskResponsePagedResult`（response）。 */
 @Serializable
 data class TaskResponsePagedResult(
-    val items: List<TaskResponse>? = null,
-    val page: Int? = null,
-    val pageSize: Int? = null,
-    val totalCount: Int? = null,
-    val totalPages: Int? = null,
+    val items: List<TaskResponse>,
+    val page: Int,
+    val pageSize: Int,
+    val totalCount: Int,
+    val totalPages: Int,
 )
 
 /** 契约 `components.schemas.TaskResponsePagedResultApiResponse`（response）。 */
 @Serializable
 data class TaskResponsePagedResultApiResponse(
-    val code: Int? = null,
+    val code: Int,
     val data: TaskResponsePagedResult? = null,
-    val message: String? = null,
-    val timestamp: String? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.UpdateEventRequest`（request）。 */
@@ -1224,7 +1225,7 @@ data class UpdateTaskRequest(
 /** 契约 `components.schemas.UserInfo`（response）。 */
 @Serializable
 data class UserInfo(
-    val displayName: String,
+    val displayName: String? = null,
     val id: String,
     val role: String,
     val username: String,

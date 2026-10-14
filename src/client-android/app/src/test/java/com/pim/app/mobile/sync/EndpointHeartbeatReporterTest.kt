@@ -92,6 +92,48 @@ class EndpointHeartbeatReporterTest {
         assertEquals(0, reporter.status.value.consecutiveFailures)
     }
 
+    /**
+     * **生产入口**（非挂起的 `requestIfDue()`）必须真的发出去，而且用的是**现读**的队列条数。
+     *
+     * review 指出：只测挂起的 `reportIfDue` 时，"删掉异步入口"或"把积压条数写死"都不会被发现
+     * —— 而那正是本轮两个 Critical 修复的落点。
+     */
+    @Test
+    fun productionEntrySendsWithTheFreshlyReadPendingCount() = runTest {
+        server.enqueue(jsonResponse(OK_ENVELOPE))
+        val reporter = reporter(pendingLocationPoints = 4)
+
+        reporter.requestIfDue()
+
+        val request = server.takeRequest(15, java.util.concurrent.TimeUnit.SECONDS)
+        assertNotNull("生产入口必须真的发出请求", request)
+        val body = Json.parseToJsonElement(request!!.body.readUtf8()).jsonObject
+        assertEquals("4", body.getValue("collectionCacheCount").toString())
+
+        // reporter 自持作用域（真实 IO 线程）：轮询等它把状态写回来，不用虚拟时间。
+        val deadline = System.currentTimeMillis() + 15_000
+        while (reporter.status.value.lastSuccessAtMillis == null && System.currentTimeMillis() < deadline) {
+            Thread.sleep(20)
+        }
+        assertNotNull("成功状态必须被记录（否则状态页永远显示尚未上报）", reporter.status.value.lastSuccessAtMillis)
+        assertEquals("Healthy", reporter.status.value.lastReportedUploadStatus)
+    }
+
+    /**
+     * 观测读取失败不能抛到根协程之外：它必须变成一条**可见的失败**（否则 Android 上可能直接终止进程，
+     * 而状态里什么都不留）。
+     */
+    @Test
+    fun observationFailureIsRecordedAsVisibleFailure() = runTest {
+        val reporter = reporter(uploadOutcomeSource = { throw IllegalStateException("observation unavailable") })
+
+        assertEquals(EndpointHeartbeatOutcome.FAILED, reporter.reportIfDue(1))
+
+        assertEquals(1, reporter.status.value.consecutiveFailures)
+        assertNotNull(reporter.status.value.lastError)
+        assertEquals(0, server.requestCount)
+    }
+
     // ---- 真实 HTTP ------------------------------------------------------------
 
     @Test
@@ -285,6 +327,8 @@ class EndpointHeartbeatReporterTest {
         elapsed: () -> Long = { MONOTONIC },
         withToken: Boolean = true,
         api: ApiService? = null,
+        pendingLocationPoints: Int = 0,
+        uploadOutcomeSource: UploadOutcomeSource = { uploadOutcome },
         uploadOutcome: UploadOutcome = UploadOutcome(lastError = null, hasCompletedUpload = true)
     ): EndpointHeartbeatReporter {
         val baseUrl = server.url("/api/v1/").toString()
@@ -320,11 +364,11 @@ class EndpointHeartbeatReporterTest {
             context = context,
             api = api ?: apiClientProvider.apiService(),
             identityProvider = DeviceIdentityProvider(context),
-            uploadOutcomeSource = { uploadOutcome },
+            uploadOutcomeSource = uploadOutcomeSource,
             tokenManager = tokenManager,
             serverSettingsStore = serverSettings,
             logs = logs,
-            queueStatusRepository = queueStatusRepository(),
+            queueStatusRepository = queueStatusRepository(pendingLocationPoints),
             nowUtcMillis = now,
             elapsedRealtimeMillis = elapsed
         )

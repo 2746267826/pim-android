@@ -154,7 +154,27 @@ class EndpointHeartbeatReporter internal constructor(
      */
     override fun requestIfDue() {
         scope.launch {
-            reportIfDue(currentPendingUploadCount())
+            try {
+                reportIfDue(currentPendingUploadCount())
+            } catch (ex: CancellationException) {
+                throw ex
+            } catch (ex: Exception) {
+                // 这是**根协程**：未捕获异常会交给默认异常处理器（Android 上可能直接终止进程）。
+                // SupervisorJob 只是不牵连兄弟协程，它不会吞异常。一次心跳绝不能把进程带走。
+                val detail = "${ex::class.java.simpleName}: ${ex.toCauseChainMessage()}"
+                markUnexpectedFailure(detail)
+                logs.warn(TAG, "端点心跳执行异常：$detail")
+            }
+        }
+    }
+
+    /** 未预期的执行异常同样要可见（连续失败 + 原因），不能只写一行日志。 */
+    private fun markUnexpectedFailure(detail: String) {
+        synchronized(statusLock) {
+            _status.value = _status.value.copy(
+                lastError = detail,
+                consecutiveFailures = _status.value.consecutiveFailures + 1
+            )
         }
     }
 
@@ -190,18 +210,20 @@ class EndpointHeartbeatReporter internal constructor(
     }
 
     private suspend fun send(now: Long, elapsed: Long, collectionCacheCount: Int?): EndpointHeartbeatOutcome {
-        val identity = identityProvider.current()
-        val outcome = uploadOutcomeSource.current()
-        val uploadStatus = resolveUploadStatus(outcome.lastError, outcome.hasCompletedUpload)
-        val request = EndpointHeartbeatRequest(
-            platform = PLATFORM,
-            appVersion = appVersionName(),
-            uploadStatus = uploadStatus,
-            collectionCacheCount = collectionCacheCount
-        )
         recordAttempt(now, elapsed)
 
         return try {
+            // 设备标识、上传观测、请求构造都在 try 里：任何一步失败都走同一条"可见失败"路径，
+            // 而不是抛到根协程（review 的 Important）。
+            val identity = identityProvider.current()
+            val outcome = uploadOutcomeSource.current()
+            val uploadStatus = resolveUploadStatus(outcome.lastError, outcome.hasCompletedUpload)
+            val request = EndpointHeartbeatRequest(
+                platform = PLATFORM,
+                appVersion = appVersionName(),
+                uploadStatus = uploadStatus,
+                collectionCacheCount = collectionCacheCount
+            )
             api.sendEndpointHeartbeat(identity.deviceId, request)
             recordSuccess(now, uploadStatus)
             logs.info(

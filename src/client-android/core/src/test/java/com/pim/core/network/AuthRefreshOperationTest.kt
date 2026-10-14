@@ -297,7 +297,7 @@ class AuthRefreshOperationTest {
         accessToken: String,
         refreshToken: String,
         expiresAt: String
-    ): String = """{"code":0,"message":"OK","data":{"accessToken":"$accessToken",""" +
+    ): String = """{"code":0,"message":"OK","timestamp":"2026-10-14T00:00:00Z","data":{"accessToken":"$accessToken",""" +
         """"refreshToken":"$refreshToken","expiresAt":"$expiresAt",""" +
         """"user":{"id":"user-1","username":"alice","displayName":"Alice","role":"user"}}}"""
 

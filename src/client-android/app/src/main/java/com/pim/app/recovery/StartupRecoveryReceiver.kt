@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.pim.app.keepalive.KeepAliveCoordinator
+import com.pim.app.mute.EventMuteCoordinator
 import com.pim.app.mobile.logs.StructuredLogRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -20,6 +21,9 @@ class StartupRecoveryReceiver : BroadcastReceiver() {
 
     @Inject
     lateinit var keepAliveCoordinator: KeepAliveCoordinator
+
+    @Inject
+    lateinit var eventMuteCoordinator: EventMuteCoordinator
 
     @Inject
     lateinit var logs: StructuredLogRepository
@@ -45,6 +49,17 @@ class StartupRecoveryReceiver : BroadcastReceiver() {
                         logs.error("keepalive", "开机/更新后重建保活闹钟失败：${ex.message ?: ""}", ex)
                     }
                 )
+
+                // 工单 04（E3.2 / AC-4）：设备重启或应用更新后闹钟同样被系统清空，
+                // 日程静音计划必须重建，否则未来日程会漏触发。
+                // 与上面两步互相独立：这里失败只记录，不影响采集恢复与保活重建的结果。
+                try {
+                    eventMuteCoordinator.refresh("boot-or-update")
+                } catch (ex: kotlinx.coroutines.CancellationException) {
+                    throw ex
+                } catch (ex: Exception) {
+                    logs.error("eventmute", "开机/更新后重建日程静音计划失败：${ex.message ?: ""}", ex)
+                }
             } finally {
                 pendingResult.finish()
             }

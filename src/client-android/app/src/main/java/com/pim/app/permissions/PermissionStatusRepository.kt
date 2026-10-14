@@ -1,6 +1,7 @@
 package com.pim.app.permissions
 
 import android.Manifest
+import android.app.NotificationManager
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
@@ -25,7 +26,9 @@ class PermissionStatusRepository @Inject constructor(
             backgroundLocationGranted = hasBackgroundLocationPermission(preciseLocationGranted),
             usageAccessGranted = usageAccessChecker.hasUsageAccess(),
             activityRecognitionGranted = hasActivityRecognitionPermission(),
-            batteryOptimizationGranted = hasBatteryOptimization()
+            batteryOptimizationGranted = hasBatteryOptimization(),
+            // 工单 04 E3.3：日程静音需要的勿扰访问权限（只能在系统设置里授予）
+            doNotDisturbAccessGranted = hasDoNotDisturbAccess()
         )
     }
 
@@ -51,6 +54,11 @@ class PermissionStatusRepository @Inject constructor(
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.M) return true
         val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager ?: return false
         return powerManager.isIgnoringBatteryOptimizations(context.packageName)
+    }
+
+    private fun hasDoNotDisturbAccess(): Boolean {
+        val manager = context.getSystemService(Context.NOTIFICATION_SERVICE) as? NotificationManager
+        return manager?.isNotificationPolicyAccessGranted ?: false
     }
 
     private fun isGranted(permission: String): Boolean {

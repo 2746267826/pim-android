@@ -25,6 +25,18 @@ if ! [[ "$N" =~ ^[0-9]+$ ]] || [[ "$N" -lt 1 ]]; then
   exit 1
 fi
 
+# 历史基线补偿（一次性、永久生效）。拆仓前本客户端的序号来自 monorepo 的运行序号，
+# 用户机器上已装到的最大值是 815（2026-10-10 的 v2026.10.815，versionCode 100815）。
+# 拆仓后 GITHUB_RUN_NUMBER 从 1 重新计数，若直接使用，新版本号会小于已装的旧版本：
+#   1) 更新检查（Android / Windows 的 UpdateChecker）只比较版本号**最后一段数字**，
+#      旧客户端会认为自己是新版 → 永远不提示更新；
+#   2) Android 的 versionCode 由序号推导，变小后系统按「降级」拒绝安装
+#      （INSTALL_FAILED_VERSION_DOWNGRADE，签名一致也没用）。
+# 故叠加补偿基数 1000（> 历史最大值 815，留出余量），此后随运行序号单调递增。
+# 只在客户端仓（android / windows）加：api / web 没有安装层，序号本就连续。
+LEGACY_RUN_NUMBER_BASE=1000
+N=$((LEGACY_RUN_NUMBER_BASE + N))
+
 SHA_FULL="${GITHUB_SHA:-0000000000000000000000000000000000000000}"
 SHA7="${SHA_FULL:0:7}"
 # 对外显示的版本号用两位年份（26.10.42）；程序集版本（assembly_version）仍用四位

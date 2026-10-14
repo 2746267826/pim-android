@@ -54,6 +54,7 @@ import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
 import retrofit2.http.Query
+import okhttp3.RequestBody
 
 /**
  * 与 `pim-api` 的接口边界。
@@ -131,9 +132,11 @@ interface ApiService {
         @Query("type") type: String? = null
     ): SearchResultPagedResultApiResponse
 
-    // ICS —— 契约该 operation 没有 requestBody，2xx payload 是 ImportReport（F-B-04）。
+    // ICS 导入 —— 契约该 operation 是 multipart/form-data（`IcsImportForm`：`file` binary 必填、
+    // `calendarId` 可空），2xx payload 是 ImportReport（F-B-04）。非 JSON 请求体按本仓门禁口径
+    // 用 `@Body RequestBody` 承载调用方组好的 multipart（`@Multipart`/`@Part` 被门禁拒绝）。
     @POST("calendar/import-ics")
-    suspend fun importIcs(): ImportReportApiResponse
+    suspend fun importIcs(@Body body: RequestBody): ImportReportApiResponse
 
     // ICS 导出 —— 契约 2xx 是 `text/calendar`，不是 JSON 信封，因此用 ResponseBody 接（F-B-04）。
     @GET("calendar/export-ics")

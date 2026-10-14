@@ -80,10 +80,10 @@ class MobileSyncPeriodicHeartbeatTest {
         arrayOf(ApiService::class.java)
     ) { _, method, _ ->
         when (method.name) {
-            "sendHeartbeat" -> DaemonHeartbeatDtoApiResponse(code = 0, message = "ok", data = null)
+            "sendHeartbeat" -> DaemonHeartbeatDtoApiResponse(code = 0, message = "ok", data = null, timestamp = "2026-10-14T00:00:00Z")
             // 定位点批量补传：本测试队列为空时不会被调用；显式声明确保"意外调用"仍然可见。
             "uploadMobileLocationsBatch" ->
-                MobileLocationPointsUploadResultApiResponse(code = 0, message = "ok", data = null)
+                MobileLocationPointsUploadResultApiResponse(code = 0, message = "ok", data = null, timestamp = "2026-10-14T00:00:00Z")
             "toString" -> "StubApiService"
             "hashCode" -> System.identityHashCode(this)
             "equals" -> false

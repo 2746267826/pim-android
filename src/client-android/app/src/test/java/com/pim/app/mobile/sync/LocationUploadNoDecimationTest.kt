@@ -196,7 +196,8 @@ class LocationUploadNoDecimationTest {
                             skippedCount = 0,
                             rejectedCount = 0,
                             itemResults = items
-                        )
+                        ),
+                        timestamp = "2026-10-14T00:00:00Z",
                     )
                 }
                 "toString" -> "RecordingApiService"

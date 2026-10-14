@@ -233,7 +233,7 @@ class LocationBatchUploadTest {
     fun `业务错误码响应整批退到队尾不删行`() = runTest {
         seed(count = 2)
         val api = batchApi {
-            MobileLocationPointsUploadResultApiResponse(code = 5000, message = "server busy", data = null)
+            MobileLocationPointsUploadResultApiResponse(code = 5000, message = "server busy", data = null, timestamp = "2026-10-14T00:00:00Z")
         }
 
         val updates = coordinator(api).uploadPending()
@@ -419,7 +419,8 @@ class LocationBatchUploadTest {
                 skippedCount = items.count { it.outcome == "skipped" },
                 rejectedCount = items.count { it.outcome == "rejected" },
                 itemResults = items
-            )
+            ),
+            timestamp = "2026-10-14T00:00:00Z",
         )
 
     /** 本地自建 HttpException，避免依赖其它测试文件的夹具。 */

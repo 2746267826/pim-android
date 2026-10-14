@@ -108,7 +108,8 @@ class ForensicUploadCoordinatorTest {
             skippedKeys = skippedKeys,
             rejectedKeys = rejectedKeys,
             acceptedDroppedReasonCount = 0
-        )
+        ),
+        timestamp = "2026-10-14T00:00:00Z",
     )
 
     private fun coordinator(respond: (MobileForensicsUploadRequest) -> MobileForensicsIngestResultApiResponse) =

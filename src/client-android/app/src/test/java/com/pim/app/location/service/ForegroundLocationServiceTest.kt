@@ -90,6 +90,7 @@ import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
 import org.robolectric.annotation.LooperMode
+import okhttp3.RequestBody
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = TestPimApp::class)
@@ -263,7 +264,7 @@ class ForegroundLocationServiceTest {
         }
         val api = object : ApiService {
             override suspend fun getEvents(start: String, end: String, page: Int?, pageSize: Int?): EventResponsePagedResultApiResponse =
-                EventResponsePagedResultApiResponse(code = 0, message = "ok", data = EventResponsePagedResult(items = emptyList(), page = 1, pageSize = 100, totalCount = 0, totalPages = 0))
+                EventResponsePagedResultApiResponse(code = 0, message = "ok", data = EventResponsePagedResult(items = emptyList(), page = 1, pageSize = 100, totalCount = 0, totalPages = 0), timestamp = "2026-10-14T00:00:00Z")
             override suspend fun login(request: com.pim.core.contract.LoginRequest) = error("not mocked")
             override suspend fun register(request: com.pim.core.contract.RegisterRequest) = error("not mocked")
             override suspend fun refresh(request: com.pim.core.contract.RefreshRequest) = error("not mocked")
@@ -277,7 +278,7 @@ class ForegroundLocationServiceTest {
             override suspend fun updateTask(id: String, request: com.pim.core.contract.UpdateTaskRequest) = error("not mocked")
             override suspend fun deleteTask(id: String) = error("not mocked")
             override suspend fun search(query: String, type: String?) = error("not mocked")
-            override suspend fun importIcs() = error("not mocked")
+            override suspend fun importIcs(body: RequestBody) = error("not mocked")
             override suspend fun exportIcs(start: String, end: String) = error("not mocked")
             override suspend fun syncOutlook(request: com.pim.core.contract.OutlookSyncRequest) = error("not mocked")
             override suspend fun registerMobileDevice(request: com.pim.core.contract.MobileDeviceRegisterRequest) = error("not mocked")
@@ -855,7 +856,7 @@ class ForegroundLocationServiceTest {
             override suspend fun updateTask(id: String, request: com.pim.core.contract.UpdateTaskRequest) = error("not mocked")
             override suspend fun deleteTask(id: String) = error("not mocked")
             override suspend fun search(query: String, type: String?) = error("not mocked")
-            override suspend fun importIcs() = error("not mocked")
+            override suspend fun importIcs(body: RequestBody) = error("not mocked")
             override suspend fun exportIcs(start: String, end: String) = error("not mocked")
             override suspend fun syncOutlook(request: com.pim.core.contract.OutlookSyncRequest) = error("not mocked")
             override suspend fun registerMobileDevice(request: com.pim.core.contract.MobileDeviceRegisterRequest) = error("not mocked")
@@ -3486,7 +3487,7 @@ class ForegroundLocationServiceTest {
                 failNext = null
                 throw t
             }
-            return EventResponsePagedResultApiResponse(code = 0, message = "ok", data = EventResponsePagedResult(items = events, page = 1, pageSize = 100, totalCount = events.size, totalPages = 1))
+            return EventResponsePagedResultApiResponse(code = 0, message = "ok", data = EventResponsePagedResult(items = events, page = 1, pageSize = 100, totalCount = events.size, totalPages = 1), timestamp = "2026-10-14T00:00:00Z")
         }
 
         override suspend fun login(body: com.pim.core.contract.LoginRequest) = error("not mocked")
@@ -3502,7 +3503,7 @@ class ForegroundLocationServiceTest {
         override suspend fun updateTask(id: String, body: com.pim.core.contract.UpdateTaskRequest) = error("not mocked")
         override suspend fun deleteTask(id: String) = error("not mocked")
         override suspend fun search(query: String, type: String?) = error("not mocked")
-        override suspend fun importIcs() = error("not mocked")
+        override suspend fun importIcs(body: RequestBody) = error("not mocked")
         override suspend fun exportIcs(start: String, end: String) = error("not mocked")
         override suspend fun syncOutlook(request: com.pim.core.contract.OutlookSyncRequest) = error("not mocked")
         override suspend fun registerMobileDevice(body: com.pim.core.contract.MobileDeviceRegisterRequest) = error("not mocked")

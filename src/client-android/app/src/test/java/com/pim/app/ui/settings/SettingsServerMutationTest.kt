@@ -60,6 +60,7 @@ import com.pim.app.mobile.diagnostics.DiagnosticOperations
 import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.recovery.RunningStateRestorer
 import kotlinx.coroutines.CompletableDeferred
+import okhttp3.RequestBody
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -1152,7 +1153,7 @@ class SettingsServerMutationTest {
             override suspend fun updateTask(id: String, request: com.pim.core.contract.UpdateTaskRequest) = error("not used")
             override suspend fun deleteTask(id: String) = error("not used")
             override suspend fun search(query: String, type: String?) = error("not used")
-            override suspend fun importIcs() = error("not used")
+            override suspend fun importIcs(body: RequestBody) = error("not used")
             override suspend fun exportIcs(start: String, end: String) = error("not used")
             override suspend fun syncOutlook(request: com.pim.core.contract.OutlookSyncRequest) = error("not used")
             override suspend fun registerMobileDevice(request: com.pim.core.contract.MobileDeviceRegisterRequest) = error("not used")

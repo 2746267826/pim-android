@@ -44,6 +44,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import okhttp3.RequestBody
 
 @OptIn(ExperimentalCoroutinesApi::class)
 @RunWith(RobolectricTestRunner::class)
@@ -591,7 +592,7 @@ class SchedulePolicyViewModelTest {
                 failNext = null
                 throw t
             }
-            return EventResponsePagedResultApiResponse(code = 0, message = "ok", data = EventResponsePagedResult(items = events, page = 1, pageSize = 100, totalCount = events.size, totalPages = 1))
+            return EventResponsePagedResultApiResponse(code = 0, message = "ok", data = EventResponsePagedResult(items = events, page = 1, pageSize = 100, totalCount = events.size, totalPages = 1), timestamp = "2026-10-14T00:00:00Z")
         }
 
         override suspend fun login(body: com.pim.core.contract.LoginRequest) = error("not mocked")
@@ -607,7 +608,7 @@ class SchedulePolicyViewModelTest {
         override suspend fun updateTask(id: String, body: com.pim.core.contract.UpdateTaskRequest) = error("not mocked")
         override suspend fun deleteTask(id: String) = error("not mocked")
         override suspend fun search(query: String, type: String?) = error("not mocked")
-        override suspend fun importIcs() = error("not mocked")
+        override suspend fun importIcs(body: RequestBody) = error("not mocked")
         override suspend fun exportIcs(start: String, end: String) = error("not mocked")
         override suspend fun syncOutlook(request: com.pim.core.contract.OutlookSyncRequest) = error("not mocked")
         override suspend fun registerMobileDevice(body: com.pim.core.contract.MobileDeviceRegisterRequest) = error("not mocked")

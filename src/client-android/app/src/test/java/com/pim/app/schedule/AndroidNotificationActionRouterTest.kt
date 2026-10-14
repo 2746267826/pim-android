@@ -45,7 +45,8 @@ class AndroidNotificationActionRouterTest {
                     result = "Executed",
                     detailUrl = null,
                     message = "recorded"
-                )
+                ),
+                timestamp = "2026-10-14T00:00:00Z",
             )
         }
 

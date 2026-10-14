@@ -150,7 +150,8 @@ class ServerBoundLoginCoordinatorTest {
                     displayName = "Alice",
                     role = "user"
                 )
-            )
+            ),
+            timestamp = "2026-10-14T00:00:00Z",
         )
     }
 

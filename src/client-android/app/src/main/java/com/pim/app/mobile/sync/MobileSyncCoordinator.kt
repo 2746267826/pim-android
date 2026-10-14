@@ -6,7 +6,6 @@ import android.content.pm.PackageInfo
 import android.content.pm.PackageManager
 import android.os.Build
 import android.os.SystemClock
-import android.provider.Settings
 import javax.inject.Provider
 
 import com.pim.app.data.AppDatabase
@@ -101,7 +100,8 @@ class MobileSyncCoordinator @Inject constructor(
     private val locationUploadCoordinator: LocationUploadCoordinator,
     private val forensicUploadCoordinator: ForensicUploadCoordinator,
     private val wakeHeartbeatRecorder: WakeHeartbeatRecorder,
-    private val syncScheduler: Provider<MobileSyncScheduler>
+    private val syncScheduler: Provider<MobileSyncScheduler>,
+    private val deviceIdentityProvider: DeviceIdentityProvider
 ) {
     private val mobileDataDao = database.mobileDataDao()
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -709,7 +709,7 @@ class MobileSyncCoordinator @Inject constructor(
     }
 
     private suspend fun registerDevice(
-        identity: DeviceIdentity,
+        identity: MobileDeviceIdentity,
         profile: MobileDeviceProfileEntity
     ) {
         val response = api.registerMobileDevice(
@@ -807,7 +807,7 @@ class MobileSyncCoordinator @Inject constructor(
     }
 
     private fun buildDeviceProfile(
-        identity: DeviceIdentity,
+        identity: MobileDeviceIdentity,
         nowUtc: Long
     ): MobileDeviceProfileEntity {
         val version = appVersion()
@@ -840,18 +840,7 @@ class MobileSyncCoordinator @Inject constructor(
         )
     }
 
-    private fun deviceIdentity(): DeviceIdentity {
-        val androidId = Settings.Secure.getString(
-            context.contentResolver,
-            Settings.Secure.ANDROID_ID
-        )
-        val seed = androidId ?: Build.FINGERPRINT ?: "android-device"
-        val hash = sha256(seed)
-        return DeviceIdentity(
-            deviceId = "android-${hash.take(16)}",
-            androidIdHash = androidId?.let { sha256(it) }
-        )
-    }
+    private fun deviceIdentity(): MobileDeviceIdentity = deviceIdentityProvider.current()
 
     private fun configuredServerUrl(): String {
         return normalizeServerUrl(serverSettingsStore.getBaseUrl())
@@ -1125,13 +1114,6 @@ class MobileSyncCoordinator @Inject constructor(
         }
     }
 
-    private fun sha256(value: String): String = sha256Hex(value)
-
-
-    private data class DeviceIdentity(
-        val deviceId: String,
-        val androidIdHash: String?
-    )
 
     companion object {
         private const val FOURTEEN_DAYS_MS = 14L * 24L * 60L * 60L * 1000L

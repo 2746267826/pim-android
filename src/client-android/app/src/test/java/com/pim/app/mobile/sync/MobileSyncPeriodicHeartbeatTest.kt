@@ -126,7 +126,8 @@ class MobileSyncPeriodicHeartbeatTest {
                 snapshotReader = AndroidHeartbeatSnapshotReader(context),
                 logs = logs
             ),
-            syncScheduler = { MobileSyncScheduler(context, trackSettings) }
+            syncScheduler = { MobileSyncScheduler(context, trackSettings) },
+            deviceIdentityProvider = DeviceIdentityProvider(context)
         )
     }
 

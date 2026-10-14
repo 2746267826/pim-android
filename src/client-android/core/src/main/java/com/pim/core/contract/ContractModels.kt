@@ -232,6 +232,15 @@ enum class DaemonSourceState {
     PAUSED,
 }
 
+/** 契约 `components.schemas.EndpointHeartbeatRequest`（request）。 */
+@Serializable
+data class EndpointHeartbeatRequest(
+    val appVersion: String? = null,
+    val collectionCacheCount: Int? = null,
+    val platform: String,
+    val uploadStatus: String? = null,
+)
+
 /** 契约 `components.schemas.EndpointNotificationActionRequest`（request）。 */
 @Serializable
 data class EndpointNotificationActionRequest(
@@ -255,6 +264,27 @@ data class EndpointNotificationActionResponse(
 data class EndpointNotificationActionResponseApiResponse(
     val code: Int,
     val data: EndpointNotificationActionResponse? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.EndpointStatusDto`（response）。 */
+@Serializable
+data class EndpointStatusDto(
+    val appVersion: String? = null,
+    val collectionCacheCount: Int,
+    val deviceId: String,
+    val lastHeartbeatAt: String? = null,
+    val onlineOnlyBlockedCount: Int,
+    val platform: String,
+    val uploadStatus: String,
+)
+
+/** 契约 `components.schemas.EndpointStatusDtoApiResponse`（response）。 */
+@Serializable
+data class EndpointStatusDtoApiResponse(
+    val code: Int,
+    val data: EndpointStatusDto? = null,
     val message: String,
     val timestamp: String,
 )

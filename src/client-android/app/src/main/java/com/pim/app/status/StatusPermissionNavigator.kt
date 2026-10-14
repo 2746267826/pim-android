@@ -36,6 +36,8 @@ object StatusPermissionNavigator {
 
     fun intentFor(context: Context, issueCode: String): Intent = when (issueCode) {
         "usage-access-missing" -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
+        // 工单 04 E3.3：勿扰访问权限只能在这个系统页面里授予
+        "dnd-access-missing" -> Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
         "notification-permission-missing" -> notificationSettingsIntent(context)
         "battery-optimization-missing" -> Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
             .setData(Uri.parse("package:${context.packageName}"))

@@ -73,9 +73,12 @@ import androidx.compose.material3.ExperimentalMaterial3Api
 import com.pim.app.settings.TrackingPresetCatalog
 import com.pim.app.status.PolicyTransitionDisplay
 import com.pim.app.status.StatusPermissionNavigator
+import com.pim.app.ui.permissions.DND_ACCESS_ISSUE_CODE
 import com.pim.app.ui.status.formatPolicyTransition
 import com.pim.app.keepalive.ui.ColorOsGuidanceScreen
 import com.pim.app.keepalive.ui.KeepAliveSection
+import com.pim.app.mute.ui.EventMuteSection
+import com.pim.app.mute.ui.EventMuteViewModel
 import com.pim.app.keepalive.ui.KeepAliveViewModel
 import com.pim.app.ui.components.PimSection
 import com.pim.app.ui.permissions.permissionSettingRows
@@ -97,11 +100,13 @@ fun SettingsScreen(
     scrollToPolicyTransitionHistory: Boolean = false,
     onPolicyTransitionHistoryScrolled: () -> Unit = {},
     viewModel: SettingsViewModel = hiltViewModel(),
-    keepAliveViewModel: KeepAliveViewModel = hiltViewModel()
+    keepAliveViewModel: KeepAliveViewModel = hiltViewModel(),
+    eventMuteViewModel: EventMuteViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val keepAliveState by keepAliveViewModel.sectionState.collectAsStateWithLifecycle()
     val guidanceState by keepAliveViewModel.guidanceState.collectAsStateWithLifecycle()
+    val eventMuteState by eventMuteViewModel.sectionState.collectAsStateWithLifecycle()
     var showGuidance by rememberSaveable { mutableStateOf(false) }
     var username by rememberSaveable { mutableStateOf("") }
     var password by rememberSaveable { mutableStateOf("") }
@@ -547,6 +552,23 @@ fun SettingsScreen(
                     com.pim.app.keepalive.ColorOsGuidanceCatalog.EXACT_ALARM
                 )
             }
+        )
+
+        // 工单 04（E3.4）：日程静音的设备级开关与权限状态，紧跟在保活分区之后。
+        // 与保活分区的关系：保活负责「进程活着 + 闹钟准时」，本分区负责「要不要按日程静音」，
+        // 两个开关互不联动（关闭本分区不影响保活，反之亦然）。
+        EventMuteSection(
+            state = eventMuteState,
+            onToggleFollowRule = eventMuteViewModel::setFollowRuleEnabled,
+            onOpenDoNotDisturbSettings = {
+                StatusPermissionNavigator.open(context, DND_ACCESS_ISSUE_CODE)
+            },
+            onOpenExactAlarmSettings = {
+                keepAliveViewModel.openSettingsFor(
+                    com.pim.app.keepalive.ColorOsGuidanceCatalog.EXACT_ALARM
+                )
+            },
+            onRefreshPlan = eventMuteViewModel::refreshPlan
         )
 
         PimSection("权限") {

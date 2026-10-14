@@ -27,6 +27,14 @@
     <uses-permission android:name="android.permission.USE_EXACT_ALARM" />
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM" />
 
+    <!--
+      工单 04（E3.3）：日程期间静音需要系统勿扰访问权限（DND access）。
+      该权限只能由用户在系统设置里授予（Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS），
+      运行时一律以 NotificationManager.isNotificationPolicyAccessGranted() 为准；
+      未授权时本应用不改任何系统状态，并在设置页给出可见提示（AC-5：不允许静默失效）。
+    -->
+    <uses-permission android:name="android.permission.ACCESS_NOTIFICATION_POLICY" />
+
     <application
         android:name=".PimApp"
         android:allowBackup="false"
@@ -81,6 +89,14 @@
         -->
         <receiver
             android:name=".keepalive.KeepAliveAlarmReceiver"
+            android:exported="false" />
+
+        <!--
+          工单 04（E3.2）：日程开始/结束的精确闹钟入口。与 keepalive 的叫醒接收器相互独立
+          （action 与 requestCode 区间都不同），因此两套登记不会互相覆盖。
+        -->
+        <receiver
+            android:name=".mute.EventMuteAlarmReceiver"
             android:exported="false" />
 
         <!--

@@ -4,6 +4,7 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.pim.app.mobile.logs.StructuredLogRepository
+import com.pim.app.mute.EventMuteCoordinator
 import dagger.hilt.android.AndroidEntryPoint
 import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
@@ -28,6 +29,9 @@ class KeepAliveAlarmReceiver : BroadcastReceiver() {
     lateinit var coordinator: KeepAliveCoordinator
 
     @Inject
+    lateinit var eventMuteCoordinator: EventMuteCoordinator
+
+    @Inject
     lateinit var logs: StructuredLogRepository
 
     override fun onReceive(context: Context, intent: Intent) {
@@ -41,9 +45,21 @@ class KeepAliveAlarmReceiver : BroadcastReceiver() {
             } catch (ex: Exception) {
                 // REQ-28：叫醒链路的失败必须留下可见出口，不能静默。
                 logs.error("keepalive", "处理叫醒广播失败：${ex.message ?: ex::class.java.simpleName}", ex)
-            } finally {
-                pendingResult.finish()
             }
+
+            // 工单 04（E3.2）：复用既有的叫醒周期顺带刷新日程静音计划 ——
+            // 这正是「不新增常驻服务，也不用第二套闹钟」的落点：计划窗口 24h，
+            // 每次叫醒（默认 30 分钟）重建一次，重启后由开机恢复重建（AC-4）。
+            // 独立 try：静音刷新失败绝不影响保活链本身的语义。
+            try {
+                eventMuteCoordinator.refresh("keepalive-wake")
+            } catch (ex: kotlinx.coroutines.CancellationException) {
+                throw ex
+            } catch (ex: Exception) {
+                logs.error("eventmute", "叫醒周期刷新日程静音计划失败：${ex.message ?: ""}", ex)
+            }
+
+            pendingResult.finish()
         }
     }
 }

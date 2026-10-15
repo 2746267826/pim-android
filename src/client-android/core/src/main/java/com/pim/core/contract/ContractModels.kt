@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 fd4db8623d8589a77eaeb3c42c264dd289cd912809b803cc052e69fc4bc92533)
+//   契约快照 : contract/openapi.json (sha256 33cd6346e8375f4f06e4c07125f8d1470104eb4a1e91296569f386df9413a732)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -68,6 +68,7 @@ data class CalendarOperationSample(
 data class CalendarResponse(
     val canEdit: Boolean? = null,
     val color: String,
+    val defaultMuted: Boolean? = null,
     val eventCount: Int,
     val id: String,
     val isDefault: Boolean,
@@ -133,6 +134,7 @@ data class CreateEventRequest(
     val importance: String? = null,
     val isAllDay: Boolean? = null,
     val isException: Boolean? = null,
+    val isMuted: Boolean? = null,
     val isOnlineMeeting: Boolean? = null,
     val isReminderOn: Boolean? = null,
     val isSeriesMaster: Boolean? = null,
@@ -301,6 +303,7 @@ data class EventResponse(
     val isAllDay: Boolean? = null,
     val isCancelled: Boolean? = null,
     val isException: Boolean? = null,
+    val isMuted: Boolean? = null,
     val isOnlineMeeting: Boolean? = null,
     val isReminderOn: Boolean? = null,
     val isSeriesMaster: Boolean? = null,
@@ -1239,6 +1242,7 @@ data class UpdateEventRequest(
     val importance: String? = null,
     val isAllDay: Boolean? = null,
     val isException: Boolean? = null,
+    val isMuted: Boolean? = null,
     val isOnlineMeeting: Boolean? = null,
     val isReminderOn: Boolean? = null,
     val isSeriesMaster: Boolean? = null,

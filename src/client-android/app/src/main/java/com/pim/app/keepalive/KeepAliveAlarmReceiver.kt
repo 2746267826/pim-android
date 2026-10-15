@@ -10,7 +10,9 @@ import javax.inject.Inject
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
+import kotlinx.coroutines.TimeoutCancellationException
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 
 /**
  * 叫醒广播接收器（REQ-16）。
@@ -41,25 +43,49 @@ class KeepAliveAlarmReceiver : BroadcastReceiver() {
         val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
         scope.launch {
             try {
-                coordinator.onAlarmFired()
-            } catch (ex: Exception) {
-                // REQ-28：叫醒链路的失败必须留下可见出口，不能静默。
-                logs.error("keepalive", "处理叫醒广播失败：${ex.message ?: ex::class.java.simpleName}", ex)
-            }
+                try {
+                    coordinator.onAlarmFired()
+                } catch (ex: Exception) {
+                    // REQ-28：叫醒链路的失败必须留下可见出口，不能静默。
+                    logs.error("keepalive", "处理叫醒广播失败：${ex.message ?: ex::class.java.simpleName}", ex)
+                }
 
-            // 工单 04（E3.2）：复用既有的叫醒周期顺带刷新日程静音计划 ——
-            // 这正是「不新增常驻服务，也不用第二套闹钟」的落点：计划窗口 24h，
-            // 每次叫醒（默认 30 分钟）重建一次，重启后由开机恢复重建（AC-4）。
-            // 独立 try：静音刷新失败绝不影响保活链本身的语义。
-            try {
-                eventMuteCoordinator.refresh("keepalive-wake")
-            } catch (ex: kotlinx.coroutines.CancellationException) {
-                throw ex
-            } catch (ex: Exception) {
-                logs.error("eventmute", "叫醒周期刷新日程静音计划失败：${ex.message ?: ""}", ex)
+                // 工单 04（E3.2）：复用既有的叫醒周期顺带刷新日程静音计划 ——
+                // 这正是「不新增常驻服务，也不用第二套闹钟」的落点：计划窗口 24h，
+                // 每次叫醒（默认 30 分钟）重建一次，重启后由开机恢复重建（AC-4）。
+                //
+                // 独立 try + **超时**：广播的 goAsync 窗口约 10s，而刷新要拉日历本 + 最多 5 页日程；
+                // 网络慢时必须主动放弃本次刷新（下次叫醒重试），不能让接收器超时被回收
+                // （那会连带影响保活链本身，正是工单要求「不能因进程被冻结/杀死而漏开或漏恢复」的场景）。
+                try {
+                    withTimeout(MUTE_REFRESH_TIMEOUT_MS) {
+                        eventMuteCoordinator.refresh("keepalive-wake")
+                    }
+                } catch (ex: TimeoutCancellationException) {
+                    logs.warn(
+                        "eventmute",
+                        "叫醒周期刷新日程静音计划超时（${MUTE_REFRESH_TIMEOUT_MS}ms），本次跳过，下次叫醒重试"
+                    )
+                } catch (ex: kotlinx.coroutines.CancellationException) {
+                    throw ex
+                } catch (ex: Exception) {
+                    logs.error("eventmute", "叫醒周期刷新日程静音计划失败：${ex.message ?: ""}", ex)
+                }
+            } finally {
+                // 无条件 finish：goAsync() 的广播必须总有出口，否则系统会判为「未完成广播」。
+                // 静音刷新既不能吞掉真正的取消，也不能让接收器漏 finish（独立审查 I-2 / I-3）。
+                pendingResult.finish()
             }
-
-            pendingResult.finish()
         }
+    }
+
+    companion object {
+        /**
+         * 叫醒周期内刷新日程静音计划的超时。
+         *
+         * 取 5s：广播的 goAsync 窗口约 10s，而前面既有保活链（`onAlarmFired`）也要花时间，
+         * 留出余量避免接收器整体超时被系统回收。
+         */
+        internal const val MUTE_REFRESH_TIMEOUT_MS = 5_000L
     }
 }

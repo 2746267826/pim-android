@@ -100,15 +100,9 @@ fun PimShellScreen(
     val serverUrl = remember(serverSettingsStore) {
         serverSettingsStore?.getBaseUrl().orEmpty()
     }
-    val routes = listOf(
-        "今日" to "/today",
-        "任务" to "/tasks",
-        "日历" to "/calendar",
-        "报告" to "/reports",
-        "Outlook" to "/sync",
-        "Data Center" to "/data-center",
-        "确认" to "/confirmations"
-    )
+    // 入口清单抽到 PimShellRoutes（可单测）：工单 03 D2.3 要保证「任务」始终指向
+    // web 工作台的 /tasks —— 状态与计时由内嵌的 pim-web 承载，安卓侧没有原生任务界面。
+    val routes = PimShellRoutes.all
 
     MaterialTheme {
         Scaffold(

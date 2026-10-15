@@ -41,8 +41,11 @@ import com.pim.core.contract.RefreshRequest
 import com.pim.core.contract.RegisterRequest
 import com.pim.core.contract.SearchResultPagedResultApiResponse
 import com.pim.core.contract.StringApiResponse
+import com.pim.core.contract.TaskExecutionSegmentResponseApiResponse
+import com.pim.core.contract.TaskExecutionSegmentResponseIReadOnlyListApiResponse
 import com.pim.core.contract.TaskResponseApiResponse
 import com.pim.core.contract.TaskResponsePagedResultApiResponse
+import com.pim.core.contract.TaskTimerStateResponseApiResponse
 import com.pim.core.contract.UpdateEventRequest
 import com.pim.core.contract.UpdateTaskRequest
 import okhttp3.ResponseBody
@@ -124,6 +127,24 @@ interface ApiService {
     // 契约 2xx payload 是 CalendarOperationResult（对象），不是标量（F-B-04）。
     @DELETE("calendar/tasks/{id}")
     suspend fun deleteTask(@Path("id") id: String): CalendarOperationResultApiResponse
+
+    // 任务计时（工单 03）：执行时间段与「开始 / 暂停 / 结束」。
+    // 契约 2xx payload 是 TaskExecutionSegmentResponse / TaskTimerStateResponse（对象）。
+    // 触点在嵌入的 web 工作台（WebView /tasks），这里保证原生侧到契约的调用面就绪。
+    @GET("calendar/tasks/{id}/segments")
+    suspend fun getTaskSegments(@Path("id") id: String): TaskExecutionSegmentResponseIReadOnlyListApiResponse
+
+    @GET("calendar/tasks/{id}/timer")
+    suspend fun getTaskTimer(@Path("id") id: String): TaskTimerStateResponseApiResponse
+
+    @POST("calendar/tasks/{id}/timer/start")
+    suspend fun startTaskTimer(@Path("id") id: String): TaskExecutionSegmentResponseApiResponse
+
+    @POST("calendar/tasks/{id}/timer/pause")
+    suspend fun pauseTaskTimer(@Path("id") id: String): TaskExecutionSegmentResponseApiResponse
+
+    @POST("calendar/tasks/{id}/timer/stop")
+    suspend fun stopTaskTimer(@Path("id") id: String): TaskExecutionSegmentResponseApiResponse
 
     // Search — 契约 2xx payload 是 SearchResultPagedResult（对象），不是裸数组（F-B-04）。
     @GET("search")

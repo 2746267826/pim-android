@@ -352,7 +352,9 @@ data class PermissionStatusSnapshot(
     val backgroundLocationGranted: Boolean,
     val usageAccessGranted: Boolean,
     val activityRecognitionGranted: Boolean,
-    val batteryOptimizationGranted: Boolean
+    val batteryOptimizationGranted: Boolean,
+    /** 工单 04：勿扰访问权限（日程静音用）。默认 false 保持既有构造点不变。 */
+    val doNotDisturbAccessGranted: Boolean = false
 )
 
 data class ApiConnectionSnapshot(

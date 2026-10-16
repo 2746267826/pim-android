@@ -4,12 +4,14 @@ import android.content.BroadcastReceiver
 import android.content.Context
 import android.content.Intent
 import com.pim.app.keepalive.KeepAliveCoordinator
+import com.pim.app.mute.EventMuteCoordinator
 import com.pim.app.mobile.logs.StructuredLogRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.withTimeout
 import javax.inject.Inject
 
 @AndroidEntryPoint
@@ -20,6 +22,9 @@ class StartupRecoveryReceiver : BroadcastReceiver() {
 
     @Inject
     lateinit var keepAliveCoordinator: KeepAliveCoordinator
+
+    @Inject
+    lateinit var eventMuteCoordinator: EventMuteCoordinator
 
     @Inject
     lateinit var logs: StructuredLogRepository
@@ -45,6 +50,26 @@ class StartupRecoveryReceiver : BroadcastReceiver() {
                         logs.error("keepalive", "开机/更新后重建保活闹钟失败：${ex.message ?: ""}", ex)
                     }
                 )
+
+                // 工单 04（E3.2 / AC-4）：设备重启或应用更新后闹钟同样被系统清空，
+                // 日程静音计划必须重建，否则未来日程会漏触发。
+                // 与上面两步互相独立：这里失败只记录，不影响采集恢复与保活重建的结果。
+                // 同样加超时：开机广播的 goAsync 窗口也是约 10s，网络慢时必须主动放弃本次刷新，
+                // 让下一次 keepalive 叫醒去补（独立审查 I-3）。
+                try {
+                    withTimeout(MUTE_REFRESH_TIMEOUT_MS) {
+                        eventMuteCoordinator.refresh("boot-or-update")
+                    }
+                } catch (ex: kotlinx.coroutines.TimeoutCancellationException) {
+                    logs.warn(
+                        "eventmute",
+                        "开机/更新后重建日程静音计划超时（${MUTE_REFRESH_TIMEOUT_MS}ms），改由下一次叫醒重建"
+                    )
+                } catch (ex: kotlinx.coroutines.CancellationException) {
+                    throw ex
+                } catch (ex: Exception) {
+                    logs.error("eventmute", "开机/更新后重建日程静音计划失败：${ex.message ?: ""}", ex)
+                }
             } finally {
                 pendingResult.finish()
             }
@@ -52,6 +77,9 @@ class StartupRecoveryReceiver : BroadcastReceiver() {
     }
 
     companion object {
+        /** 开机恢复里刷新日程静音计划的超时（广播 goAsync 窗口约 10s，与叫醒链保持同一余量口径）。 */
+        internal const val MUTE_REFRESH_TIMEOUT_MS = 5_000L
+
         internal fun isStartupRecoveryAction(action: String?): Boolean {
             return action == Intent.ACTION_BOOT_COMPLETED || action == Intent.ACTION_MY_PACKAGE_REPLACED
         }

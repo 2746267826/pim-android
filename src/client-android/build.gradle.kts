@@ -701,14 +701,30 @@ private fun verifyContractEndpoints(contractFile: File, sourcesRoot: File): List
  */
 private fun verifyContractEndpointGuardSelfTest(contractFile: File, contract: ContractOperations) {
     // fixture 用不带路径占位符的 operation，这样自检本身不必再构造 @Path 参数。
+    //
+    // 还必须挑**请求/响应类型真的已生成进本仓**的 operation：契约快照是全量上游契约（含大量本客户端
+    // 没接入的 operation，例如 `/api/v1/admin/users` 的 `CreateUserRequest`）。拿它们当样例会让
+    // "本地同名 typealias 顶替契约类型"这条自检失效 —— 扫描器只把**本地生成过的类型名**当契约类型，
+    // 样例不在其中时它不会报"顶替"，自检便误判为"没有被拦下"（pim-android#21 刷新快照后真踩到）。
+    // 判定强度不变：样例仍来自契约里真实存在的 operation，仍走真实文件扫描入口。
+    val generatedTypes = loadGeneratedTypeNames(generatedModelsFile(contractFile))
+
     val sampleGet = contract.byKey.entries.firstOrNull { entry ->
         entry.key.startsWith("GET ") && entry.value.responseSchemas.isNotEmpty() &&
-            !entry.value.path.contains("{")
-    } ?: throw GradleException("契约门禁自检失败：契约里没有带 JSON 响应且无路径参数的 GET operation")
+            !entry.value.path.contains("{") &&
+            entry.value.responseSchemas.all { it in generatedTypes }
+    } ?: throw GradleException(
+        "契约门禁自检失败：契约里没有响应类型已在本地生成物里的、无路径参数的 GET operation"
+    )
     val samplePost = contract.byKey.entries.firstOrNull { entry ->
-        entry.key.startsWith("POST ") && entry.value.requestSchema != null &&
-            entry.value.responseSchemas.isNotEmpty() && !entry.value.path.contains("{")
-    } ?: throw GradleException("契约门禁自检失败：契约里没有带 JSON 请求体/响应且无路径参数的 POST operation")
+        val requestSchema = entry.value.requestSchema
+        entry.key.startsWith("POST ") && requestSchema != null &&
+            entry.value.responseSchemas.isNotEmpty() && !entry.value.path.contains("{") &&
+            requestSchema in generatedTypes &&
+            entry.value.responseSchemas.all { it in generatedTypes }
+    } ?: throw GradleException(
+        "契约门禁自检失败：契约里没有请求/响应类型都已在本地生成物里的、无路径参数的 POST operation"
+    )
 
     val getPath = sampleGet.value.path.removePrefix(CONTRACT_API_BASE_PATH)
     val getResponse = sampleGet.value.responseSchemas.first()

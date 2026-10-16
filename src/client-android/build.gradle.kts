@@ -699,16 +699,30 @@ private fun verifyContractEndpoints(contractFile: File, sourcesRoot: File): List
  * 为什么必须走真实入口：只调用底层解析函数的话，「预筛选把整文件跳过」这类退化不会被发现
  * （第一轮 review 就是这么找到绕过写法的）。自检放在任务里、每次编译都跑，代价是毫秒级。
  */
-private fun verifyContractEndpointGuardSelfTest(contractFile: File, contract: ContractOperations) {
+private fun verifyContractEndpointGuardSelfTest(
+    contractFile: File,
+    contract: ContractOperations,
+    clientTypeNames: Set<String>,
+) {
     // fixture 用不带路径占位符的 operation，这样自检本身不必再构造 @Path 参数。
+    //
+    // 还必须挑「类型在**客户端生成物**里存在」的 operation：自检里有一条「本地同名 typealias
+    // 顶替契约类型必须被拦下」，而顶替检查只对生成物里的类型名生效（门禁是文本扫描，
+    // 只认客户端真的会编译到的类型）。若从整张契约里随便挑第一个 POST，挑到客户端没用到的
+    // operation，那条断言就永远不会触发 —— 契约一变（别的 PR 加了新端点）自检就假红。
     val sampleGet = contract.byKey.entries.firstOrNull { entry ->
         entry.key.startsWith("GET ") && entry.value.responseSchemas.isNotEmpty() &&
+            entry.value.responseSchemas.all { it in clientTypeNames } &&
             !entry.value.path.contains("{")
-    } ?: throw GradleException("契约门禁自检失败：契约里没有带 JSON 响应且无路径参数的 GET operation")
+    } ?: throw GradleException(
+        "契约门禁自检失败：契约里没有「带 JSON 响应、无路径参数、且响应类型在客户端生成物里」的 GET operation")
     val samplePost = contract.byKey.entries.firstOrNull { entry ->
-        entry.key.startsWith("POST ") && entry.value.requestSchema != null &&
-            entry.value.responseSchemas.isNotEmpty() && !entry.value.path.contains("{")
-    } ?: throw GradleException("契约门禁自检失败：契约里没有带 JSON 请求体/响应且无路径参数的 POST operation")
+        entry.key.startsWith("POST ") && entry.value.requestSchema in clientTypeNames &&
+            entry.value.responseSchemas.isNotEmpty() &&
+            entry.value.responseSchemas.all { it in clientTypeNames } &&
+            !entry.value.path.contains("{")
+    } ?: throw GradleException(
+        "契约门禁自检失败：契约里没有「带 JSON 请求体/响应、无路径参数、且类型在客户端生成物里」的 POST operation")
 
     val getPath = sampleGet.value.path.removePrefix(CONTRACT_API_BASE_PATH)
     val getResponse = sampleGet.value.responseSchemas.first()
@@ -1090,7 +1104,11 @@ subprojects {
         inputs.files(fileTree(sourcesRoot) { include("**/*.kt") }).withPropertyName("kotlinSources")
         doLast {
             // 先自检扫描器（毫秒级，走真实文件扫描入口），再扫真实源码。
-            verifyContractEndpointGuardSelfTest(contractFile, loadContractOperations(contractFile))
+            verifyContractEndpointGuardSelfTest(
+                contractFile,
+                loadContractOperations(contractFile),
+                loadGeneratedTypeNames(generatedModelsFile(contractFile)),
+            )
             val problems = verifyContractEndpoints(contractFile, sourcesRoot)
             if (problems.isNotEmpty()) {
                 throw GradleException(

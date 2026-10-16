@@ -1139,6 +1139,11 @@ class SettingsServerMutationTest {
         val siteDataCleaner = FakeWebViewSiteDataCleaner(throwOnClear = cleanerThrows)
         val scheduleCacheStore = ScheduleCacheStore(cacheDir, Json { ignoreUnknownKeys = true })
         val fakeApi = object : com.pim.core.network.ApiService {
+            override suspend fun getTaskSegments(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+            override suspend fun getTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+            override suspend fun startTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+            override suspend fun pauseTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+            override suspend fun stopTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
             override suspend fun login(request: com.pim.core.contract.LoginRequest) = error("not used")
             override suspend fun register(request: com.pim.core.contract.RegisterRequest) = error("not used")
             override suspend fun refresh(request: com.pim.core.contract.RefreshRequest) = error("not used")

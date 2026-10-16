@@ -782,6 +782,11 @@ class ScheduleWindowRepositoryTest {
         uid = "uid-1",id = id, title = title, location = location, dtStart = start, dtEnd = end)
 
     class FakeApiService : ApiService {
+        override suspend fun getTaskSegments(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+        override suspend fun getTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+        override suspend fun startTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+        override suspend fun pauseTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+        override suspend fun stopTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
         var events: List<EventResponse> = emptyList()
         var failNext: Throwable? = null
         var callCount = 0
@@ -841,6 +846,11 @@ class ScheduleWindowRepositoryTest {
     }
 
     class ScriptedApiService : ApiService {
+        override suspend fun getTaskSegments(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+        override suspend fun getTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+        override suspend fun startTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+        override suspend fun pauseTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
+        override suspend fun stopTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
         val startedA = CompletableDeferred<Unit>()
         val releaseA = CompletableDeferred<Unit>()
         val startedB = CompletableDeferred<Unit>()

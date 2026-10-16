@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 61778d2d9c1aad129bace72cecc21aa23c3517d7d158b2cb22d3fc15014dd006)
+//   契约快照 : contract/openapi.json (sha256 f62c3b65aa1c9043c0cc2aeec89909d74d153f566bf2b0cd974eff5006f8c6d0)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -68,6 +68,7 @@ data class CalendarOperationSample(
 data class CalendarResponse(
     val canEdit: Boolean? = null,
     val color: String,
+    val defaultMuted: Boolean? = null,
     val eventCount: Int,
     val id: String,
     val isDefault: Boolean,
@@ -133,6 +134,7 @@ data class CreateEventRequest(
     val importance: String? = null,
     val isAllDay: Boolean? = null,
     val isException: Boolean? = null,
+    val isMuted: Boolean? = null,
     val isOnlineMeeting: Boolean? = null,
     val isReminderOn: Boolean? = null,
     val isSeriesMaster: Boolean? = null,
@@ -301,6 +303,7 @@ data class EventResponse(
     val isAllDay: Boolean? = null,
     val isCancelled: Boolean? = null,
     val isException: Boolean? = null,
+    val isMuted: Boolean? = null,
     val isOnlineMeeting: Boolean? = null,
     val isReminderOn: Boolean? = null,
     val isSeriesMaster: Boolean? = null,
@@ -1122,6 +1125,38 @@ data class StringApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.TaskExecutionSegmentResponse`（response）。 */
+@Serializable
+data class TaskExecutionSegmentResponse(
+    val confirmationId: String? = null,
+    val endsAt: String? = null,
+    val id: String,
+    val planningReason: String? = null,
+    val source: String,
+    val startsAt: String,
+    val status: String,
+    val taskId: String,
+    val taskTitle: String,
+)
+
+/** 契约 `components.schemas.TaskExecutionSegmentResponseApiResponse`（response）。 */
+@Serializable
+data class TaskExecutionSegmentResponseApiResponse(
+    val code: Int,
+    val data: TaskExecutionSegmentResponse? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.TaskExecutionSegmentResponseIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class TaskExecutionSegmentResponseIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<TaskExecutionSegmentResponse>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
 /** 契约 `components.schemas.TaskResponse`（response）。 */
 @Serializable
 data class TaskResponse(
@@ -1172,6 +1207,26 @@ data class TaskResponsePagedResultApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.TaskTimerStateResponse`（response）。 */
+@Serializable
+data class TaskTimerStateResponse(
+    val accumulatedSeconds: Long,
+    val runningSegmentId: String? = null,
+    val runningSince: String? = null,
+    val segmentCount: Int,
+    val taskId: String,
+    val taskStatus: String,
+)
+
+/** 契约 `components.schemas.TaskTimerStateResponseApiResponse`（response）。 */
+@Serializable
+data class TaskTimerStateResponseApiResponse(
+    val code: Int,
+    val data: TaskTimerStateResponse? = null,
+    val message: String,
+    val timestamp: String,
+)
+
 /** 契约 `components.schemas.UpdateEventRequest`（request）。 */
 @Serializable
 data class UpdateEventRequest(
@@ -1187,6 +1242,7 @@ data class UpdateEventRequest(
     val importance: String? = null,
     val isAllDay: Boolean? = null,
     val isException: Boolean? = null,
+    val isMuted: Boolean? = null,
     val isOnlineMeeting: Boolean? = null,
     val isReminderOn: Boolean? = null,
     val isSeriesMaster: Boolean? = null,

@@ -3208,6 +3208,53 @@
         ],
         "type": "object"
       },
+      "CalendarMutePolicyResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "affectedEventCount": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "calendarId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "defaultMuted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "affectedEventCount",
+          "calendarId",
+          "defaultMuted"
+        ],
+        "type": "object"
+      },
+      "CalendarMutePolicyResponseApiResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/CalendarMutePolicyResponse"
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "timestamp"
+        ],
+        "type": "object"
+      },
       "CalendarOperationResult": {
         "additionalProperties": false,
         "properties": {
@@ -3430,6 +3477,9 @@
           },
           "color": {
             "type": "string"
+          },
+          "defaultMuted": {
+            "type": "boolean"
           },
           "eventCount": {
             "format": "int32",
@@ -3861,6 +3911,30 @@
         ],
         "type": "object"
       },
+      "ChangePasswordRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "currentPassword": {
+            "minLength": 1,
+            "type": "string"
+          },
+          "newPassword": {
+            "maxLength": 100,
+            "minLength": 8,
+            "type": "string"
+          },
+          "refreshToken": {
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "currentPassword",
+          "newPassword",
+          "refreshToken"
+        ],
+        "type": "object"
+      },
       "ClientShellLatestResponse": {
         "additionalProperties": false,
         "properties": {
@@ -4023,6 +4097,10 @@
           "path": {
             "type": "string"
           },
+          "providerId": {
+            "format": "uuid",
+            "type": "string"
+          },
           "uploadedItemId": {
             "nullable": true,
             "type": "string"
@@ -4030,7 +4108,8 @@
         },
         "required": [
           "fileName",
-          "path"
+          "path",
+          "providerId"
         ],
         "type": "object"
       },
@@ -4207,6 +4286,10 @@
             "nullable": true,
             "type": "boolean"
           },
+          "isMuted": {
+            "nullable": true,
+            "type": "boolean"
+          },
           "isOnlineMeeting": {
             "nullable": true,
             "type": "boolean"
@@ -4288,10 +4371,15 @@
         "properties": {
           "path": {
             "type": "string"
+          },
+          "providerId": {
+            "format": "uuid",
+            "type": "string"
           }
         },
         "required": [
-          "path"
+          "path",
+          "providerId"
         ],
         "type": "object"
       },
@@ -4590,11 +4678,57 @@
           },
           "path": {
             "type": "string"
+          },
+          "providerId": {
+            "format": "uuid",
+            "type": "string"
           }
         },
         "required": [
           "fileName",
-          "path"
+          "path",
+          "providerId"
+        ],
+        "type": "object"
+      },
+      "CreateUserRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "displayName": {
+            "maxLength": 100,
+            "nullable": true,
+            "type": "string"
+          },
+          "email": {
+            "format": "email",
+            "maxLength": 255,
+            "minLength": 1,
+            "type": "string"
+          },
+          "password": {
+            "maxLength": 100,
+            "minLength": 8,
+            "type": "string"
+          },
+          "role": {
+            "enum": [
+              "admin",
+              "user"
+            ],
+            "maxLength": 20,
+            "nullable": true,
+            "type": "string"
+          },
+          "username": {
+            "maxLength": 50,
+            "minLength": 1,
+            "type": "string"
+          }
+        },
+        "required": [
+          "email",
+          "password",
+          "username"
         ],
         "type": "object"
       },
@@ -5652,6 +5786,12 @@
           "summaryCount": {
             "format": "int32",
             "type": "integer"
+          },
+          "tables": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceTableCountDto"
+            },
+            "type": "array"
           }
         },
         "required": [
@@ -5660,7 +5800,8 @@
           "eventCount",
           "locationCount",
           "sessionCount",
-          "summaryCount"
+          "summaryCount",
+          "tables"
         ],
         "type": "object"
       },
@@ -5673,6 +5814,55 @@
           },
           "data": {
             "$ref": "#/components/schemas/DeviceDeletePreviewDto"
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "timestamp"
+        ],
+        "type": "object"
+      },
+      "DeviceDeleteResultDto": {
+        "additionalProperties": false,
+        "properties": {
+          "deviceId": {
+            "type": "string"
+          },
+          "tables": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceTableCountDto"
+            },
+            "type": "array"
+          },
+          "totalRows": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "deviceId",
+          "tables",
+          "totalRows"
+        ],
+        "type": "object"
+      },
+      "DeviceDeleteResultDtoApiResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/DeviceDeleteResultDto"
           },
           "message": {
             "type": "string"
@@ -6059,6 +6249,12 @@
             },
             "type": "array"
           },
+          "tables": {
+            "items": {
+              "$ref": "#/components/schemas/DeviceTableCountDto"
+            },
+            "type": "array"
+          },
           "total": {
             "format": "int64",
             "type": "integer"
@@ -6066,6 +6262,7 @@
         },
         "required": [
           "items",
+          "tables",
           "total"
         ],
         "type": "object"
@@ -6149,6 +6346,23 @@
           "batchId",
           "createdAt",
           "status"
+        ],
+        "type": "object"
+      },
+      "DeviceTableCountDto": {
+        "additionalProperties": false,
+        "properties": {
+          "rowCount": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "table": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "rowCount",
+          "table"
         ],
         "type": "object"
       },
@@ -6610,6 +6824,10 @@
           "isException": {
             "type": "boolean"
           },
+          "isMuted": {
+            "nullable": true,
+            "type": "boolean"
+          },
           "isOnlineMeeting": {
             "nullable": true,
             "type": "boolean"
@@ -7068,6 +7286,43 @@
         ],
         "type": "object"
       },
+      "FileLinkDto": {
+        "additionalProperties": false,
+        "properties": {
+          "url": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "url"
+        ],
+        "type": "object"
+      },
+      "FileLinkDtoApiResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FileLinkDto"
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "timestamp"
+        ],
+        "type": "object"
+      },
       "FileListResponse": {
         "additionalProperties": false,
         "properties": {
@@ -7157,9 +7412,6 @@
             "nullable": true,
             "type": "string"
           },
-          "baseUrl": {
-            "type": "string"
-          },
           "clientId": {
             "nullable": true,
             "type": "string"
@@ -7181,9 +7433,8 @@
             "format": "uuid",
             "type": "string"
           },
-          "internalBaseUrl": {
-            "nullable": true,
-            "type": "string"
+          "isDefault": {
+            "type": "boolean"
           },
           "lastError": {
             "nullable": true,
@@ -7219,19 +7470,14 @@
           "updatedAt": {
             "format": "date-time",
             "type": "string"
-          },
-          "username": {
-            "type": "string"
           }
         },
         "required": [
-          "baseUrl",
           "createdAt",
           "id",
           "provider",
           "status",
-          "updatedAt",
-          "username"
+          "updatedAt"
         ],
         "type": "object"
       },
@@ -7528,6 +7774,56 @@
         ],
         "type": "object"
       },
+      "FileTextDto": {
+        "additionalProperties": false,
+        "properties": {
+          "content": {
+            "type": "string"
+          },
+          "mimeType": {
+            "nullable": true,
+            "type": "string"
+          },
+          "size": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "truncated": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "content",
+          "size",
+          "truncated"
+        ],
+        "type": "object"
+      },
+      "FileTextDtoApiResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FileTextDto"
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "timestamp"
+        ],
+        "type": "object"
+      },
       "FileTextSnapshotDto": {
         "additionalProperties": false,
         "properties": {
@@ -7580,6 +7876,48 @@
             },
             "nullable": true,
             "type": "array"
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "timestamp"
+        ],
+        "type": "object"
+      },
+      "FileWriteResultDto": {
+        "additionalProperties": false,
+        "properties": {
+          "itemId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "itemId",
+          "path"
+        ],
+        "type": "object"
+      },
+      "FileWriteResultDtoApiResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/FileWriteResultDto"
           },
           "message": {
             "type": "string"
@@ -13089,344 +13427,6 @@
         },
         "type": "object"
       },
-      "OneDriveBindingStartDto": {
-        "additionalProperties": false,
-        "properties": {
-          "expiresIn": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "providerId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "userCode": {
-            "type": "string"
-          },
-          "verificationUri": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "expiresIn",
-          "providerId",
-          "userCode",
-          "verificationUri"
-        ],
-        "type": "object"
-      },
-      "OneDriveBindingStartDtoApiResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "data": {
-            "$ref": "#/components/schemas/OneDriveBindingStartDto"
-          },
-          "message": {
-            "type": "string"
-          },
-          "timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "timestamp"
-        ],
-        "type": "object"
-      },
-      "OneDriveBindingStatusDto": {
-        "additionalProperties": false,
-        "properties": {
-          "accountId": {
-            "nullable": true,
-            "type": "string"
-          },
-          "accountName": {
-            "nullable": true,
-            "type": "string"
-          },
-          "deviceCodeExpiresAt": {
-            "format": "date-time",
-            "nullable": true,
-            "type": "string"
-          },
-          "driveId": {
-            "nullable": true,
-            "type": "string"
-          },
-          "status": {
-            "type": "string"
-          },
-          "userCode": {
-            "nullable": true,
-            "type": "string"
-          },
-          "verificationUri": {
-            "nullable": true,
-            "type": "string"
-          }
-        },
-        "required": [
-          "status"
-        ],
-        "type": "object"
-      },
-      "OneDriveBindingStatusDtoApiResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "data": {
-            "$ref": "#/components/schemas/OneDriveBindingStatusDto"
-          },
-          "message": {
-            "type": "string"
-          },
-          "timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "timestamp"
-        ],
-        "type": "object"
-      },
-      "OneDriveLinkDto": {
-        "additionalProperties": false,
-        "properties": {
-          "url": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "url"
-        ],
-        "type": "object"
-      },
-      "OneDriveLinkDtoApiResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "data": {
-            "$ref": "#/components/schemas/OneDriveLinkDto"
-          },
-          "message": {
-            "type": "string"
-          },
-          "timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "timestamp"
-        ],
-        "type": "object"
-      },
-      "OneDriveSyncStartedDto": {
-        "additionalProperties": false,
-        "properties": {
-          "message": {
-            "type": "string"
-          },
-          "started": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "message",
-          "started"
-        ],
-        "type": "object"
-      },
-      "OneDriveSyncStartedDtoApiResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "data": {
-            "$ref": "#/components/schemas/OneDriveSyncStartedDto"
-          },
-          "message": {
-            "type": "string"
-          },
-          "timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "timestamp"
-        ],
-        "type": "object"
-      },
-      "OneDriveSyncStatusDto": {
-        "additionalProperties": false,
-        "properties": {
-          "lastError": {
-            "nullable": true,
-            "type": "string"
-          },
-          "lastSyncAt": {
-            "format": "date-time",
-            "nullable": true,
-            "type": "string"
-          },
-          "syncStatus": {
-            "type": "string"
-          },
-          "syncedItemCount": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "totalIndexedCount": {
-            "format": "int64",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "syncedItemCount",
-          "syncStatus"
-        ],
-        "type": "object"
-      },
-      "OneDriveSyncStatusDtoApiResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "data": {
-            "$ref": "#/components/schemas/OneDriveSyncStatusDto"
-          },
-          "message": {
-            "type": "string"
-          },
-          "timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "timestamp"
-        ],
-        "type": "object"
-      },
-      "OneDriveTextDto": {
-        "additionalProperties": false,
-        "properties": {
-          "content": {
-            "type": "string"
-          },
-          "mimeType": {
-            "nullable": true,
-            "type": "string"
-          },
-          "size": {
-            "format": "int64",
-            "type": "integer"
-          },
-          "truncated": {
-            "type": "boolean"
-          }
-        },
-        "required": [
-          "content",
-          "size",
-          "truncated"
-        ],
-        "type": "object"
-      },
-      "OneDriveTextDtoApiResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "data": {
-            "$ref": "#/components/schemas/OneDriveTextDto"
-          },
-          "message": {
-            "type": "string"
-          },
-          "timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "timestamp"
-        ],
-        "type": "object"
-      },
-      "OneDriveWriteResultDto": {
-        "additionalProperties": false,
-        "properties": {
-          "itemId": {
-            "format": "uuid",
-            "type": "string"
-          },
-          "path": {
-            "type": "string"
-          }
-        },
-        "required": [
-          "itemId",
-          "path"
-        ],
-        "type": "object"
-      },
-      "OneDriveWriteResultDtoApiResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "data": {
-            "$ref": "#/components/schemas/OneDriveWriteResultDto"
-          },
-          "message": {
-            "type": "string"
-          },
-          "timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "timestamp"
-        ],
-        "type": "object"
-      },
       "OperationConfirmationDto": {
         "additionalProperties": false,
         "properties": {
@@ -15606,6 +15606,237 @@
         ],
         "type": "object"
       },
+      "ProviderBindingStartDto": {
+        "additionalProperties": false,
+        "properties": {
+          "authorizationUrl": {
+            "nullable": true,
+            "type": "string"
+          },
+          "expiresIn": {
+            "format": "int32",
+            "nullable": true,
+            "type": "integer"
+          },
+          "mode": {
+            "type": "string"
+          },
+          "providerId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "providerKey": {
+            "type": "string"
+          },
+          "userCode": {
+            "nullable": true,
+            "type": "string"
+          },
+          "verificationUri": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "mode",
+          "providerId",
+          "providerKey"
+        ],
+        "type": "object"
+      },
+      "ProviderBindingStartDtoApiResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ProviderBindingStartDto"
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "timestamp"
+        ],
+        "type": "object"
+      },
+      "ProviderBindingStatusDto": {
+        "additionalProperties": false,
+        "properties": {
+          "accountId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "accountName": {
+            "nullable": true,
+            "type": "string"
+          },
+          "deviceCodeExpiresAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "driveId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "pollIntervalSeconds": {
+            "format": "int32",
+            "nullable": true,
+            "type": "integer"
+          },
+          "providerId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "userCode": {
+            "nullable": true,
+            "type": "string"
+          },
+          "verificationUri": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "providerId",
+          "status"
+        ],
+        "type": "object"
+      },
+      "ProviderBindingStatusDtoApiResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ProviderBindingStatusDto"
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "timestamp"
+        ],
+        "type": "object"
+      },
+      "ProviderSyncStartedDto": {
+        "additionalProperties": false,
+        "properties": {
+          "message": {
+            "type": "string"
+          },
+          "started": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "message",
+          "started"
+        ],
+        "type": "object"
+      },
+      "ProviderSyncStartedDtoApiResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ProviderSyncStartedDto"
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "timestamp"
+        ],
+        "type": "object"
+      },
+      "ProviderSyncStatusDto": {
+        "additionalProperties": false,
+        "properties": {
+          "lastError": {
+            "nullable": true,
+            "type": "string"
+          },
+          "lastSyncAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "syncStatus": {
+            "type": "string"
+          },
+          "syncedItemCount": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "totalIndexedCount": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "syncedItemCount",
+          "syncStatus"
+        ],
+        "type": "object"
+      },
+      "ProviderSyncStatusDtoApiResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/ProviderSyncStatusDto"
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "timestamp"
+        ],
+        "type": "object"
+      },
       "QuickNoteAttachmentDto": {
         "additionalProperties": false,
         "properties": {
@@ -16314,6 +16545,20 @@
         ],
         "type": "object"
       },
+      "ResetPasswordRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "newPassword": {
+            "maxLength": 100,
+            "minLength": 8,
+            "type": "string"
+          }
+        },
+        "required": [
+          "newPassword"
+        ],
+        "type": "object"
+      },
       "RestorePreviewResponse": {
         "additionalProperties": false,
         "properties": {
@@ -16598,7 +16843,7 @@
         ],
         "type": "object"
       },
-      "SaveOneDriveTextRequest": {
+      "SaveFileTextRequest": {
         "additionalProperties": false,
         "properties": {
           "content": {
@@ -16798,6 +17043,18 @@
           "code",
           "message",
           "timestamp"
+        ],
+        "type": "object"
+      },
+      "SetCalendarMutePolicyRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "isMuted": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "isMuted"
         ],
         "type": "object"
       },
@@ -17176,16 +17433,14 @@
         ],
         "type": "object"
       },
-      "StartOneDriveBindingRequest": {
+      "StartProviderBindingRequest": {
         "additionalProperties": false,
         "properties": {
           "clientId": {
+            "nullable": true,
             "type": "string"
           }
         },
-        "required": [
-          "clientId"
-        ],
         "type": "object"
       },
       "StatusComponentDto": {
@@ -18713,6 +18968,10 @@
             "nullable": true,
             "type": "boolean"
           },
+          "isMuted": {
+            "nullable": true,
+            "type": "boolean"
+          },
           "isOnlineMeeting": {
             "nullable": true,
             "type": "boolean"
@@ -19168,6 +19427,155 @@
           },
           "403": {
             "description": "Forbidden"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Pim.Api"
+        ]
+      },
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/CreateUserRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "201": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserDtoApiResponse"
+                }
+              }
+            },
+            "description": "Created"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "409": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Conflict"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Pim.Api"
+        ]
+      }
+    },
+    "/api/v1/admin/users/{id}/password": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ResetPasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AdminUserDtoApiResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "500": {
             "content": {
@@ -19837,6 +20245,63 @@
         ]
       }
     },
+    "/api/v1/auth/password": {
+      "post": {
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/ChangePasswordRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Pim.Api"
+        ]
+      }
+    },
     "/api/v1/auth/refresh": {
       "post": {
         "requestBody": {
@@ -19921,6 +20386,16 @@
               }
             },
             "description": "Bad Request"
+          },
+          "403": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Forbidden"
           },
           "409": {
             "content": {
@@ -20587,6 +21062,74 @@
               "application/json": {
                 "schema": {
                   "$ref": "#/components/schemas/CalendarDeletePreviewResponseApiResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Pim.Api"
+        ]
+      }
+    },
+    "/api/v1/calendar/calendars/{id}/mute-policy": {
+      "put": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/SetCalendarMutePolicyRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CalendarMutePolicyResponseApiResponse"
                 }
               }
             },
@@ -25879,6 +26422,21 @@
         ]
       }
     },
+    "/api/v1/files/google/callback": {
+      "get": {
+        "responses": {
+          "200": {
+            "description": "OK"
+          },
+          "400": {
+            "description": "Bad Request"
+          }
+        },
+        "tags": [
+          "FilesModule"
+        ]
+      }
+    },
     "/api/v1/files/items": {
       "get": {
         "parameters": [
@@ -25886,6 +26444,14 @@
             "in": "query",
             "name": "path",
             "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "providerId",
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           },
@@ -26537,7 +27103,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OneDriveLinkDtoApiResponse"
+                  "$ref": "#/components/schemas/FileLinkDtoApiResponse"
                 }
               }
             },
@@ -26633,7 +27199,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OneDriveTextDtoApiResponse"
+                  "$ref": "#/components/schemas/FileTextDtoApiResponse"
                 }
               }
             },
@@ -26913,7 +27479,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OneDriveLinkDtoApiResponse"
+                  "$ref": "#/components/schemas/FileLinkDtoApiResponse"
                 }
               }
             },
@@ -27102,7 +27668,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OneDriveWriteResultDtoApiResponse"
+                  "$ref": "#/components/schemas/FileWriteResultDtoApiResponse"
                 }
               }
             },
@@ -27646,7 +28212,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OneDriveTextDtoApiResponse"
+                  "$ref": "#/components/schemas/FileTextDtoApiResponse"
                 }
               }
             },
@@ -27734,7 +28300,7 @@
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/SaveOneDriveTextRequest"
+                "$ref": "#/components/schemas/SaveFileTextRequest"
               }
             }
           },
@@ -27946,13 +28512,60 @@
         ]
       }
     },
+    "/api/v1/files/providers/google/authorize": {
+      "post": {
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ProviderBindingStartDtoApiResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "FilesModule"
+        ]
+      }
+    },
     "/api/v1/files/providers/onedrive": {
       "post": {
         "requestBody": {
           "content": {
             "application/json": {
               "schema": {
-                "$ref": "#/components/schemas/StartOneDriveBindingRequest"
+                "$ref": "#/components/schemas/StartProviderBindingRequest"
               }
             }
           },
@@ -27963,7 +28576,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OneDriveBindingStartDtoApiResponse"
+                  "$ref": "#/components/schemas/ProviderBindingStartDtoApiResponse"
                 }
               }
             },
@@ -28139,7 +28752,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OneDriveBindingStatusDtoApiResponse"
+                  "$ref": "#/components/schemas/ProviderBindingStatusDtoApiResponse"
                 }
               }
             },
@@ -28209,6 +28822,64 @@
         ]
       }
     },
+    "/api/v1/files/providers/{id}/default": {
+      "post": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/BooleanApiResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "FilesModule"
+        ]
+      }
+    },
     "/api/v1/files/providers/{id}/sync": {
       "post": {
         "parameters": [
@@ -28227,7 +28898,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OneDriveSyncStartedDtoApiResponse"
+                  "$ref": "#/components/schemas/ProviderSyncStartedDtoApiResponse"
                 }
               }
             },
@@ -28325,7 +28996,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/OneDriveSyncStatusDtoApiResponse"
+                  "$ref": "#/components/schemas/ProviderSyncStatusDtoApiResponse"
                 }
               }
             },
@@ -28379,6 +29050,14 @@
             "in": "query",
             "name": "mode",
             "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "providerId",
+            "schema": {
+              "format": "uuid",
               "type": "string"
             }
           },
@@ -30913,7 +31592,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/StringApiResponse"
+                  "$ref": "#/components/schemas/DeviceDeleteResultDtoApiResponse"
                 }
               }
             },

@@ -45,6 +45,7 @@
     { "apiService": "getMobileLocationSegmentPoints", "method": "GET", "path": "/api/v1/mobile/location/analytics/segments/{segmentId}/points" },
     { "apiService": "sendHeartbeat", "method": "POST", "path": "/api/v1/daemon/heartbeat" },
     { "apiService": "sendEndpointNotificationAction", "method": "POST", "path": "/api/v1/endpoints/{deviceId}/notification-actions" },
+    { "apiService": "sendEndpointHeartbeat", "method": "POST", "path": "/api/v1/endpoints/{deviceId}/heartbeat" },
     { "apiService": "getClientLatest", "method": "GET", "path": "/api/client/shell/latest" }
   ]
 }

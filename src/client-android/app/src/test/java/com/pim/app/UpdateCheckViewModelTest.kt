@@ -128,6 +128,7 @@ class UpdateCheckViewModelTest {
             override suspend fun getMobileLocationSegmentPoints(segmentId: String, rangeStartUtc: String?, rangeEndUtc: String?, timezone: String?, deviceId: String?, maxAccuracyMeters: Double, includeRejected: Boolean, cursor: String?, pageSize: Int?) = error("not used")
             override suspend fun sendHeartbeat(request: com.pim.core.contract.DaemonHeartbeatRequest) = error("not used")
             override suspend fun sendEndpointNotificationAction(deviceId: String, request: com.pim.core.contract.EndpointNotificationActionRequest) = error("not used")
+            override suspend fun sendEndpointHeartbeat(deviceId: String, request: com.pim.core.contract.EndpointHeartbeatRequest) = error("not used")
             override suspend fun getClientLatest() = com.pim.core.contract.ClientShellLatestResponse(androidVersion = null, androidUrl = null, windowsVersion = null, windowsUrl = null, checkedAt = null, error = null)
         }
         return SettingsViewModel(

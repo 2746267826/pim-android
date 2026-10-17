@@ -10,8 +10,10 @@ import com.pim.core.contract.CreateEventRequest
 import com.pim.core.contract.CreateTaskRequest
 import com.pim.core.contract.DaemonHeartbeatDtoApiResponse
 import com.pim.core.contract.DaemonHeartbeatRequest
+import com.pim.core.contract.EndpointHeartbeatRequest
 import com.pim.core.contract.EndpointNotificationActionRequest
 import com.pim.core.contract.EndpointNotificationActionResponseApiResponse
+import com.pim.core.contract.EndpointStatusDtoApiResponse
 import com.pim.core.contract.EventResponseApiResponse
 import com.pim.core.contract.EventResponsePagedResultApiResponse
 import com.pim.core.contract.ImportReportApiResponse
@@ -263,6 +265,18 @@ interface ApiService {
     suspend fun sendHeartbeat(@Body request: DaemonHeartbeatRequest): DaemonHeartbeatDtoApiResponse
 
     // Endpoint shell
+    /**
+     * 端点心跳（工单 06）：端点页 `GET /api/v1/endpoints` 的唯一数据来源。
+     *
+     * `last_heartbeat_at` 由服务端按**收到请求的时刻**写入 —— 请求体里没有时间字段，
+     * 客户端无法（也不应该）伪造"设备最后一次活着的时间"。
+     */
+    @POST("endpoints/{deviceId}/heartbeat")
+    suspend fun sendEndpointHeartbeat(
+        @Path("deviceId") deviceId: String,
+        @Body request: EndpointHeartbeatRequest
+    ): EndpointStatusDtoApiResponse
+
     @POST("endpoints/{deviceId}/notification-actions")
     suspend fun sendEndpointNotificationAction(
         @Path("deviceId") deviceId: String,

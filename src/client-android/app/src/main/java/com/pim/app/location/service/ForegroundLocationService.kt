@@ -34,6 +34,7 @@ import com.pim.app.location.policy.LocationPolicyInput
 import com.pim.app.location.policy.LocationPolicyMode
 import com.pim.app.location.policy.PolicyDecision
 import com.pim.app.location.policy.PolicyLocation
+import com.pim.app.mobile.sync.EndpointHeartbeatSink
 import com.pim.app.mobile.sync.MobileSyncScheduler
 import com.pim.app.notifications.LocationNotificationRenderer
 import com.pim.app.notifications.LocationNotificationState
@@ -79,6 +80,12 @@ class ForegroundLocationService : Service() {
     @Inject lateinit var queueStatusRepository: QueueStatusRepository
     @Inject lateinit var locationSprintRuntime: LocationSprintRuntime
     @Inject lateinit var passiveLocationCoordinator: PassiveLocationCoordinator
+
+    /**
+     * 端点心跳（工单 06 / G2）：借用这个**既有**的前台服务上报，不新增常驻服务、不新增闹钟。
+     * 真正发送由 reporter 自己节流（最小间隔 5 分钟），这里只负责"在既有的唤醒节拍上问一次"。
+     */
+    @Inject lateinit var endpointHeartbeatReporter: EndpointHeartbeatSink
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var scheduleRefreshJob: Job? = null
@@ -571,10 +578,26 @@ class ForegroundLocationService : Service() {
         }
     }
 
+    /**
+     * 问一次端点心跳；是否真的发由 [EndpointHeartbeatReporter.reportIfDue] 决定。
+     *
+     * 单独起一个协程：HTTP 往返（含失败重试窗口）绝不拖慢采集循环本身的节拍。
+     * reporter 自身不抛业务异常，因此这里不需要（也不应该）吞异常。
+     */
+    private fun requestEndpointHeartbeat() {
+        // 只"请求"一次：真正的上报由 reporter 在自己的作用域里完成（服务可能在请求后立刻停掉自己），
+        // 队列条数也由 reporter 现读，避免用到本实例还没初始化过的缓存值。
+        endpointHeartbeatReporter.requestIfDue()
+    }
+
     private fun startAutomaticLoop() {
         automaticLoopJob?.cancel()
         automaticLoopJob = scope.launch {
             while (trackingSettingsStore.read().continuousCollectionEnabled) {
+                // 工单 06 / G2：端点心跳挂在**既有**的采集唤醒节拍上（最迟 30s 一拍），
+                // 由 reporter 自己按最小间隔节流；系统省电导致的延迟只会让上报更晚，
+                // 而 last_heartbeat_at 由服务端按收到时刻写，因此"没上报"不会被伪装成"刚上报"。
+                requestEndpointHeartbeat()
                 refreshScheduleWindows()
                 applyScheduleSnapshot(scheduleWindowRepository.snapshotForCurrentServer())
                 val decision = recomputePolicyDecision()
@@ -719,6 +742,9 @@ class ForegroundLocationService : Service() {
     }
 
     private fun runManualSync(_startId: Int) {
+        // 工单 06 / G2：手动补传与 keepalive 叫醒都会走到这里 —— 设备此刻确实醒着，
+        // 是一次诚实的心跳时机（是否真的发由 reporter 的最小间隔决定）。
+        requestEndpointHeartbeat()
         // A manual sync shares the foreground lifecycle: clear stale teardown
         // flags so a later unexpected destruction is not treated as explicit.
         isPausing = false

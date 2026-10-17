@@ -394,7 +394,8 @@ class LocationBatchUploadTest {
     private fun coordinator(api: ApiService) = LocationUploadCoordinator(
         ApplicationProvider.getApplicationContext(),
         db,
-        api
+        api,
+        DeviceIdentityProvider(ApplicationProvider.getApplicationContext())
     )
 
     private fun item(

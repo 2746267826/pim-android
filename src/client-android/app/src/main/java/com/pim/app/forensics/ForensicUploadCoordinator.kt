@@ -7,6 +7,7 @@ import com.pim.app.data.DroppedDiagnosticExportRow
 import com.pim.app.data.ForensicEventDao
 import com.pim.app.data.MobileSyncStatus
 import com.pim.app.mobile.logs.StructuredLogRepository
+import com.pim.app.mobile.sync.DeviceIdentityProvider
 import com.pim.app.mobile.sync.sha256Hex
 import com.pim.core.contract.MobileDroppedReasonSummaryItem
 import com.pim.core.contract.MobileForensicEventUploadItem
@@ -35,7 +36,8 @@ class ForensicUploadCoordinator internal constructor(
     private val dao: ForensicEventDao,
     private val logs: StructuredLogRepository,
     private val sentinelStore: ForensicSentinelStore,
-    private val nowUtcMillis: () -> Long
+    private val nowUtcMillis: () -> Long,
+    private val deviceIdentityProvider: DeviceIdentityProvider
 ) {
     @Inject
     constructor(
@@ -43,8 +45,9 @@ class ForensicUploadCoordinator internal constructor(
         api: ApiService,
         dao: ForensicEventDao,
         logs: StructuredLogRepository,
-        sentinelStore: ForensicSentinelStore
-    ) : this(context, api, dao, logs, sentinelStore, System::currentTimeMillis)
+        sentinelStore: ForensicSentinelStore,
+        deviceIdentityProvider: DeviceIdentityProvider
+    ) : this(context, api, dao, logs, sentinelStore, System::currentTimeMillis, deviceIdentityProvider)
 
     /** 单批上限与服务端一致，避免整批被拒。 */
     val batchLimit: Int = BATCH_LIMIT
@@ -227,11 +230,7 @@ class ForensicUploadCoordinator internal constructor(
         emptyList()
     }
 
-    private fun deviceId(): String {
-        val androidId = Settings.Secure.getString(context.contentResolver, Settings.Secure.ANDROID_ID)
-        val seed = androidId ?: Build.FINGERPRINT ?: "android-device"
-        return "android-${sha256Hex(seed).take(16)}"
-    }
+    private fun deviceId(): String = deviceIdentityProvider.current().deviceId
 
     private fun localDate(utcMillis: Long, zone: ZoneId): String =
         Instant.ofEpochMilli(utcMillis).atZone(zone).toLocalDate().toString()

@@ -41,6 +41,7 @@ import com.pim.app.location.motion.MotionSignalRepository
 import com.pim.app.location.policy.LocationPolicyMode
 import com.pim.app.location.policy.PolicyDecision
 import com.pim.app.location.policy.ScheduleWindow
+import com.pim.app.mobile.sync.EndpointHeartbeatSink
 import com.pim.app.mobile.sync.MobileSyncScheduler
 import com.pim.app.notifications.LocationNotificationRenderer
 import com.pim.app.notifications.LocationNotificationState
@@ -128,10 +129,12 @@ class ForegroundLocationServiceTest {
     private fun buildService(
         harness: CoordinatorHarness = newHarness(),
         queueStatusRepository: QueueStatusRepository = emptyQueueStatusRepo(),
-        trackingStore: TrackingSettingsStore? = null
+        trackingStore: TrackingSettingsStore? = null,
+        endpointHeartbeat: RecordingEndpointHeartbeat = RecordingEndpointHeartbeat()
     ): ForegroundLocationService {
         val context = ApplicationProvider.getApplicationContext<Application>()
         val service = Robolectric.buildService(ForegroundLocationService::class.java).get()
+        service.endpointHeartbeatReporter = endpointHeartbeat
         service.locationAcquisitionCoordinator = harness.coordinator
         service.queueStatusRepository = queueStatusRepository
         service.motionSignalRepository = MotionSignalRepository(context)
@@ -301,6 +304,7 @@ class ForegroundLocationServiceTest {
             override suspend fun getMobileLocationSegmentPoints(segmentId: String, rangeStartUtc: String?, rangeEndUtc: String?, timezone: String?, deviceId: String?, maxAccuracyMeters: Double, includeRejected: Boolean, cursor: String?, pageSize: Int?) = error("not mocked")
             override suspend fun sendHeartbeat(request: com.pim.core.contract.DaemonHeartbeatRequest) = error("not mocked")
             override suspend fun sendEndpointNotificationAction(deviceId: String, request: com.pim.core.contract.EndpointNotificationActionRequest) = error("not mocked")
+            override suspend fun sendEndpointHeartbeat(deviceId: String, request: com.pim.core.contract.EndpointHeartbeatRequest) = error("not mocked")
             override suspend fun getClientLatest() = com.pim.core.contract.ClientShellLatestResponse()
         }
         return ScheduleWindowRepository(
@@ -884,6 +888,7 @@ class ForegroundLocationServiceTest {
             override suspend fun getMobileLocationSegmentPoints(segmentId: String, rangeStartUtc: String?, rangeEndUtc: String?, timezone: String?, deviceId: String?, maxAccuracyMeters: Double, includeRejected: Boolean, cursor: String?, pageSize: Int?) = error("not mocked")
             override suspend fun sendHeartbeat(request: com.pim.core.contract.DaemonHeartbeatRequest) = error("not mocked")
             override suspend fun sendEndpointNotificationAction(deviceId: String, request: com.pim.core.contract.EndpointNotificationActionRequest) = error("not mocked")
+            override suspend fun sendEndpointHeartbeat(deviceId: String, request: com.pim.core.contract.EndpointHeartbeatRequest) = error("not mocked")
             override suspend fun getClientLatest() = com.pim.core.contract.ClientShellLatestResponse()
         }
 
@@ -3478,6 +3483,45 @@ class ForegroundLocationServiceTest {
         }
     }
 
+    /**
+     * 工单 06 / G2：端点心跳必须挂在**既有的**前台服务节拍上（起点 + 每拍），
+     * 而且不得为此新增常驻服务/闹钟。
+     */
+    @Test
+    @LooperMode(LooperMode.Mode.PAUSED)
+    fun endpointHeartbeatIsRequestedOnTheExistingCollectionTicks() {
+        val store = trackingStore("fg_endpoint_hb_", enabled = true)
+        val heartbeat = RecordingEndpointHeartbeat()
+        val service = buildService(trackingStore = store, endpointHeartbeat = heartbeat)
+
+        // 既有的采集循环（不是新加的定时器/服务）就是驱动点。
+        invokeStartAutomaticLoop(service)
+        idleUntil { heartbeat.calls.get() >= 1 }
+        assertTrue("采集循环必须请求端点心跳", heartbeat.calls.get() >= 1)
+
+        // 手动/叫醒补传路径（keepalive 叫醒走的就是它）也必须请求一次。
+        val before = heartbeat.calls.get()
+        service.onStartCommand(
+            Intent(service, ForegroundLocationService::class.java)
+                .setAction(ForegroundLocationController.ACTION_SYNC_NOW),
+            0,
+            2
+        )
+        idleUntil { heartbeat.calls.get() > before }
+        assertTrue("手动/叫醒补传路径也必须请求端点心跳", heartbeat.calls.get() > before)
+
+        service.onDestroy()
+    }
+
+    /** 端点心跳的记录桩：只记"服务请求了几次"，真实发送与节流由 EndpointHeartbeatReporterTest 覆盖。 */
+    private class RecordingEndpointHeartbeat : EndpointHeartbeatSink {
+        val calls = java.util.concurrent.atomic.AtomicInteger()
+
+        override fun requestIfDue() {
+            calls.incrementAndGet()
+        }
+    }
+
     private class GatedApiService : ApiService {
         override suspend fun getTaskSegments(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
         override suspend fun getTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
@@ -3536,6 +3580,7 @@ class ForegroundLocationServiceTest {
         override suspend fun getMobileLocationSegmentPoints(segmentId: String, rangeStartUtc: String?, rangeEndUtc: String?, timezone: String?, deviceId: String?, maxAccuracyMeters: Double, includeRejected: Boolean, cursor: String?, pageSize: Int?) = error("not mocked")
         override suspend fun sendHeartbeat(body: com.pim.core.contract.DaemonHeartbeatRequest) = error("not mocked")
         override suspend fun sendEndpointNotificationAction(deviceId: String, body: com.pim.core.contract.EndpointNotificationActionRequest) = error("not mocked")
+        override suspend fun sendEndpointHeartbeat(deviceId: String, body: com.pim.core.contract.EndpointHeartbeatRequest) = error("not mocked")
         override suspend fun getClientLatest() = com.pim.core.contract.ClientShellLatestResponse()
     }
 }

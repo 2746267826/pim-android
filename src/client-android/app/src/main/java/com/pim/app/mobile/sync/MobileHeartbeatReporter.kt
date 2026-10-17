@@ -30,7 +30,7 @@ class MobileHeartbeatReporter @Inject constructor(
             .put("model", Build.MODEL ?: "")
             .put("androidVersion", Build.VERSION.RELEASE ?: "")
             .put("sdkInt", Build.VERSION.SDK_INT)
-            .put("appVersion", appVersionName())
+            .put("appVersion", appVersionName(context))
             .put("usagePermissionGranted", usagePermissionGranted)
             .put("preciseLocationPermissionGranted", hasPreciseLocationPermission())
             .put("lastUsageSyncResult", state.phase)
@@ -48,7 +48,7 @@ class MobileHeartbeatReporter @Inject constructor(
             DaemonHeartbeatRequest(
                 deviceId = deviceId,
                 daemonKind = "android",
-                version = appVersionName(),
+                version = appVersionName(context),
                 serverUrl = serverUrl,
                 lastSuccessfulUploadAt = state.lastSuccessfulUploadAt,
                 lastAttemptedUploadAt = state.lastAttemptedUploadAt,
@@ -76,23 +76,6 @@ class MobileHeartbeatReporter @Inject constructor(
             "fine-location-granted"
         } else {
             "fine-location-missing"
-        }
-    }
-
-    private fun appVersionName(): String {
-        return try {
-            val info = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU) {
-                context.packageManager.getPackageInfo(
-                    context.packageName,
-                    PackageManager.PackageInfoFlags.of(0)
-                )
-            } else {
-                @Suppress("DEPRECATION")
-                context.packageManager.getPackageInfo(context.packageName, 0)
-            }
-            info.versionName ?: "unknown"
-        } catch (_: Exception) {
-            "unknown"
         }
     }
 }

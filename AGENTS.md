@@ -1,129 +1,69 @@
 # Repository Git Hygiene
 
-This repository is shared by multiple agent conversations. Keep `master` useful as the latest runnable version of the Android collection client.
-
+This repository keeps `master` at the latest runnable version of the Android collection client. The rules below constrain what may enter `master`; they do not prescribe how you organize your work to get there.
 
 ## 接口契约与门禁
 
 ### 与后端的接口
+
 - 本仓与 `pim-api` 的接口以 `contract/openapi.json` 为准（快照随本仓提交，说明见 `contract/README.md`）。
 - **不要凭猜测调用接口**：不得手写或臆测契约里不存在的路径、字段、枚举值。改动涉及接口时，先对照契约确认形状。
-- **需要新接口时不要自己造**：把需求写给用户转交后端实现 —— 说明用途、请求方法与路径、请求字段、响应字段、示例。后端在 `pim-api` 实现并更新契约后，本仓再刷新快照并接入。
+- **不得伪造客户端接口来补齐后端缺失能力**：新接口必须在 `pim-api` 实现并更新契约后，客户端才能刷新快照并接入；这不要求由用户转交需求或采用特定跨仓协作方式。
 - 后端契约更新后，用 `scripts/ci/fetch-contract.sh` 刷新本仓快照（`contract/openapi.json` + `contract/provenance.json`）再提交。
-- **快照落后会让本仓 CI 变红**：`CI` 的 `Contract freshness` job 会把快照与上游按解析出的不可变 commit 做逐字节比较，
-  并将该 job 接进 `CI Gate` 与 `release` 的 `needs`。刷新脚本是唯一写入口（人工执行）；
-  `scripts/ci/check-contract-freshness.sh` 只读、不写仓，CI 调的是它。细节与来源记录见 `contract/README.md`。
+- **快照落后会让本仓 CI 变红**：`CI` 的 `Contract freshness` job 会把快照与上游按解析出的不可变 commit 做逐字节比较，并将该 job 接进 `CI Gate` 与 `release` 的 `needs`。刷新脚本是唯一写入口；`scripts/ci/check-contract-freshness.sh` 只读、不写仓，CI 调的是它。细节与来源记录见 `contract/README.md`。
 
-### 门禁怎么过
-- 四个公开仓（api / web / android / windows）的 `master` 有两把锁：**`CI Gate`** 与 **`PIM Independent Acceptance`**。
-- `CI Gate` 逐个 check `resolve-version` / `build-android` / `build-shell-android` / `contract-freshness` / `contract-codegen`，任一失败或 skipped 即 Gate 红；`release` 也依赖这五个 job，契约陈旧或生成物对不上时不发版。
-- **CI 全绿 ≠ 可以合并**：PR 此时仍会显示 `BLOCKED`，因为还差第二把锁的盖章。
-- 该 Check Run 只能由独立验收身份发布，**agent 没有权限**。交付后在 PR 里写明「等待独立验收」即可 ——
-  **不要重试、不要绕过、不要为了让门禁变绿去改 ruleset 或 `.github/workflows/*`。**
+### 门禁
+
+- 合并的必需锁是 **`CI Gate`**：逐个 check `resolve-version` / `build-android` / `build-shell-android` / `contract-freshness` / `contract-codegen`，任一失败或 skipped 即 Gate 红；`release` 也依赖这五个 job，契约陈旧或生成物对不上时不发版。
+- 不要绕过门禁：不把失败/取消/意外 skipped 的必需 check 当作通过，不改 ruleset 或 `.github/workflows/*` 来让门禁变绿，不使用 admin bypass。（原来的 PIM Independent Acceptance App 已卸载，没有第二把锁，也不要引入替代的人工盖章流程。）
 
 ### 本仓特有的一条：接口边界是「契约生成 + 编译期门禁」，不是手写
-- 与后端交互的 DTO 由 `contract/openapi.json` **生成**，落在
-  `src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt`（包 `com.pim.core.contract`）。
-  文件头写着「本文件由工具生成，请勿手工修改」——**不要手改**，改了 CI 的 `Contract codegen freshness` 会红。
+
+- 与后端交互的 DTO 由 `contract/openapi.json` **生成**，落在 `src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt`（包 `com.pim.core.contract`）。文件头写着「本文件由工具生成，请勿手工修改」——**不要手改**，改了 CI 的 `Contract codegen freshness` 会红。
 - 生成/校验入口：
   - `scripts/contract/client-operations.json` —— 客户端用到的 operation 清单（METHOD + 契约路径）；
   - `scripts/contract/generate-kotlin.py` —— 生成器（只用 python3 标准库，离线、确定性）；
-  - `scripts/ci/generate-contract-kotlin.sh` —— 人工重新生成（唯一写入口）；
+  - `scripts/ci/generate-contract-kotlin.sh` —— 重新生成（唯一写入口）；
   - `scripts/ci/check-contract-kotlin.sh` —— CI 用的只读校验（重新生成到仓外临时目录后逐字节比对）；
   - `scripts/ci/test-contract-kotlin.sh` —— 该门禁的行为测试（一致=绿 / 手工改动=红 / 契约变了没重生成=红 …）。
-- **编译期拦截**：`ApiService.kt` 的端点、`@Path`、`@Query`、`@Body` 由 gradle 任务
-  `verifyContractEndpoints`（`src/client-android/build.gradle.kts`，挂在各模块编译任务之前）
-  对照契约逐个校验 —— 契约里不存在的端点/参数会**编译失败**；字段名/类型写错则本来就编译不过
-  （DTO 是生成的）。
-- 因此改接口相关代码的正确姿势是：先对照契约（或刷新快照并重跑生成脚本），再改 `ApiService.kt` 与调用点。
-  需要契约里没有的东西 → 按上面「需要新接口时不要自己造」找后端，不要在客户端造一个。
+- **编译期拦截**：`ApiService.kt` 的端点、`@Path`、`@Query`、`@Body` 由 gradle 任务 `verifyContractEndpoints`（`src/client-android/build.gradle.kts`，挂在各模块编译任务之前）对照契约逐个校验——契约里不存在的端点/参数会**编译失败**；字段名/类型写错则本来就编译不过（DTO 是生成的）。
+- `ApiService.kt` 与调用点必须匹配仓内契约和生成类型；新增接口需要对应的后端实现与契约，不得在客户端伪造。
 
-## Communication And Planning
+## Communication
 
 - Communicate with the user in Simplified Chinese by default.
 - For user-facing UI, default visible text to Simplified Chinese. Keep code identifiers, API names, logs, protocol fields, and third-party product names in English unless localization is explicitly part of the task.
 
-## Start Of Every Session
+## Branch, Commits, And Pull Requests
 
-- Run `git status --short --branch` before changing files.
-- Run `git fetch --all --prune`; if `master` is behind `origin/master`, pull before making new work unless the user explicitly asks otherwise.
-- Move the main workspace to the latest `origin/master` at the start of every conversation, unless the user explicitly asks to base work on another branch (e.g. a handoff task). The main workspace is for read-only investigation; all file-changing work happens in worktrees — see the branch and worktree policy below.
-- Note existing dirty files and do not revert or overwrite work you did not create.
-
-## Branch, PR, And GitHub Actions Workflow
-
-- All file-changing work must happen on a non-`master` branch.
-- Create branches with an `{agent}-{os}/{topic}` prefix (e.g. `antigravity-linux/location-fix`, `xiaoi-linux/ci-release-serialization`) unless the user asks for another branch name. `agent` is the AI agent's name, `os` is the operating system the agent runs on (`win` or `linux`), and `topic` is a short kebab-case English summary of the branch's purpose. Branches opened automatically by tooling (e.g. `task/<n>`) do not follow this scheme.
-- Make focused commits at suitable checkpoints. Push the working branch to GitHub when creating a PR, enabling CI visibility, handing work off, or preserving a useful checkpoint.
-- Open a pull request for all file-changing work.
-- After opening or updating a PR, wait for triggered GitHub Actions checks and confirm they pass before calling the task complete.
-- If no GitHub Actions workflow is triggered because the changed files do not match workflow path filters, state that explicitly instead of waiting.
+- All file-changing work must happen on a non-`master` branch, delivered as a pull request. Do not push directly to `master` unless the user explicitly asks for a direct update and understands it bypasses the PR workflow.
+- Branches use the `{agent}-{os}/{topic}` prefix (e.g. `codex-win/agent-decouple`, `xiaoi-linux/location-fix`). `agent` is the AI agent's name, `os` is `win` or `linux`, and `topic` is a short kebab-case English summary of the branch's purpose. Branches opened automatically by tooling (e.g. `task/<n>`) do not follow this scheme.
+- Use focused commits with conventional messages such as `feat:`, `fix:`, `docs:`, or `chore:`. Write both commit messages (titles & descriptions) and PR titles/descriptions in bilingual format (English and Simplified Chinese).
+- Work wherever it is convenient (main checkout, a worktree, another machine); what matters is that `master` stays clean and mergeable, and that you do not revert or overwrite changes you did not create.
 - Do not modify `.github/workflows/*` unless the task is specifically about CI/release automation or the user explicitly asks for it. If a workflow change is unavoidable, explain why before editing it.
-- Write PR titles and descriptions in both English and Simplified Chinese.
-- Create git worktrees under a single short root directory per platform, never scattered across filesystem roots:
-  - **Windows**: `C:\pim-wt\{topic}`. Use short directory names (topic only, ≤ 12 chars) to avoid Windows MAX_PATH issues from long nested paths.
-  - **Linux (codeg workspace)**: `/home/coder/workspace/pim-wt/{topic}`. **Never use `/tmp`** (wiped on rebuild, losing in-progress work). No MAX_PATH constraint, but keep names short for consistency. Other Linux agents use `pim-wt/{topic}` under their own persistent work directory.
+- After opening or updating a PR, confirm the required GitHub Actions checks pass before calling the task complete. If no workflow triggered because of path filters, say so explicitly. Report failures honestly; never describe a failing, cancelled, or unexpectedly skipped required check as green.
 
-### Branch And Worktree Policy (L0/L1/L2)
+### Pull Request Format
 
-Apply this policy at the start of every session/task:
-
-- **L0 — read-only sessions** (investigation, discussion, review, inspection): make no file changes; work directly in the main workspace. Before investigating, run `git fetch --all --prune` and fast-forward local `master` to `origin/master` — the remote is the source of truth, so the main workspace must always read the latest `master`. The main workspace is a valid baseline only after it has been fast-forwarded to `origin/master` this session; otherwise read baseline content via `git show origin/master:<path>` or an up-to-date worktree. Targeted reads (PR head/diff, handoff source branch, local changes under review) read their own target refs and are compared against the latest `origin/master`. No branch or worktree is created.
-- **L1 — file-changing tasks**: before editing any file, fetch the latest `origin/master`, create a branch `{agent}-{os}/{topic}` based on it, and add a worktree for that branch. Do all edits inside that worktree; the main workspace never receives file changes.
-- **L2 — handoff tasks**: when new work must build on an unmerged branch (e.g. continuing another agent's PR), base the new branch on that branch's latest HEAD and state the base in the PR description. If the source branch is already merged, base on `origin/master` instead.
-- Cleaning is part of the definition of done: when a PR is merged or work is abandoned, remove the worktree (`git worktree remove`) and delete the local branch in the same task. Dead worktrees/branches from earlier tasks must be cleaned when noticed — e.g. if the main workspace is found on a stale or merged branch, move it back to `origin/master` before starting new work.
-
-## Pull Request Descriptions Feed The Release Changelog
-
-- Every PR description MUST include the four bilingual sections below, keeping the exact heading format. CI extracts these into the GitHub Release changelog (`scripts/ci/build-release-notes.sh`):
+- Every PR description MUST include the four bilingual sections below, keeping the exact heading format, plus the requirement & acceptance mapping table from the PR template. CI extracts the four sections into the GitHub Release changelog (`scripts/ci/build-release-notes.sh`):
   - `## 技术修改 / Technical changes` — modules/files touched, key design decisions, API or schema changes, dependency changes
   - `## 功能变化 / Feature changes` — user-visible changes; write `无 / None` if none
   - `## 如何体验 / How to try it` — how a user experiences the feature: which screen, what actions, what visible effect to expect (step-by-step is fine). This is an experience guide for users, NOT deployment/build instructions — build/run/verify commands belong in 测试 / Tests
   - `## 测试 / Tests` — verification commands run and their results
-- PRs without these sections still merge, but their release entry falls back to a bare title link — filling them in keeps the changelog useful.
-- Docs-only merges skip all platform builds and do not produce a GitHub Release (path-filtered); the sections above are still expected for accurate history.
+- In the mapping table, results may only be `PASS` / `FAIL` / `BLOCKED` / `NOT-VERIFIED` / `APPROVED-EXCEPTION`, backed by what was actually executed. Requirements and acceptance criteria can be written directly in the PR; no separate work order is required. With an external ticket, keep its numbering as-is; maintenance changes without a ticket may write `无 / None`, but the 测试 / Tests section must still contain real execution results.
+
+## Verification Commands
+
+- The commands below are optional local verification help, not a required pre-PR procedure. Existing CI owns the required checks. Base verification claims on actual output and identify the tested revision and environment; do not present stale or assumed results as current evidence.
+- App unit tests: `src/client-android/gradlew :app:testDebugUnitTest` (Windows: `src/client-android\gradlew.bat :app:testDebugUnitTest`).
+- Connected status UI verification uses a started emulator or physical device: `src/client-android/gradlew :app:connectedDebugAndroidTest --no-daemon`. CI provides no emulator, so connected behavior cannot be verified in CI — if you cannot run it, record it as `NOT-VERIFIED` instead of guessing.
+- Report failed or missing verification explicitly. Do not claim acceptance from test code that was not executed or from unrelated passing checks.
 
 ## During Work
 
 - Keep generated outputs out of commits: `src/client-android/build/`, `src/client-android/**/build/`, `.gradle/`, `*.apk`, `*.aab`, `local.properties`.
 - Commit source changes, tests, scripts, and docs that are needed to reproduce the current runnable version.
 - Keep API and daemon defaults aligned. The local API is expected at `http://127.0.0.1:5858`, and the Windows daemon default server URL should match it.
-- Use focused commits with conventional messages such as `feat:`, `fix:`, `docs:`, or `chore:`. Write both commit messages (titles & descriptions) and PR titles/descriptions in bilingual format (English and Simplified Chinese).
-
-## Before Pushing Or Opening A PR
-
-- Run `src/client-android/gradlew :app:testDebugUnitTest` (Windows: `src/client-android\gradlew.bat :app:testDebugUnitTest`); status-UI changes must also run the connected gate on a started emulator or physical device: `src/client-android/gradlew :app:connectedDebugAndroidTest --no-daemon`. This is a local gate because CI does not provide an emulator.
-- Android status UI changes must also run the connected Android test gate on a started emulator or physical device — Windows: `src/client-android/gradlew.bat :app:connectedDebugAndroidTest --no-daemon`; Linux: `src/client-android/gradlew :app:connectedDebugAndroidTest --no-daemon`. This is a local gate because CI does not provide an emulator.
-- Re-run `git status --short --branch` and confirm only intentional changes are staged.
-- Push the working branch to `origin` and open a pull request. Do not push directly to `master` unless the user explicitly asks for a direct update and understands it bypasses the PR workflow.
-
-## If Verification Fails
-
-- Do not claim the branch is complete.
-- Commit only if the failure is clearly unrelated and document the exact failure in the final response.
-
-## Working Practices (derived from session experience)
-
-### Process discipline
-
-- **A1. Mandatory TDD (RED-GREEN-REFACTOR).** Write a failing test and watch it fail before writing the minimal implementation. Never substitute a "looks right" implementation for real concurrency/timing correctness.
-- **A2. Verify before claiming done, using fresh output only.** Re-run the relevant gate commands and base claims on that run, never on stale results. Re-run the full suite once before commit and once before opening a PR.
-- **A3. Review is a mandatory gate: severity-graded, zero-blockers to proceed.** Classify findings Critical/Important/Minor; no Important+ findings may remain before commit/merge. After fixing, always re-review the changed result.
-- **A4. Review cadence.** Small changes: single review round, then re-review after fixes. Large stages: one holistic review at stage end.
-- **A5. Deliverables carry explicit acceptance criteria.** State in the PR both how success will be judged after merge and how to test it, written in plain language (avoid overly technical control names and jargon).
-
-### Quality habits
-
-- **B1. Use injected clocks in tests; never fixed timestamps.** Prefer TimeProvider/clock injection over direct UtcNow and hard-coded dates.
-- **B2. Classify test failures before fixing.** Failures may be environmental: wrong cwd (relative-path false positives), build-tool injection (Playwright evaluate rewritten by esbuild), or CI-only races. Confirm the failure's ownership before changing product code or tests.
-- **B3. Bug fixing is log/data-driven; disproving assumptions is normal.** Locate issues from logs, data, and precise timelines before touching code. When an assumption is falsified, restart that line of investigation.
-- **B4. Verify external sub-agent output.** Delegated workers may fabricate, exit early, or return unreliable conclusions. Check their actual tool-call traces and require reproducible evidence; re-dispatch on anomalies.
-- **B5. Security review for anything touching external URLs, credentials, or privacy.** Whitelist-style validation must be re-checked against "follow what the server returns" semantics. Logs/confirmation pages must not leak tokens, GraphEventId, ChangeKey, etc. Tokens live in memory or encrypted storage only — never in WebView or uploads.
-
-### Collaboration
-
-- **C1. Maximize parallelism, serialize writes.** Read/investigation/review tasks run in parallel; file-writing tasks serialize or declare non-overlapping paths. Do not use subagents for tightly coupled edits where coordination overhead would create risk.
-- **C2. Leave resumable state when interrupted.** End sessions by stating the current step and what the next agent should do first.
 
 ## Production Database And Logs
 
@@ -131,3 +71,4 @@ Apply this policy at the start of every session/task:
 - **Never point an agent session at `pim_prod`.** Work that needs real data uses the mirrored database `pim_test`, restored from a `pim_prod` snapshot (`pg_dump -Fc` → `pg_restore`) with credentials and personal tokens sanitized. The mirror is disposable and safe to mutate; its contents are "as of the snapshot time", so never write results back to production.
 - Production logs are JSONL files inside the running container — `/data/pim/logs/pim-api-<YYYYMMDD>[_NNN].jsonl` (Serilog compact JSON; `@t` is UTC, and files roll at ~1 GB so the newest data may live in a `_NNN` file). Read them with `docker exec pim-pim-1 tail` / `grep`; `docker logs` only carries startup and crash output.
 - Never copy production dumps, log extracts, or credentials into a PR, an issue, or any artifact.
+- Tokens belong in memory or encrypted storage only, never in WebView or uploads. Logs and confirmation pages must not leak tokens, GraphEventId, ChangeKey, or other private identifiers. URL allowlist validation must account for redirects and URLs returned by upstream services.

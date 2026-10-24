@@ -34,26 +34,29 @@ class AndroidEventMuteDevice @Inject constructor(
     override fun hasDoNotDisturbAccess(): Boolean =
         notificationManager?.isNotificationPolicyAccessGranted ?: false
 
-    override fun currentState(): DeviceMuteState = DeviceMuteState(
-        ringerMode = try {
-            audioManager?.ringerMode ?: AudioManager.RINGER_MODE_NORMAL
-        } catch (_: Exception) {
-            AudioManager.RINGER_MODE_NORMAL
-        },
-        interruptionFilter = try {
-            notificationManager?.currentInterruptionFilter
-                ?: NotificationManager.INTERRUPTION_FILTER_ALL
-        } catch (_: Exception) {
-            NotificationManager.INTERRUPTION_FILTER_ALL
-        }
+    override fun currentState(): DeviceMuteState {
+        val am = checkNotNull(audioManager) { "系统未提供铃声服务" }
+        val nm = checkNotNull(notificationManager) { "系统未提供通知服务" }
+        val state = DeviceMuteState(am.ringerMode, nm.currentInterruptionFilter)
+        check(state.ringerMode in AudioManager.RINGER_MODE_SILENT..AudioManager.RINGER_MODE_NORMAL)
+        check(state.interruptionFilter in NotificationManager.INTERRUPTION_FILTER_ALL..NotificationManager.INTERRUPTION_FILTER_ALARMS)
+        return state
+    }
+
+    override fun mutedState(): DeviceMuteState = DeviceMuteState(
+        ringerMode = AudioManager.RINGER_MODE_SILENT,
+        interruptionFilter = NotificationManager.INTERRUPTION_FILTER_NONE
     )
 
     override fun applyMuted(): Boolean {
         if (!hasDoNotDisturbAccess()) return false
+        val nm = notificationManager
+        val am = audioManager
+        if (nm == null || am == null) return false
         return try {
-            notificationManager?.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
-            audioManager?.ringerMode = AudioManager.RINGER_MODE_SILENT
-            true
+            nm.setInterruptionFilter(NotificationManager.INTERRUPTION_FILTER_NONE)
+            am.ringerMode = AudioManager.RINGER_MODE_SILENT
+            currentState() == mutedState()
         } catch (_: SecurityException) {
             // 权限在读取与调用之间被撤销：返回 false，由上层留下可见出口
             false
@@ -62,15 +65,23 @@ class AndroidEventMuteDevice @Inject constructor(
         }
     }
 
-    override fun restore(state: DeviceMuteState) {
+    override fun restore(state: DeviceMuteState): RestoreResult {
+        if (!hasDoNotDisturbAccess()) return RestoreResult.Blocked("缺少「勿扰访问」权限，无法还原")
+        val nm = notificationManager
+        val am = audioManager
+        if (nm == null || am == null) return RestoreResult.Blocked("系统未提供铃声/通知服务")
         try {
             // 先恢复铃声模式再恢复过滤器：某些机型在 DND 关闭时会重置铃声模式
-            audioManager?.ringerMode = state.ringerMode
-            notificationManager?.setInterruptionFilter(state.interruptionFilter)
+            am.ringerMode = state.ringerMode
+            nm.setInterruptionFilter(state.interruptionFilter)
+            return if (currentState() == state) RestoreResult.Restored
+            else RestoreResult.Blocked("系统状态未恢复到进入前设置")
         } catch (_: SecurityException) {
             // 未授权时不得静默改状态：什么都不做，交由上层提示
+            return RestoreResult.Blocked("缺少「勿扰访问」权限，无法还原")
         } catch (_: Exception) {
             // 同上
+            return RestoreResult.Blocked("系统还原调用未成功")
         }
     }
 }

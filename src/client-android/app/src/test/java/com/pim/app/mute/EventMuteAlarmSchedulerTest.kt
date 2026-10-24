@@ -81,6 +81,18 @@ class EventMuteAlarmSchedulerTest {
     }
 
     @Test
+    fun `START广播携带真实事件结束时刻用于离线恢复`() = runTest {
+        val (subject, manager) = scheduler()
+        val end = now + 180_000L
+        subject.schedule(listOf(PlannedMuteAlarm("event-end", MuteAction.START, now + 60_000L, end)))
+
+        val intent = shadowOf(shadowOf(manager).scheduledAlarms.single().operation).savedIntent
+        assertEquals("event-end", intent.getStringExtra(EventMuteAlarmScheduler.EXTRA_EVENT_ID))
+        assertEquals(MuteAction.START.name, intent.getStringExtra(EventMuteAlarmScheduler.EXTRA_ACTION))
+        assertEquals(end, intent.getLongExtra(EventMuteAlarmScheduler.EXTRA_EVENT_END, -1L))
+    }
+
+    @Test
     fun `与 keepalive 的登记不冲突：action 与 requestCode 都不同`() = runTest {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val (subject, manager) = scheduler()

@@ -34,6 +34,11 @@ class EventMuteAlarmReceiver : BroadcastReceiver() {
         val eventId = intent.getStringExtra(EventMuteAlarmScheduler.EXTRA_EVENT_ID)
         val action = intent.getStringExtra(EventMuteAlarmScheduler.EXTRA_ACTION)
             ?.let { runCatching { MuteAction.valueOf(it) }.getOrNull() }
+        val eventEnd = if (intent.hasExtra(EventMuteAlarmScheduler.EXTRA_EVENT_END)) {
+            intent.getLongExtra(EventMuteAlarmScheduler.EXTRA_EVENT_END, Long.MIN_VALUE)
+        } else {
+            null
+        }
         // 参数缺失是**不该发生**的情况（登记方一定写入 extras）；统一在协程里处理，
         // 因为结构化日志仓库是 suspend 的，而 onReceive 不是。
         val missingParameters = eventId.isNullOrEmpty() || action == null
@@ -46,7 +51,7 @@ class EventMuteAlarmReceiver : BroadcastReceiver() {
                     logs.warn(EventMuteExecutor.LOG_TAG, "日程静音闹钟缺少必要参数，已忽略")
                     return@launch
                 }
-                executor.onAlarm(eventId!!, action!!)
+                executor.onAlarm(eventId!!, action!!, eventEnd)
             } catch (ex: Exception) {
                 // E3.3：失败必须留下可见出口，不能静默
                 logs.error(

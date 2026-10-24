@@ -5,6 +5,7 @@ import android.content.Context
 import android.content.Intent
 import com.pim.app.keepalive.KeepAliveCoordinator
 import com.pim.app.mute.EventMuteCoordinator
+import com.pim.app.mute.EventMuteExecutor
 import com.pim.app.mobile.logs.StructuredLogRepository
 import dagger.hilt.android.AndroidEntryPoint
 import kotlinx.coroutines.CoroutineScope
@@ -27,6 +28,9 @@ class StartupRecoveryReceiver : BroadcastReceiver() {
     lateinit var eventMuteCoordinator: EventMuteCoordinator
 
     @Inject
+    lateinit var eventMuteExecutor: EventMuteExecutor
+
+    @Inject
     lateinit var logs: StructuredLogRepository
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -36,6 +40,9 @@ class StartupRecoveryReceiver : BroadcastReceiver() {
         val pendingResult = goAsync()
         scope.launch {
             try {
+                // Issue #25：静音会话收尾最先做，不依赖采集恢复成功，也不依赖网络——
+                // 设备不能因为别处失败而永久停在静音（END 闹钟被重启清掉时这里回收）。
+                reconcileMuteSession(eventMuteExecutor)
                 // AC-15.4：设备重启或应用更新后闹钟被系统清空，必须重建。
                 // 顺序：先恢复采集运行态（既有行为），再重建闹钟；两步互不阻断。
                 dispatchStartupRecovery(
@@ -73,6 +80,25 @@ class StartupRecoveryReceiver : BroadcastReceiver() {
             } finally {
                 pendingResult.finish()
             }
+        }
+    }
+
+    /**
+     * 静音会话收尾（Issue #25 路径 2）：重启/更新后，END 闹钟可能已被系统清掉。
+     * 这里先做**离线**过期会话对账（不需要网络），再刷新计划；
+     * 即使采集恢复抛错，也保证本步先执行——设备不能因别处失败而永久停在静音。
+     */
+    internal suspend fun reconcileMuteSession(
+        executor: com.pim.app.mute.EventMuteExecutor
+    ) {
+        try {
+            // 离线对账：只回收「真实 end 已全部过去」的会话；旧会话缺 end 时不动，
+            // 等 refresh 拉到真实日程后在 reconcileWithKnownEnds 里补齐并收尾。
+            executor.reconcileExpiredSession()
+        } catch (ex: kotlinx.coroutines.CancellationException) {
+            throw ex
+        } catch (ex: Exception) {
+            logs.error("eventmute", "开机/更新后对账静音会话失败：${ex.message ?: ex::class.java.simpleName}", ex)
         }
     }
 

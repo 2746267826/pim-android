@@ -78,6 +78,19 @@ class EventMutePlannerTest {
     }
 
     @Test
+    fun `每条计划都携带真实事件结束时刻（END 丢失后靠它离线收尾）`() {
+        val plan = EventMutePlanner.plan(
+            listOf(event("e1", 2), event("running", -1, durationHours = 3)),
+            now
+        )
+
+        for (alarm in plan) {
+            val expectedEnd = if (alarm.eventId == "e1") now + 3 * hour else now + 2 * hour
+            assertEquals("事件 $alarm 必须携带真实 end", expectedEnd, alarm.eventEndUtcMillis)
+        }
+    }
+
+    @Test
     fun `超出窗口的日程等下一次刷新，不占闹钟槽位`() {
         val plan = EventMutePlanner.plan(
             events = listOf(

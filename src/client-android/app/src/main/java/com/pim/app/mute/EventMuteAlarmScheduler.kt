@@ -133,6 +133,7 @@ class EventMuteAlarmScheduler internal constructor(
 
         const val EXTRA_EVENT_ID = "com.pim.app.mute.extra.EVENT_ID"
         const val EXTRA_ACTION = "com.pim.app.mute.extra.ACTION"
+        const val EXTRA_EVENT_END = "com.pim.app.mute.extra.EVENT_END"
 
         /** 第 index 条计划用的 requestCode（START/END 各占一个槽序号）。 */
         fun requestCodeFor(index: Int, action: MuteAction): Int =
@@ -149,6 +150,7 @@ class EventMuteAlarmScheduler internal constructor(
             if (alarm != null) {
                 intent.putExtra(EXTRA_EVENT_ID, alarm.eventId)
                 intent.putExtra(EXTRA_ACTION, alarm.action.name)
+                alarm.eventEndUtcMillis?.let { intent.putExtra(EXTRA_EVENT_END, it) }
             }
             return PendingIntent.getBroadcast(
                 context,

@@ -30,6 +30,7 @@ class EventMuteCoordinator internal constructor(
     private val settings: EventMuteSettingsAccessor,
     private val schedulePort: EventMuteSchedulePort,
     private val device: EventMuteDevicePort,
+    private val executor: EventMuteExecutor,
     private val logs: StructuredLogRepository,
     private val nowUtcMillis: () -> Long
 ) {
@@ -39,20 +40,25 @@ class EventMuteCoordinator internal constructor(
         settings: EventMuteSettingsAccessor,
         schedulePort: EventMuteSchedulePort,
         device: EventMuteDevicePort,
+        executor: EventMuteExecutor,
         logs: StructuredLogRepository
-    ) : this(apiService, settings, schedulePort, device, logs, System::currentTimeMillis)
+    ) : this(apiService, settings, schedulePort, device, executor, logs, System::currentTimeMillis)
 
     /**
      * 设备级开关（E3.4 / AC-7）：打开后立即刷新计划；关闭时**取消全部登记**并只留下「已关闭」状态，
-     * 本机不再有任何本功能引起的改动（已进入的静音会话按「不碰设备」的原则不再回写）。
+     * 未来的日程不再影响本机。已进入的静音会话仍按快照收尾（Issue #25 路径 1）：
+     * 收尾失败时 executor 保留会话并给出可见提示。
      */
     suspend fun setFollowRuleEnabled(enabled: Boolean) {
         settings.setFollowRuleEnabled(enabled)
         if (enabled) {
             refresh("user-enabled")
         } else {
-            schedulePort.cancelAll()
             settings.recordRefresh(0, null, nowUtcMillis(), null)
+            // 关闭开关立即收尾（不等真实 end）：未来不再静音，已进入的会话现在就还。
+            // 恢复失败时 executor 保留会话与可见提示，之后每次 refresh 仍可重试。
+            executor.finishNow()
+            schedulePort.cancelAll()
             logs.info(LOG_TAG, "已关闭「本设备遵循日程静音规则」：取消全部闹钟登记")
         }
     }
@@ -61,12 +67,14 @@ class EventMuteCoordinator internal constructor(
     suspend fun refresh(reason: String) {
         val now = nowUtcMillis()
         if (!settings.isFollowRuleEnabled()) {
+            executor.finishNow()
             schedulePort.cancelAll()
-            settings.recordRefresh(0, null, now, null)
             return
         }
 
         try {
+            // 本地已知的结束/待重试先处理，不让网络失败挡住设备恢复。
+            executor.reconcileExpiredSession()
             val calendars = apiService.getCalendars().data.orEmpty()
             val defaultMutedByCalendar = calendars.associate { it.id to it.defaultMuted }
 
@@ -106,30 +114,40 @@ class EventMuteCoordinator internal constructor(
 
             val plan = EventMutePlanner.plan(events, now)
             val result = schedulePort.schedule(plan)
+            var scheduleError: String? = null
             when (result) {
                 is EventMuteAlarmScheduler.Result.Scheduled ->
                     settings.recordRefresh(plan.size, result.firstAtUtcMillis, now, null)
                 EventMuteAlarmScheduler.Result.PermissionMissing -> {
                     // E3.2 的降级行为：不登记、也不退回不精确的 set()，而是给出可见提示
+                    scheduleError = "未授予「闹钟和提醒」权限，日程静音无法准时生效"
                     settings.recordRefresh(
                         plan.size,
                         null,
                         now,
-                        "未授予「闹钟和提醒」权限，日程静音无法准时生效"
+                        scheduleError
                     )
                     logs.warn(LOG_TAG, "刷新日程静音计划失败：缺少精确闹钟权限（$reason）")
                 }
                 is EventMuteAlarmScheduler.Result.Failed -> {
+                    scheduleError = result.message
                     settings.recordRefresh(plan.size, null, now, result.message)
                     logs.warn(LOG_TAG, "刷新日程静音计划失败：${result.message}（$reason）")
                 }
+            }
+            // 只用取到的正向事实补 end，未取到不能当成已结束。对账最后写状态，避免
+            // 「刷新成功」擦掉恢复失败/旧会话结束时间待核实的提示。
+            executor.reconcileWithKnownEnds(events.associate { it.eventId to it.endUtcMillis })
+            scheduleError?.let { error ->
+                settings.recordError(listOfNotNull(settings.readPersistedStatus().lastError, error).distinct().joinToString("；"))
             }
             logs.info(LOG_TAG, "已刷新日程静音计划（$reason）：候选 ${events.size} 条，登记 ${plan.size} 条")
         } catch (ex: CancellationException) {
             throw ex
         } catch (ex: Exception) {
             // 网络/鉴权失败不能让整条链挂掉：记成状态，下一次叫醒再试
-            settings.recordError(ex.message ?: ex::class.java.simpleName)
+            val recoveryError = if (executor.hasPendingRestore()) "静音还原尚未完成，将在下次刷新重试" else null
+            settings.recordError(listOfNotNull(recoveryError, ex.message ?: ex::class.java.simpleName).joinToString("；"))
             logs.warn(LOG_TAG, "刷新日程静音计划失败（$reason）：${ex.message ?: ""}")
         }
     }

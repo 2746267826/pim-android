@@ -76,13 +76,31 @@ class EventMuteSettingsStore @Inject constructor(
             val ids = json.getJSONArray(KEY_SESSION_EVENT_IDS)
             val eventIds = (0 until ids.length()).map { ids.getString(it) }.toSet()
             if (eventIds.isEmpty()) return null
+            val eventEnds = mutableMapOf<String, Long>()
+            if (json.has(KEY_SESSION_EVENT_ENDS)) {
+                val ends = json.getJSONObject(KEY_SESSION_EVENT_ENDS)
+                for (id in eventIds) {
+                    if (ends.has(id)) eventEnds[id] = ends.getLong(id)
+                }
+            }
+            val appliedState = if (json.has(KEY_SESSION_APPLIED_RINGER)) {
+                DeviceMuteState(
+                    ringerMode = json.getInt(KEY_SESSION_APPLIED_RINGER),
+                    interruptionFilter = json.getInt(KEY_SESSION_APPLIED_FILTER)
+                )
+            } else {
+                null
+            }
             MuteSession(
                 eventIds = eventIds,
                 state = DeviceMuteState(
                     ringerMode = json.getInt(KEY_SESSION_RINGER),
                     interruptionFilter = json.getInt(KEY_SESSION_FILTER)
                 ),
-                enteredAtUtcMillis = json.getLong(KEY_SESSION_ENTERED_AT)
+                enteredAtUtcMillis = json.getLong(KEY_SESSION_ENTERED_AT),
+                pendingRestoreReason = json.optString(KEY_SESSION_PENDING_RESTORE).takeIf { it.isNotEmpty() },
+                eventEndsUtcMillis = eventEnds,
+                appliedState = appliedState
             )
         } catch (_: Exception) {
             // 解析失败按「没有会话」处理：宁可漏恢复，也不能把设备改到一个瞎猜的状态
@@ -100,9 +118,21 @@ class EventMuteSettingsStore @Inject constructor(
             json.put(KEY_SESSION_RINGER, session.state.ringerMode)
             json.put(KEY_SESSION_FILTER, session.state.interruptionFilter)
             json.put(KEY_SESSION_ENTERED_AT, session.enteredAtUtcMillis)
+            val ends = JSONObject()
+            for ((id, end) in session.eventEndsUtcMillis) {
+                if (id in session.eventIds) ends.put(id, end)
+            }
+            if (ends.length() > 0) json.put(KEY_SESSION_EVENT_ENDS, ends)
+            session.appliedState?.let {
+                json.put(KEY_SESSION_APPLIED_RINGER, it.ringerMode)
+                json.put(KEY_SESSION_APPLIED_FILTER, it.interruptionFilter)
+            }
+            if (session.pendingRestoreReason != null) {
+                json.put(KEY_SESSION_PENDING_RESTORE, session.pendingRestoreReason)
+            }
             editor.putString(KEY_SESSION, json.toString())
         }
-        editor.commit()
+        check(editor.commit()) { "静音会话未能可靠保存，停止更改设备状态" }
     }
 
     companion object {
@@ -124,5 +154,9 @@ class EventMuteSettingsStore @Inject constructor(
         private const val KEY_SESSION_RINGER = "ringer_mode"
         private const val KEY_SESSION_FILTER = "interruption_filter"
         private const val KEY_SESSION_ENTERED_AT = "entered_at"
+        private const val KEY_SESSION_PENDING_RESTORE = "pending_restore_reason"
+        private const val KEY_SESSION_EVENT_ENDS = "event_ends"
+        private const val KEY_SESSION_APPLIED_RINGER = "applied_ringer_mode"
+        private const val KEY_SESSION_APPLIED_FILTER = "applied_interruption_filter"
     }
 }

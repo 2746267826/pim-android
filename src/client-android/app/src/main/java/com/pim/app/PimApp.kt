@@ -32,6 +32,9 @@ class PimApp : Application(), Configuration.Provider {
     lateinit var keepAliveCoordinator: com.pim.app.keepalive.KeepAliveCoordinator
 
     @Inject
+    lateinit var eventMuteExecutor: com.pim.app.mute.EventMuteExecutor
+
+    @Inject
     lateinit var logs: com.pim.app.mobile.logs.StructuredLogRepository
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -66,6 +69,20 @@ class PimApp : Application(), Configuration.Provider {
                 throw ex
             } catch (ex: Exception) {
                 logs.error("keepalive", "启动时保活对账失败：${ex.message ?: ex::class.java.simpleName}", ex)
+            }
+
+            // Issue #25：应用冷启动同样离线对账静音会话（只按真实 end 判定），
+            // 覆盖「打开 App 而不是等开机广播」的路径；失败只记录，不阻断启动。
+            try {
+                eventMuteExecutor.reconcileExpiredSession()
+            } catch (ex: kotlinx.coroutines.CancellationException) {
+                throw ex
+            } catch (ex: Exception) {
+                logs.error(
+                    "eventmute",
+                    "启动时对账静音会话失败：${ex.message ?: ex::class.java.simpleName}",
+                    ex
+                )
             }
         }
         scope.launch {

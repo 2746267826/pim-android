@@ -145,4 +145,23 @@ class StartupRecoveryReceiverTest {
         assertEquals("采集恢复失败不应阻止闹钟重建", 1, alarmRebuilt)
         assertEquals("采集恢复的异常应按既有语义向上传播", "recover-boom", thrown?.message)
     }
+
+    // ---- Issue #25：静音会话收尾必须真的接在启动链上 ----
+
+    /**
+     * 防接线退化：启动入口必须先调 reconcileMuteSession（在 dispatchStartupRecovery 之前）。
+     * 接线在 BroadcastReceiver 内部，纯 JVM 测试无法注入；用源码顺序断言锁住——
+     * 若有人删掉该调用或把它挪到恢复失败即提前返回的分支之后，这条会红。
+     */
+    @Test
+    fun `启动链在采集恢复之前对账静音会话`() {
+        val source = java.io.File(
+            "src/main/java/com/pim/app/recovery/StartupRecoveryReceiver.kt"
+        ).readText()
+        val reconcile = source.indexOf("reconcileMuteSession(eventMuteExecutor)")
+        // 首个出现位置就是 onReceive 里的真实调用（companion 定义在其后）
+        val dispatch = source.indexOf("dispatchStartupRecovery(")
+        assertTrue("启动链必须真的调用 reconcileMuteSession", reconcile > 0)
+        assertTrue("对账必须在采集恢复（dispatchStartupRecovery）之前执行", reconcile < dispatch)
+    }
 }

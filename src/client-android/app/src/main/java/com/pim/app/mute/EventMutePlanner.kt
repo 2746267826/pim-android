@@ -41,12 +41,14 @@ object EventMutePlanner {
                 eventId = event.eventId,
                 action = MuteAction.START,
                 // 已经开始的：立刻补开（用 now 而不是过去的开始时刻，避免 setExact 过去时间立即触发造成抖动）
-                triggerAtUtcMillis = if (alreadyStarted) nowUtcMillis else event.startUtcMillis
+                triggerAtUtcMillis = if (alreadyStarted) nowUtcMillis else event.startUtcMillis,
+                eventEndUtcMillis = event.endUtcMillis
             )
             alarms += PlannedMuteAlarm(
                 eventId = event.eventId,
                 action = MuteAction.END,
-                triggerAtUtcMillis = event.endUtcMillis
+                triggerAtUtcMillis = event.endUtcMillis,
+                eventEndUtcMillis = event.endUtcMillis
             )
         }
 

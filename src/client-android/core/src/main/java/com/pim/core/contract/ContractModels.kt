@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 840b6ee622966e09026637f3c9058f61f93881bfd5488dc1b3b048287472cce7)
+//   契约快照 : contract/openapi.json (sha256 1184fd91e67160efe2c19e65f11a85b05839eec47acc820104b6386b850a3b8b)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -1302,10 +1302,10 @@ data class UpdateTaskRequest(
     val minimumSegment: String? = null,
     val percentComplete: Int? = null,
     val plannedEnd: String? = null,
-    val priority: Int,
+    val priority: Int? = null,
     val status: String? = null,
     val taskBookId: String? = null,
-    val title: String,
+    val title: String? = null,
 )
 
 /** 契约 `components.schemas.UserInfo`（response）。 */

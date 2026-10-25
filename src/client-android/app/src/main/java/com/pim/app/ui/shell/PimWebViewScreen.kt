@@ -27,8 +27,6 @@ import androidx.compose.foundation.layout.width
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.OpenInBrowser
 import androidx.compose.material.icons.filled.Refresh
-import androidx.compose.material.icons.filled.WarningAmber
-import androidx.compose.material3.Button
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
@@ -44,13 +42,15 @@ import androidx.compose.runtime.setValue
 import androidx.compose.runtime.key
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.webkit.WebViewFeature
+import com.pim.app.ui.components.PimButton
+import com.pim.app.ui.components.PimStatusBanner
+import com.pim.app.ui.components.PimStatusTone
 import com.pim.core.auth.AuthSessionStore
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
@@ -344,26 +344,10 @@ fun PimWebViewScreen(
 
     Column(modifier = modifier) {
         if (httpWarningVisible) {
-            Row(
-                modifier = Modifier
-                    .fillMaxWidth()
-                    .background(Color(0xFFFFF3E0))
-                    .padding(horizontal = 12.dp, vertical = 6.dp),
-                horizontalArrangement = Arrangement.Center,
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Icon(
-                    imageVector = Icons.Filled.WarningAmber,
-                    contentDescription = null,
-                    tint = Color(0xFFE65100)
-                )
-                Spacer(Modifier.width(6.dp))
-                Text(
-                    text = "连接未加密，数据可能被第三方查看",
-                    style = MaterialTheme.typography.labelSmall,
-                    color = Color(0xFFE65100)
-                )
-            }
+            PimStatusBanner(
+                text = "连接未加密，数据可能被第三方查看",
+                tone = PimStatusTone.Warning
+            )
         }
 
         Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
@@ -638,7 +622,7 @@ private fun PimWebViewErrorOverlay(
             textAlign = TextAlign.Center
         )
         Spacer(Modifier.height(16.dp))
-        Button(onClick = onRetry) {
+        PimButton(onClick = onRetry) {
             Icon(Icons.Filled.Refresh, contentDescription = null)
             Spacer(Modifier.width(6.dp))
             Text("重试")
@@ -672,7 +656,7 @@ private fun PimWebViewMessage(
         )
         if (actionLabel != null && onAction != null) {
             Spacer(Modifier.height(16.dp))
-            Button(onClick = onAction) {
+            PimButton(onClick = onAction) {
                 Icon(Icons.Filled.OpenInBrowser, contentDescription = null)
                 Spacer(Modifier.width(6.dp))
                 Text(actionLabel)

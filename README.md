@@ -1,6 +1,6 @@
 # pim-android
 
-PIM 的安卓采集端：定位轨迹、运动状态与应用使用情况采集。
+PIM 的安卓客户端：保留定位轨迹、运动状态与应用使用情况采集，原生业务按路线图分批演进。
 
 ## 目录
 
@@ -22,6 +22,12 @@ cd src/client-android
 ## 数据约定
 
 采集端只做精度过滤，**不丢点、不抽稀、不静默裁剪**；符合精度的点逐条入库、逐条上传，允许积压。
+
+## 原生笔记与视觉基础
+
+- [跨端总路线图](https://github.com/2746267826/pim-api/blob/master/docs/product/native-notes-roadmap.md)与[总跟踪 #505](https://github.com/2746267826/pim-api/issues/505)共同保留完整需求，安卓先行不取消 Windows、Web、手写或云端闭环。
+- [Android 主题与基础组件](docs/native-ui-foundation.md)说明本仓唯一主题入口和复用方式；[当前切片 #31](https://github.com/2746267826/pim-android/issues/31)只覆盖薄视觉基础，不代表录音笔记已可用。
+- 新页面引用统一主题和基础组件，不散写色号、不复制控件样式；现有采集和生命周期不依赖视觉层。
 
 ## 相关仓库
 

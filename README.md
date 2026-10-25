@@ -28,6 +28,7 @@ cd src/client-android
 - [跨端总路线图](https://github.com/2746267826/pim-api/blob/master/docs/product/native-notes-roadmap.md)与[总跟踪 #505](https://github.com/2746267826/pim-api/issues/505)共同保留完整需求，安卓先行不取消 Windows、Web、手写或云端闭环。
 - [Android 主题与基础组件](docs/native-ui-foundation.md)说明本仓唯一主题入口和复用方式；[主题切片 #31](https://github.com/2746267826/pim-android/issues/31)已通过 PR #32 合并，只覆盖薄视觉基础，不代表录音笔记已可用。
 - [原生录音内核与调试验证入口](docs/native-recording-core.md)对应[录音切片 #33](https://github.com/2746267826/pim-android/issues/33)，使用真实采集、本地 WAV、持续通知及输入波形；不是缺手写的笔记成品，也没有云处理。
+- [本地混合文档与基础手写](docs/native-mixed-notes.md)对应[切片 #35](https://github.com/2746267826/pim-android/issues/35)，从“今日”打开本机记录，编辑 Markdown、插入照片/可编辑笔迹、右下角拖拽并关联真实录音；本地预览版不代表云端首版或 OPPO 真机已验收。
 - 新页面引用统一主题和基础组件，不散写色号、不复制控件样式；现有采集和生命周期不依赖视觉层。
 
 ## 相关仓库

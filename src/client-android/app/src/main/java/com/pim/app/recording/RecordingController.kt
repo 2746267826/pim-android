@@ -14,13 +14,14 @@ object RecordingController {
     internal const val RESUME = "com.pim.app.recording.RESUME"
     internal const val FINISH = "com.pim.app.recording.FINISH"
     internal const val SESSION = "recording_session"
+    internal const val NOTE = "recording_note"
 
-    fun start(activity: Activity): RecordingProblem? {
+    fun start(activity: Activity, noteId: String? = null): RecordingProblem? {
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             return RecordingProblem.Permission
         }
         return try {
-            ContextCompat.startForegroundService(activity, intent(activity, START))
+            ContextCompat.startForegroundService(activity, intent(activity, START).putExtra(NOTE, noteId))
             null
         } catch (_: Exception) { RecordingProblem.Foreground }
     }

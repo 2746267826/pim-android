@@ -24,7 +24,8 @@ data class PimDimensions(
     val iconSize: Dp = 18.dp,
     val minimumTouchTarget: Dp = 48.dp,
     val recordingWaveWidth: Dp = 64.dp,
-    val recordingWaveHeight: Dp = 20.dp
+    val recordingWaveHeight: Dp = 20.dp,
+    val notePhotoMaxHeight: Dp = 360.dp
 )
 
 internal val PimDefaultDimensions = PimDimensions()

@@ -9,6 +9,7 @@ import android.content.Context
 import android.content.Intent
 import androidx.core.app.NotificationCompat
 import com.pim.app.MainActivity
+import com.pim.app.notes.NativeNotesActivity
 
 internal object RecordingNotifications {
     const val ID = 8201
@@ -37,7 +38,7 @@ internal object RecordingNotifications {
         val builder = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(title).setContentText(text)
-            .setContentIntent(PendingIntent.getActivity(context, 82010, openIntent(context), FLAGS))
+            .setContentIntent(PendingIntent.getActivity(context, 82010, openIntent(context, session?.noteId), FLAGS))
             .setOnlyAlertOnce(true).setOngoing(!interrupted).setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
             .setPublicVersion(NotificationCompat.Builder(context, CHANNEL)
@@ -53,7 +54,9 @@ internal object RecordingNotifications {
         return builder.build()
     }
 
-    fun openIntent(context: Context): Intent {
+    fun openIntent(context: Context, noteId: String? = null): Intent {
+        if (noteId != null) return NativeNotesActivity.intent(context, noteId)
+            .addFlags(Intent.FLAG_ACTIVITY_SINGLE_TOP or Intent.FLAG_ACTIVITY_CLEAR_TOP)
         val probe = ComponentName(context.packageName, PROBE_ACTIVITY)
         val exists = runCatching { context.packageManager.getActivityInfo(probe, 0) }.isSuccess
         return (if (exists) Intent().setComponent(probe) else Intent(context, MainActivity::class.java))

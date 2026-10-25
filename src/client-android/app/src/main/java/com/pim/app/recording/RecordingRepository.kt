@@ -29,11 +29,11 @@ class RecordingRepository @Inject constructor(@ApplicationContext context: Conte
     }
 
     @Synchronized
-    internal fun start() {
+    internal fun start(noteId: String? = null) {
         initialize()
         check(engine?.session?.active != true)
         mutableState.value = mutableState.value.copy(preparing = true, problem = null, peaks = emptyList())
-        engine = RecordingEngine(store)
+        engine = RecordingEngine(store, noteId = noteId)
         publish()
     }
 

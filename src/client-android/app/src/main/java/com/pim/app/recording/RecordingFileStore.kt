@@ -9,8 +9,8 @@ import kotlinx.serialization.json.Json
 class RecordingFileStore(private val root: File) {
     private val json = Json { encodeDefaults = true; ignoreUnknownKeys = true }
 
-    fun create(now: Long): RecordingSession {
-        val session = RecordingSession(UUID.randomUUID().toString(), now)
+    fun create(now: Long, noteId: String? = null): RecordingSession {
+        val session = RecordingSession(UUID.randomUUID().toString(), now, noteId = noteId)
         check(directory(session.id).mkdirs()) { "Cannot create recording directory" }
         save(session)
         return session
@@ -87,6 +87,7 @@ class RecordingFileStore(private val root: File) {
 
     private fun validate(session: RecordingSession) {
         require(session.schemaVersion == 1 && session.currentSegment > 0)
+        require(session.noteId == null || validId(session.noteId))
         require(session.chunks.all { it.segment in 1..session.currentSegment && it.index > 0 && it.samples >= 0 })
         require(session.chunks.map { it.fileName }.distinct().size == session.chunks.size)
     }

@@ -30,7 +30,8 @@ data class RecordingSession(
     val currentSegment: Int = 1,
     val chunks: List<RecordingChunk> = emptyList(),
     val problem: RecordingProblem? = null,
-    val schemaVersion: Int = 1
+    val schemaVersion: Int = 1,
+    val noteId: String? = null
 ) {
     val samples: Long get() = chunks.sumOf { it.samples }
     val durationMillis: Long get() = samples * 1000 / RecordingPolicy.SAMPLE_RATE

@@ -6,9 +6,10 @@ import kotlin.math.min
 internal class RecordingEngine(
     private val store: RecordingFileStore,
     private val policy: RecordingPolicy = RecordingPolicy(),
-    nowMillis: Long = System.currentTimeMillis()
+    nowMillis: Long = System.currentTimeMillis(),
+    noteId: String? = null
 ) {
-    var session: RecordingSession = store.create(nowMillis)
+    var session: RecordingSession = store.create(nowMillis, noteId)
         private set
     private var output: PcmWavFile? = null
     private var sinceCheckpoint = 0L

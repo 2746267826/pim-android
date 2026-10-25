@@ -50,21 +50,21 @@ class RecordingService : Service() {
                 repository.report(RecordingProblem.Foreground); stopSelf(); return START_NOT_STICKY
             }
             started = true
-            scope.launch { capture() }
+            scope.launch { capture(intent?.getStringExtra(RecordingController.NOTE)) }
         } else if (action != null && action != RecordingController.START) {
             commands.trySend(action to intent.getStringExtra(RecordingController.SESSION))
         }
         return START_NOT_STICKY
     }
 
-    private suspend fun capture() {
+    private suspend fun capture(noteId: String?) {
         var input: AndroidPcmInput? = null
         var failure: RecordingProblem? = null
         val wake = getSystemService(PowerManager::class.java).newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "PIM:recording").apply {
             setReferenceCounted(false)
         }
         try {
-            try { repository.start() } catch (_: Exception) { failure = RecordingProblem.Storage; return }
+            try { repository.start(noteId) } catch (_: Exception) { failure = RecordingProblem.Storage; return }
             input = AndroidPcmInput { commands.trySend(SILENCED to null) }
             input.start()
             wake.acquire()

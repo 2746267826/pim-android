@@ -12,16 +12,13 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
-import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
-import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.Surface
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
@@ -33,7 +30,10 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.pim.app.ui.components.PimButton
+import com.pim.app.ui.components.PimFactChip
 import com.pim.app.ui.shell.PimWebViewScreen
+import com.pim.app.ui.theme.PimTheme
 
 @Composable
 fun TodayScreen(
@@ -80,12 +80,13 @@ internal fun TodayStatusBar(
     syncFeedback: String?,
     onSyncNow: () -> Unit
 ) {
+    val dimensions = PimTheme.dimensions
     val busy = state.isSyncButtonDisabled
     val showSpinner = state.syncButtonShowSpinner
     Column(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(horizontal = 12.dp, vertical = 8.dp)
+            .padding(horizontal = dimensions.spaceMedium, vertical = dimensions.spaceSmall)
     ) {
         Row(
             modifier = Modifier.fillMaxWidth(),
@@ -110,8 +111,8 @@ internal fun TodayStatusBar(
                     )
                 }
             }
-            Spacer(modifier = Modifier.width(8.dp))
-            Button(
+            Spacer(modifier = Modifier.width(dimensions.spaceSmall))
+            PimButton(
                 onClick = onSyncNow,
                 enabled = !busy,
                 contentPadding = ButtonDefaults.ButtonWithIconContentPadding
@@ -122,14 +123,14 @@ internal fun TodayStatusBar(
                         strokeWidth = 2.dp,
                         color = MaterialTheme.colorScheme.onPrimary
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(dimensions.spaceExtraSmall))
                 } else {
                     Icon(
                         Icons.Filled.Sync,
                         contentDescription = null,
                         modifier = Modifier.size(16.dp)
                     )
-                    Spacer(modifier = Modifier.width(4.dp))
+                    Spacer(modifier = Modifier.width(dimensions.spaceExtraSmall))
                 }
                 Text(
                     state.syncButtonLabel,
@@ -143,17 +144,17 @@ internal fun TodayStatusBar(
                 text = syncFeedback,
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.primary,
-                modifier = Modifier.padding(top = 4.dp)
+                modifier = Modifier.padding(top = dimensions.spaceExtraSmall)
             )
         }
 
-        Spacer(modifier = Modifier.height(6.dp))
+        Spacer(modifier = Modifier.height(dimensions.spaceSmall))
 
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
+            horizontalArrangement = Arrangement.spacedBy(dimensions.spaceSmall)
         ) {
             FactChip("待传总数", state.pendingCount.toString(), "today-pending-total")
             FactChip("定位待传", state.pendingLocationPoints.toString(), "today-pending-location")
@@ -173,38 +174,16 @@ internal fun TodayStatusBar(
 
 @Composable
 private fun FactChip(label: String, value: String, tag: String? = null) {
-    Surface(
-        shape = RoundedCornerShape(8.dp),
-        color = MaterialTheme.colorScheme.surfaceVariant,
-        tonalElevation = 0.dp
-    ) {
-        Row(
-            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp).let { m ->
-                if (tag != null) m.testTag(tag) else m
-            },
-            verticalAlignment = Alignment.CenterVertically
-        ) {
-            Text(
-                text = label,
-                style = MaterialTheme.typography.labelSmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Spacer(modifier = Modifier.width(4.dp))
-            Text(
-                text = value,
-                style = MaterialTheme.typography.labelSmall,
-                fontWeight = FontWeight.Medium
-            )
-        }
-    }
+    PimFactChip(label, value, modifier = if (tag != null) Modifier.testTag(tag) else Modifier)
 }
 
 @Composable
 private fun EmbedUnsupportedBanner(onOpenSettings: () -> Unit) {
+    val dimensions = PimTheme.dimensions
     Column(
         modifier = Modifier
             .fillMaxSize()
-            .padding(24.dp),
+            .padding(dimensions.spaceExtraLarge),
         verticalArrangement = Arrangement.Center,
         horizontalAlignment = Alignment.CenterHorizontally
     ) {
@@ -216,14 +195,14 @@ private fun EmbedUnsupportedBanner(onOpenSettings: () -> Unit) {
             text = "请升级服务器或切换到支持嵌入页面的服务器",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
-            modifier = Modifier.padding(top = 8.dp)
+            modifier = Modifier.padding(top = dimensions.spaceSmall)
         )
-        Button(
+        PimButton(
             onClick = onOpenSettings,
-            modifier = Modifier.padding(top = 16.dp)
+            modifier = Modifier.padding(top = dimensions.spaceLarge)
         ) {
-            Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(18.dp))
-            Spacer(modifier = Modifier.width(6.dp))
+            Icon(Icons.Filled.Settings, contentDescription = null, modifier = Modifier.size(dimensions.iconSize))
+            Spacer(modifier = Modifier.width(dimensions.spaceSmall))
             Text("打开设置")
         }
     }

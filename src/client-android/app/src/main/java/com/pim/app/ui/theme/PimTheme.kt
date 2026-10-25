@@ -1,30 +1,41 @@
 package com.pim.app.ui.theme
 
+import androidx.compose.material3.ColorScheme
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.material3.lightColorScheme
 import androidx.compose.runtime.Composable
-import androidx.compose.ui.graphics.Color
+import androidx.compose.runtime.CompositionLocalProvider
+import androidx.compose.runtime.ReadOnlyComposable
+import androidx.compose.runtime.staticCompositionLocalOf
 
-private val PimLightColors = lightColorScheme(
-    primary = Color(0xFF1D63D8),
-    onPrimary = Color.White,
-    primaryContainer = Color(0xFFDCE8FF),
-    onPrimaryContainer = Color(0xFF09306F),
-    secondary = Color(0xFF00897B),
-    onSecondary = Color.White,
-    tertiary = Color(0xFFFFB300),
-    error = Color(0xFFC62828),
-    background = Color(0xFFF7F9FC),
-    surface = Color.White,
-    surfaceVariant = Color(0xFFE8EEF6),
-    outlineVariant = Color(0xFFD4DCE8)
-)
+private val LocalPimDimensions = staticCompositionLocalOf { PimDefaultDimensions }
+private val LocalPimStatusColors = staticCompositionLocalOf { PimLightStatusColors }
+
+object PimTheme {
+    val dimensions: PimDimensions
+        @Composable @ReadOnlyComposable get() = LocalPimDimensions.current
+
+    val statusColors: PimStatusColors
+        @Composable @ReadOnlyComposable get() = LocalPimStatusColors.current
+}
 
 @Composable
-fun PimTheme(content: @Composable () -> Unit) {
-    MaterialTheme(
-        colorScheme = PimLightColors,
-        typography = MaterialTheme.typography,
-        content = content
-    )
+fun PimTheme(
+    darkTheme: Boolean = false,
+    colorScheme: ColorScheme = if (darkTheme) PimDarkColorScheme else PimLightColorScheme,
+    statusColors: PimStatusColors = if (darkTheme) PimDarkStatusColors else PimLightStatusColors,
+    dimensions: PimDimensions = PimDefaultDimensions,
+    content: @Composable () -> Unit
+) {
+    // Keep the existing light default; a system-wide dark-mode setting is a separate change.
+    CompositionLocalProvider(
+        LocalPimDimensions provides dimensions,
+        LocalPimStatusColors provides statusColors
+    ) {
+        MaterialTheme(
+            colorScheme = colorScheme,
+            typography = PimTypography,
+            shapes = PimShapes,
+            content = content
+        )
+    }
 }

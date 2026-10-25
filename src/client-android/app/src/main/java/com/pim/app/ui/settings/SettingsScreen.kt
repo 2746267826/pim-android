@@ -498,6 +498,13 @@ fun SettingsScreen(
         }
 
         PimSection("诊断") {
+            if (context.applicationInfo.flags and android.content.pm.ApplicationInfo.FLAG_DEBUGGABLE != 0) {
+                OutlinedButton(onClick = {
+                    context.startActivity(Intent().setClassName(context.packageName, "com.pim.app.recording.RecordingProbeActivity"))
+                }, modifier = Modifier.fillMaxWidth().testTag("settings-recording-probe")) {
+                    Text("录音可靠性验证（开发中）")
+                }
+            }
             OutlinedButton(
                 onClick = { viewModel.requestClearDiagnostics() },
                 modifier = Modifier.fillMaxWidth().testTag("settings-diagnostics-clear"),

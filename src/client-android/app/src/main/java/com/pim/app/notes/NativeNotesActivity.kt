@@ -16,10 +16,14 @@ import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
+import androidx.compose.material3.MaterialTheme
+import androidx.compose.ui.graphics.toArgb
 import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
+import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pim.app.recording.*
 import com.pim.app.ui.theme.PimTheme
@@ -82,10 +86,20 @@ class NativeNotesActivity : ComponentActivity() {
             val message by model.message.collectAsStateWithLifecycle()
             val busy by model.busy.collectAsStateWithLifecycle()
             val materials by model.materials.state.collectAsStateWithLifecycle()
+            val completion by model.completion.collectAsStateWithLifecycle()
             BackHandler(selected != null || busy) {
                 if (busy) model.tell("正在处理本地材料，请稍候") else model.open(null)
             }
             PimTheme {
+                val barColor = (if (selected == null) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface).toArgb()
+                SideEffect {
+                    window.statusBarColor = barColor
+                    window.navigationBarColor = barColor
+                    WindowCompat.getInsetsController(window, window.decorView).apply {
+                        isAppearanceLightStatusBars = true
+                        isAppearanceLightNavigationBars = true
+                    }
+                }
                 NativeNotesScreen(notes, selected, recording, busy, message, playing, notificationsVisible, materials,
                     onCreate = model::create, onOpen = model::open,
                     onChange = { id, change -> model.notes.update(id, change) },
@@ -124,7 +138,12 @@ class NativeNotesActivity : ComponentActivity() {
                         model.prepareMaterialExport(id)
                         try { exportMaterials.launch("PIM-material-${id.take(8)}.zip") }
                         catch (_: Exception) { model.consumeMaterialExport(); model.tell("没有可用的材料包导出位置") }
-                    })
+                    }, onExit = ::finish,
+                    onStopRecording = {
+                        recording.session?.takeIf { it.active && it.noteId == selected }?.let { session ->
+                            RecordingController.finish(this, session.id)?.let { model.tell(it.message) }
+                        }
+                    }, completion = completion, onDismissCompletion = model::dismissCompletion, onDismissMessage = model::dismissMessage)
             }
         }
     }

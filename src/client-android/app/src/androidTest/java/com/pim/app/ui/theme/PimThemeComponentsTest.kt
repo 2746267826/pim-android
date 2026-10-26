@@ -4,6 +4,7 @@ import androidx.activity.ComponentActivity
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.width
+import androidx.compose.foundation.layout.padding
 import androidx.compose.material3.Text
 import androidx.compose.runtime.CompositionLocalProvider
 import androidx.compose.runtime.mutableStateOf
@@ -25,6 +26,7 @@ import androidx.compose.ui.unit.Density
 import androidx.compose.ui.unit.dp
 import com.pim.app.ui.components.PimButton
 import com.pim.app.ui.components.PimFactChip
+import com.pim.app.ui.components.PimFloatingSurface
 import com.pim.app.ui.components.PimSection
 import com.pim.app.ui.components.PimStatusBanner
 import com.pim.app.ui.components.PimStatusTone
@@ -48,6 +50,7 @@ class PimThemeComponentsTest {
                     PimSection("本机材料", modifier = Modifier.testTag("section")) { Text("正文") }
                     PimFactChip("待传总数", "15", modifier = Modifier.testTag("chip"))
                     PimStatusBanner("等待上传", PimStatusTone.Warning, Modifier.testTag("banner"))
+                    PimFloatingSurface(Modifier.testTag("floating")) { Text("插入", Modifier.padding(PimTheme.dimensions.spaceMedium)) }
                 }
             }
         }
@@ -55,6 +58,7 @@ class PimThemeComponentsTest {
         assertSurfaceColor("section", colors.value.surface)
         assertSurfaceColor("chip", colors.value.surfaceVariant)
         assertSurfaceColor("banner", status.value.warningContainer)
+        assertSurfaceColor("floating", colors.value.surface)
 
         composeRule.runOnIdle {
             colors.value = colors.value.copy(
@@ -68,6 +72,7 @@ class PimThemeComponentsTest {
         assertSurfaceColor("section", colors.value.surface)
         assertSurfaceColor("chip", colors.value.surfaceVariant)
         assertSurfaceColor("banner", status.value.warningContainer)
+        assertSurfaceColor("floating", colors.value.surface)
     }
 
     @Test

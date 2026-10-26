@@ -30,6 +30,7 @@ cd src/client-android
 - [原生录音内核与调试验证入口](docs/native-recording-core.md)对应[录音切片 #33](https://github.com/2746267826/pim-android/issues/33)，使用真实采集、本地 WAV、持续通知及输入波形；不是缺手写的笔记成品，也没有云处理。
 - [本地混合文档与基础手写](docs/native-mixed-notes.md)对应[切片 #35](https://github.com/2746267826/pim-android/issues/35)，从“今日”打开本机记录，编辑 Markdown、插入照片/可编辑笔迹、右下角拖拽并关联真实录音；本地预览版不代表云端首版或 OPPO 真机已验收。
 - [本机完整材料版本](docs/native-material-versions.md)对应[切片 #37](https://github.com/2746267826/pim-android/issues/37)，结束后固定当时全部原材料和录音，后台准备/失败重试、继续编辑不串版、按版本导出含录音材料包；明确未上传，不冒充云端版本保护。
+- [原生笔记体验纠偏](docs/native-notes-experience.md)将编辑区、紧凑录音浮条、插入、手写和结束反馈重新按文档优先组合，提供真实手机/宽屏页面；仍是本地预览，不代表用户满意度或云端首版已验收。
 - 新页面引用统一主题和基础组件，不散写色号、不复制控件样式；现有采集和生命周期不依赖视觉层。
 
 ## 相关仓库

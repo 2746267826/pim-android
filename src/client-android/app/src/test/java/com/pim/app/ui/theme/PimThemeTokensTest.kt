@@ -27,11 +27,12 @@ class PimThemeTokensTest {
 
     @Test
     fun businessScreensDoNotOwnLiteralColors() {
-        val sources = uiSourceDirectory().walkTopDown()
+        val ui = uiSourceDirectory()
+        val sources = sequenceOf(ui, ui.resolveSibling("notes")).flatMap { it.walkTopDown().asSequence() }
             .filter { it.isFile && it.extension == "kt" && it.parentFile?.name != "theme" }
         val literal = Regex("""\bColor\s*\(|\bColor\.(?:White|Black|Red|Blue|Green|Gray|Yellow)\b""")
         val offenders = sources.filter { literal.containsMatchIn(it.readText()) }
-            .map { it.relativeTo(uiSourceDirectory()).path }.toList()
+            .map { it.relativeTo(ui.parentFile).path }.toList()
         assertTrue("Move literal colors into theme resources: $offenders", offenders.isEmpty())
     }
 

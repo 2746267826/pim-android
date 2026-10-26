@@ -15,6 +15,8 @@ import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 
+data class NoteCompletion(val noteId: String, val versionId: String)
+
 @HiltViewModel
 class NotesViewModel @Inject constructor(
     val notes: NoteRepository,
@@ -27,6 +29,8 @@ class NotesViewModel @Inject constructor(
     val message = mutableMessage.asStateFlow()
     private val mutableBusy = MutableStateFlow(false)
     val busy = mutableBusy.asStateFlow()
+    private val mutableCompletion = MutableStateFlow<NoteCompletion?>(null)
+    val completion = mutableCompletion.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -37,9 +41,11 @@ class NotesViewModel @Inject constructor(
         }
     }
 
-    fun open(id: String?) { if (!busy.value) { saved["noteId"] = id; mutableMessage.value = null } }
+    fun open(id: String?) { if (!busy.value) { saved["noteId"] = id; mutableMessage.value = null; dismissCompletion() } }
     fun create() { open(notes.create()) }
     fun tell(text: String) { mutableMessage.value = text }
+    fun dismissMessage(text: String) { if (mutableMessage.value == text) mutableMessage.value = null }
+    fun dismissCompletion() { mutableCompletion.value = null }
 
     fun prepareMaterial(noteId: String, anchor: NoteInsertion, cameraToken: String? = null) {
         saved["materialNote"] = noteId; saved["materialBlock"] = anchor.blockId; saved["materialOffset"] = anchor.offset
@@ -59,7 +65,7 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 notes.insertPhoto(id, anchor, open)
-                cancelMaterial(); onImported(); tell("照片已插入，本地保存状态见上方")
+                cancelMaterial(); onImported(); tell("照片已插入笔记")
             } catch (error: CancellationException) { throw error }
             catch (_: Exception) { tell("照片导入失败，没有插入占位图片。请检查空间及图片格式（JPEG/PNG/WebP，单张不超过32 MB）") }
             finally { mutableBusy.value = false }
@@ -104,8 +110,8 @@ class NotesViewModel @Inject constructor(
                 }
                 val snapshot = notes.checkpoint(id)
                 val sessions = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { recordings.materialSessions(id) }
-                materials.freeze(snapshot, sessions)
-                tell("本次记录已结束，固定材料在本机后台准备；可继续编辑或补录，旧版本不会改变。尚未上传、转写或分析")
+                val versionId = materials.freeze(snapshot, sessions)
+                mutableCompletion.value = NoteCompletion(id, versionId)
             } catch (error: CancellationException) {
                 if (error is kotlinx.coroutines.TimeoutCancellationException) tell("录音尚未确认停止，请检查状态并重试") else throw error
             } catch (_: Exception) {

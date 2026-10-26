@@ -44,6 +44,7 @@ class NativeNotesDocumentTest {
         val text = "# Session\n\nbefore\nafter"
         edit(text, text.indexOf("after"))
         assertFalse(model.recordings.state.value.active)
+        compose.onNodeWithTag("note-insert-menu").performClick()
         compose.onNodeWithTag("note-insert-ink").performClick()
         val inkId = note().blocks.single { it.string("kind") == "ink" }.string("id")
         assertEquals("# Session\n\nbefore\n", note().blocks[0].string("text"))
@@ -109,7 +110,7 @@ class NativeNotesDocumentTest {
     @Test fun realRecordingRemainsOwnedByOriginalNoteDuringEditingNavigationAndRecreation() {
         create(); saved()
         val firstId = note().id
-        compose.onNodeWithTag("note-start-recording").performScrollTo().performClick()
+        compose.onNodeWithTag("note-start-recording").performClick()
         compose.waitUntil(10_000) { model.recordings.state.value.active && (model.recordings.state.value.session?.samples ?: 0) > 0 }
         assertEquals(firstId, model.recordings.state.value.session!!.noteId)
         edit("# Edited during capture", 5)
@@ -129,7 +130,7 @@ class NativeNotesDocumentTest {
         val notification = manager.activeNotifications.single { it.id == RecordingNotifications.ID }.notification
         notification.contentIntent.send()
         compose.waitUntil(5000) { model.selectedId.value == firstId }
-        compose.onNodeWithTag("note-finish").performClick()
+        finishNote()
         compose.waitUntil(10_000) { !model.recordings.state.value.active && !model.busy.value }
         saved()
         assertEquals(RecordingPhase.Completed, model.recordings.state.value.session!!.phase)
@@ -141,13 +142,14 @@ class NativeNotesDocumentTest {
     @Test fun emulatedSystemCameraCaptureAndCancellationCoexistWithRealRecording() {
         create(); closeSoftKeyboard(); saved()
         val id = note().id
-        compose.onNodeWithTag("note-start-recording").performScrollTo().performClick()
+        compose.onNodeWithTag("note-start-recording").performClick()
         compose.waitUntil(10_000) { model.recordings.state.value.active && (model.recordings.state.value.session?.samples ?: 0) > 0 }
         val before = model.recordings.state.value.session!!.samples
         val automation = InstrumentationRegistry.getInstrumentation().uiAutomation
         val oldFlags = automation.serviceInfo.flags
         automation.serviceInfo = automation.serviceInfo.apply { flags = flags or android.accessibilityservice.AccessibilityServiceInfo.FLAG_REPORT_VIEW_IDS }
         try {
+            compose.onNodeWithTag("note-insert-menu").performClick()
             compose.onNodeWithText("拍照").performClick()
             cameraNode("shutter_button").performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
             cameraNode("done_button").performAction(android.view.accessibility.AccessibilityNodeInfo.ACTION_CLICK)
@@ -161,12 +163,13 @@ class NativeNotesDocumentTest {
             assertTrue(model.recordings.state.value.session!!.samples > before)
             saved()
             val count = note().blocks.size
+            compose.onNodeWithTag("note-insert-menu").performClick()
             compose.onNodeWithText("拍照").performClick()
             cameraNode("shutter_button")
             assertTrue(automation.performGlobalAction(android.accessibilityservice.AccessibilityService.GLOBAL_ACTION_BACK))
             compose.waitUntil(10_000) { model.message.value?.contains("拍照已取消") == true }
             assertEquals(count, note().blocks.size)
-            compose.onNodeWithTag("note-finish").performClick()
+            finishNote()
             compose.waitUntil(10_000) { !model.recordings.state.value.active && !model.busy.value }
             saved()
             assertEquals(RecordingPhase.Completed, model.recordings.state.value.session!!.phase)
@@ -186,7 +189,7 @@ class NativeNotesDocumentTest {
 
     private fun create() {
         compose.waitUntil(10_000) { model.notes.state.value.loaded }
-        compose.onNodeWithTag("notes-create").performScrollTo().performClick()
+        compose.onNodeWithTag("notes-create").performClick()
         compose.waitUntil(5000) { model.selectedId.value != null }
         compose.onNodeWithTag("note-title").performTextReplacement("Isolated synthetic lesson")
     }
@@ -197,6 +200,12 @@ class NativeNotesDocumentTest {
             editor.requestFocus(); editor.setText(text); editor.setSelection(offset)
         }
         compose.waitForIdle(); closeSoftKeyboard(); compose.waitForIdle()
+    }
+    private fun finishNote() {
+        compose.onNodeWithTag("note-finish").performClick()
+        compose.onNodeWithTag("note-confirm-finish").performClick()
+        compose.waitUntil(15_000) { model.completion.value != null && !model.busy.value }
+        compose.onNodeWithTag("note-continue-editing").performClick()
     }
     private fun descendants(view: View): List<View> = listOf(view) + if (view is ViewGroup) (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
 }

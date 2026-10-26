@@ -42,7 +42,7 @@ class NativeNoteMaterialsTest {
         RecordingController.finish(compose.activity, first)
         compose.waitUntil(10_000) { !model.recordings.state.value.active }
         val second = capture()
-        compose.onNodeWithTag("note-finish").performClick()
+        finishNote()
         val versionA = ready(id, 1).single()
         val inputA = store.read(versionA.id)
         assertEquals(setOf(first, second), inputA.recordings.map { it.id }.toSet())
@@ -53,11 +53,11 @@ class NativeNoteMaterialsTest {
         assertEquals(exactA, NoteDocument.decode(exportedA.getValue("note.json").toString(Charsets.UTF_8)))
         assertEquals(inputA.recordings.sumOf { it.chunks.size }, exportedA.keys.count { it.endsWith(".wav") })
 
-        compose.onNodeWithTag("note-title").performTextReplacement("Synthetic B, after fixed A")
+        compose.onNodeWithTag("note-title").performScrollTo().performTextReplacement("Synthetic B, after fixed A")
         closeSoftKeyboard(); saved()
-        compose.onNodeWithTag("note-material-status").assertTextContains("未纳入固定版本", substring = true)
+        compose.onNodeWithTag("note-material-status").assertTextContains("有新修改", substring = true)
         val third = capture()
-        compose.onNodeWithTag("note-finish").performClick()
+        finishNote()
         val versions = ready(id, 2)
         val versionB = versions.single { it.id != versionA.id }
         assertEquals(setOf(first, second, third), store.read(versionB.id).recordings.map { it.id }.toSet())
@@ -85,12 +85,12 @@ class NativeNoteMaterialsTest {
         val photo = note().blocks.single { it.string("kind") == "photo" }
         val source = model.notes.photoFile(id, photo.string("assetId"))
         assertTrue(source.delete()) // Deliberate fault in this synthetic test note only.
-        compose.onNodeWithTag("note-finish").performClick()
+        finishNote()
         compose.waitUntil(20_000) { model.materials.state.value.entries.any { it.noteId == id && it.phase == NoteMaterialPhase.Failed } }
         val failed = model.materials.state.value.entries.single { it.noteId == id }
         val fixed = store.read(failed.id)
         assertEquals(NoteMaterialProblem.Incomplete, failed.problem)
-        compose.onNodeWithTag("note-title").performTextReplacement("Newer title is not retry input")
+        compose.onNodeWithTag("note-title").performScrollTo().performTextReplacement("Newer title is not retry input")
         closeSoftKeyboard(); saved()
         source.writeBytes(photoBytes)
         compose.onNodeWithTag("note-material-status").performClick()
@@ -107,15 +107,15 @@ class NativeNoteMaterialsTest {
     @Test fun duplicateFinishAndActivityRecreationKeepOneVersionAndExportSelectionRemainsPinned() {
         create()
         val id = note().id
-        compose.onNodeWithTag("note-finish").performClick()
+        finishNote()
         val first = ready(id, 1).single()
-        compose.onNodeWithTag("note-finish").performClick()
+        finishNote()
         compose.waitUntil(10_000) { !model.busy.value }
         assertEquals(listOf(first.id), model.materials.state.value.entries.filter { it.noteId == id }.map { it.id })
         compose.runOnUiThread { model.prepareMaterialExport(first.id) }
         compose.activityRule.scenario.recreate()
         compose.waitUntil(10_000) { model.selectedId.value == id && model.materials.state.value.loaded }
-        compose.onNodeWithTag("note-title").performTextReplacement("Still editable B")
+        compose.onNodeWithTag("note-title").performScrollTo().performTextReplacement("Still editable B")
         closeSoftKeyboard(); saved()
         var exportId: String? = null
         compose.runOnUiThread { exportId = model.consumeMaterialExport() }
@@ -131,14 +131,14 @@ class NativeNoteMaterialsTest {
 
     private fun create() {
         compose.waitUntil(15_000) { model.notes.state.value.loaded && model.materials.state.value.loaded }
-        compose.onNodeWithTag("notes-create").performScrollTo().performClick()
+        compose.onNodeWithTag("notes-create").performClick()
         compose.waitUntil(5000) { model.selectedId.value != null }
         compose.onNodeWithTag("note-title").performTextReplacement("Synthetic materials A")
         closeSoftKeyboard(); saved()
     }
 
     private fun capture(): String {
-        compose.onNodeWithTag("note-start-recording").performScrollTo().performClick()
+        compose.onNodeWithTag("note-start-recording").performClick()
         compose.waitUntil(10_000) { model.recordings.state.value.active && (model.recordings.state.value.session?.samples ?: 0) >= 3200 }
         return model.recordings.state.value.session!!.id
     }
@@ -151,6 +151,13 @@ class NativeNoteMaterialsTest {
     }
 
     private fun saved() = compose.waitUntil(15_000) { model.notes.state.value.savedRevisions[note().id] == note().revision }
+
+    private fun finishNote() {
+        compose.onNodeWithTag("note-finish").performClick()
+        compose.onNodeWithTag("note-confirm-finish").performClick()
+        compose.waitUntil(15_000) { model.completion.value != null && !model.busy.value }
+        compose.onNodeWithTag("note-continue-editing").performClick()
+    }
 
     private fun exportedFiles(id: String): Map<String, ByteArray> {
         val bytes = ByteArrayOutputStream().also { store.export(id, it) }.toByteArray()

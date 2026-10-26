@@ -75,7 +75,8 @@ fun NativeNotesScreen(
 
                 BoxWithConstraints(Modifier.fillMaxSize()) {
                     val wide = maxWidth >= d.noteWideBreakpoint
-                    Row(Modifier.fillMaxSize().padding(top = d.noteHeaderClearance)) {
+                    // Constrain the viewport too: content padding alone lets the caret scroll behind the dock.
+                    Row(Modifier.fillMaxSize().padding(top = d.noteHeaderClearance, bottom = d.noteDockClearance)) {
                         if (wide) NoteMaterialsRail(note, sessions, { leaveInput(); showRecordings = true }, { leaveInput(); showMaterials = true }) { id ->
                             val index = note.blocks.indexOfFirst { it.string("id") == id }
                             if (index >= 0) scope.launch { list.animateScrollToItem(index + 2) }
@@ -83,7 +84,7 @@ fun NativeNotesScreen(
                         Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
                             LazyColumn(
                                 Modifier.widthIn(max = d.noteDocumentMaxWidth).fillMaxSize().testTag("note-document"), state = list,
-                                contentPadding = PaddingValues(start = d.spaceLarge, end = d.spaceLarge, bottom = d.noteDockClearance),
+                                contentPadding = PaddingValues(start = d.spaceLarge, end = d.spaceLarge, bottom = d.spaceLarge),
                                 verticalArrangement = Arrangement.spacedBy(d.spaceMedium)
                             ) {
                                 item(key = "heading") {

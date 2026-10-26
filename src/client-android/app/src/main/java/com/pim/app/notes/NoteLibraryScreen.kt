@@ -33,7 +33,7 @@ internal fun NoteLibraryScreen(
     val d = PimTheme.dimensions
     Box(Modifier.fillMaxSize()) {
         LazyColumn(
-            Modifier.fillMaxSize().testTag("notes-library"),
+            Modifier.align(Alignment.TopCenter).widthIn(max = d.noteDocumentMaxWidth).fillMaxSize().testTag("notes-library"),
             contentPadding = PaddingValues(start = d.spaceLarge, end = d.spaceLarge, bottom = d.noteDockClearance),
             verticalArrangement = Arrangement.spacedBy(d.spaceMedium)
         ) {

@@ -58,7 +58,7 @@ class NativeNotesExperienceTest {
         compose.onNodeWithTag("note-insert-menu").assertHeightIsAtLeast(48.dp)
         val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
         val document = compose.onNodeWithTag("note-document").fetchSemanticsNode().boundsInRoot
-        assertTrue("The document must receive most vertical space", document.height >= root.height * .75f)
+        assertTrue("The document must receive most vertical space, even on a compact phone", document.height >= root.height * .70f)
         assertDockBounds()
         evidence("editor")
         compose.onNodeWithText("正文支持 Markdown · 右下角插入照片与手写").performScrollTo()

@@ -66,6 +66,11 @@ class NativeNotesActivity : ComponentActivity() {
         if (uri != null && snapshot != null) model.export(snapshot) { contentResolver.openOutputStream(uri, "wt") ?: error("Cannot write export") }
         else if (uri != null) model.tell("页面已重建，导出未开始；请重新导出（不会替换为另一份文档）")
     }
+    private val exportMaterials = registerForActivityResult(ActivityResultContracts.CreateDocument("application/zip")) { uri ->
+        val id = model.consumeMaterialExport()
+        if (uri != null && id != null) model.exportMaterial(id) { contentResolver.openOutputStream(uri, "wt") ?: error("Cannot write material export") }
+        else if (uri != null) model.tell("无法确认固定版本，未导出；不会改用当前新稿，请重新选择版本")
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -76,11 +81,12 @@ class NativeNotesActivity : ComponentActivity() {
             val selected by model.selectedId.collectAsStateWithLifecycle()
             val message by model.message.collectAsStateWithLifecycle()
             val busy by model.busy.collectAsStateWithLifecycle()
+            val materials by model.materials.state.collectAsStateWithLifecycle()
             BackHandler(selected != null || busy) {
                 if (busy) model.tell("正在处理本地材料，请稍候") else model.open(null)
             }
             PimTheme {
-                NativeNotesScreen(notes, selected, recording, busy, message, playing, notificationsVisible,
+                NativeNotesScreen(notes, selected, recording, busy, message, playing, notificationsVisible, materials,
                     onCreate = model::create, onOpen = model::open,
                     onChange = { id, change -> model.notes.update(id, change) },
                     onRetry = model.notes::retry, photoFile = model.notes::photoFile,
@@ -113,6 +119,11 @@ class NativeNotesActivity : ComponentActivity() {
                     onExport = { note ->
                         exportSnapshot = note
                         try { export.launch("PIM-document.zip") } catch (_: Exception) { exportSnapshot = null; model.tell("没有可用的文档导出位置") }
+                    }, onRetryMaterial = model.materials::retry,
+                    onExportMaterial = { id ->
+                        model.prepareMaterialExport(id)
+                        try { exportMaterials.launch("PIM-material-${id.take(8)}.zip") }
+                        catch (_: Exception) { model.consumeMaterialExport(); model.tell("没有可用的材料包导出位置") }
                     })
             }
         }

@@ -19,6 +19,7 @@ import kotlinx.serialization.json.JsonPrimitive
 class NotesViewModel @Inject constructor(
     val notes: NoteRepository,
     val recordings: RecordingRepository,
+    val materials: NoteMaterialRepository,
     private val saved: SavedStateHandle
 ) : ViewModel() {
     val selectedId = saved.getStateFlow<String?>("noteId", null)
@@ -32,6 +33,7 @@ class NotesViewModel @Inject constructor(
             notes.initialize()
             try { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { recordings.initialize() } }
             catch (_: Exception) { tell("录音材料暂时无法读取，原始文件保留") }
+            materials.initialize()
         }
     }
 
@@ -74,17 +76,40 @@ class NotesViewModel @Inject constructor(
         }
     }
 
+    fun prepareMaterialExport(id: String) { saved["exportMaterialVersionId"] = id }
+    fun consumeMaterialExport(): String? = saved.remove("exportMaterialVersionId")
+
+    fun exportMaterial(id: String, open: () -> java.io.OutputStream) {
+        if (busy.value) return
+        mutableBusy.value = true
+        viewModelScope.launch {
+            try { materials.export(id, open); tell("固定材料包已导出，含该版本全部录音、正文、照片和笔迹；仅本机，未上传") }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) { tell("完整材料包导出失败，目标可能不完整；固定输入及原材料保留，请检查空间和材料后重试") }
+            finally { mutableBusy.value = false }
+        }
+    }
+
     fun finishLocal(id: String, sessionId: String?) {
+        if (busy.value) return
         mutableBusy.value = true
         viewModelScope.launch {
             try {
                 if (sessionId != null) withTimeout(10_000) {
                     recordings.state.first { it.session?.id != sessionId || !it.active }
                 }
-                notes.update(id) { note -> note.copy(source = JsonObject(note.source + ("endedAtMillis" to JsonPrimitive(System.currentTimeMillis())))) }
-                tell("本次记录已结束，保存状态见上方；尚未接入上传、转写和分析")
+                notes.update(id) { note ->
+                    if (note.source.containsKey("endedAtMillis")) note
+                    else note.copy(source = JsonObject(note.source + ("endedAtMillis" to JsonPrimitive(System.currentTimeMillis()))))
+                }
+                val snapshot = notes.checkpoint(id)
+                val sessions = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { recordings.materialSessions(id) }
+                materials.freeze(snapshot, sessions)
+                tell("本次记录已结束，固定材料在本机后台准备；可继续编辑或补录，旧版本不会改变。尚未上传、转写或分析")
             } catch (error: CancellationException) {
                 if (error is kotlinx.coroutines.TimeoutCancellationException) tell("录音尚未确认停止，请检查状态并重试") else throw error
+            } catch (_: Exception) {
+                tell("本机记录保留，但未能安排完整材料准备；请检查保存、录音及存储状态后再次结束。没有上传或启动云处理")
             } finally { mutableBusy.value = false }
         }
     }

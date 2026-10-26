@@ -39,6 +39,15 @@ internal class PcmWavFile(private val file: File) : Closeable {
     companion object {
         private const val HEADER_BYTES = 44L
 
+        fun validate(file: File, samples: Long) {
+            require(samples in 0..((Int.MAX_VALUE - 36L) / 2))
+            RandomAccessFile(file, "r").use { input ->
+                require(input.length() == HEADER_BYTES + samples * 2) { "WAV length disagrees with recording manifest" }
+                val actual = ByteArray(HEADER_BYTES.toInt()).also { input.readFully(it) }
+                require(actual.contentEquals(header(samples * 2))) { "WAV header disagrees with recording manifest" }
+            }
+        }
+
         // The payload is PCM, so process-death recovery needs no codec finalization.
         fun recover(file: File): Long {
             RandomAccessFile(file, "rw").use { input ->

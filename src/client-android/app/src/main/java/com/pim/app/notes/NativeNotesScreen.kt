@@ -42,12 +42,14 @@ import kotlinx.serialization.json.JsonPrimitive
 @Composable
 fun NativeNotesScreen(
     state: NotesState, selectedId: String?, recording: RecordingState, busy: Boolean, message: String?, playing: String?, notificationsVisible: Boolean,
+    materials: NoteMaterialsState,
     onCreate: () -> Unit, onOpen: (String?) -> Unit,
     onChange: (String, (NoteDocument) -> NoteDocument) -> Unit, onRetry: (String) -> Unit,
     photoFile: (String, String) -> File,
     onInsertPhoto: (String, NoteInsertion, Boolean) -> Unit, onRecord: (String) -> Unit,
     onPauseResume: () -> Unit, onFinish: (String) -> Unit,
-    onPlay: (RecordingSession, Int) -> Unit, onExport: (NoteDocument) -> Unit
+    onPlay: (RecordingSession, Int) -> Unit, onExport: (NoteDocument) -> Unit,
+    onRetryMaterial: (String) -> Unit, onExportMaterial: (String) -> Unit
 ) {
     val d = PimTheme.dimensions
     val note = state.documents[selectedId]
@@ -78,9 +80,13 @@ fun NativeNotesScreen(
                 var selectedBlock by rememberSaveable { mutableStateOf<String?>(null) }
                 var selectedOffset by rememberSaveable { mutableStateOf(0) }
                 var menu by remember { mutableStateOf(false) }
+                var showMaterials by rememberSaveable { mutableStateOf(false) }
                 val saved = state.savedRevisions[note.id] == note.revision
                 val ownSession = recording.session?.takeIf { it.noteId == note.id }
                 val ownActive = ownSession?.active == true
+                val sessions = (listOfNotNull(ownSession) + recording.archives.mapNotNull { it.session }).distinctBy { it.id }
+                    .filter { it.noteId == note.id }.sortedWith(compareBy({ it.createdAtMillis }, { it.id }))
+                val versions = materials.entries.filter { it.noteId == note.id }
                 val lastMarkdown = note.blocks.lastOrNull { it.string("kind") == "markdown" }
                 val anchor = NoteInsertion(selectedBlock ?: lastMarkdown?.string("id").orEmpty(), if (selectedBlock == null) lastMarkdown?.string("text")?.length ?: 0 else selectedOffset)
                 Box(Modifier.fillMaxSize().imePadding()) {
@@ -100,6 +106,15 @@ fun NativeNotesScreen(
                         }, color = if (note.id in state.errors) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
                             style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("note-save-status"))
                         if (note.id in state.errors) TextButton(onClick = { onRetry(note.id) }) { Text("重试本地保存") }
+                        versions.firstOrNull()?.let { latest ->
+                            TextButton(onClick = { showMaterials = true }, modifier = Modifier.testTag("note-material-status")) {
+                                Text(if (!latest.matches(note, sessions)) "有未纳入固定版本的修改或补录 · 查看材料"
+                                    else "材料版本 r${latest.revision} · ${materialPhaseText(latest.phase)} · 未上传",
+                                    style = MaterialTheme.typography.bodySmall)
+                            }
+                        }
+                        if (materials.loadFailed) Text("固定材料列表暂时无法读取，原文件保留；请重开页面重试", color = MaterialTheme.colorScheme.error,
+                            style = MaterialTheme.typography.bodySmall)
                         if (message != null) Text(message, style = MaterialTheme.typography.bodySmall, modifier = Modifier.testTag("note-message"))
                         recording.problem?.takeIf { ownSession != null }?.let { PimStatusBanner(it.message, PimStatusTone.Error) }
                         if (ownActive && !notificationsVisible) Text("系统通知权限或录音渠道已关闭，后台状态可能不可见", color = MaterialTheme.colorScheme.error,
@@ -119,6 +134,9 @@ fun NativeNotesScreen(
                                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                                     DropdownMenuItem(text = { Text("导出文档包（不含录音）") }, enabled = !busy && saved,
                                         onClick = { menu = false; onExport(note) })
+                                    DropdownMenuItem(text = { Text("材料版本（含全部录音，仅本机）") }, enabled = !busy,
+                                        modifier = Modifier.testTag("note-material-versions"),
+                                        onClick = { menu = false; showMaterials = true })
                                 }
                             }
                         }
@@ -136,8 +154,6 @@ fun NativeNotesScreen(
                                     else -> PimStatusBanner("未知扩展块已保留，当前版本不能编辑它", PimStatusTone.Warning)
                                 }
                             }
-                            val sessions = (recording.archives.mapNotNull { it.session } + listOfNotNull(ownSession)).distinctBy { it.id }
-                                .filter { it.noteId == note.id }.sortedBy { it.createdAtMillis }
                             if (sessions.isNotEmpty()) item {
                                 Text("本篇录音 · 正式转写尚未接入", style = MaterialTheme.typography.titleSmall)
                                 sessions.forEachIndexed { index, session ->
@@ -157,9 +173,49 @@ fun NativeNotesScreen(
                     if (ownActive) PimRecordingPill(recording, onPauseResume,
                         Modifier.align(Alignment.BottomStart).padding(d.spaceLarge))
                 }
+                if (showMaterials) ModalBottomSheet(onDismissRequest = { showMaterials = false }) {
+                    LazyColumn(Modifier.fillMaxWidth().testTag("material-version-sheet"),
+                        contentPadding = PaddingValues(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceMedium)) {
+                        item {
+                            Text("固定材料 · 仅本机", style = MaterialTheme.typography.titleLarge)
+                            Text("未上传、未转写、未分析。版本包含当时的正文、照片、向量笔迹和对应图片，以及全部已停止的录音。编辑和补录不会改变旧版本。",
+                                style = MaterialTheme.typography.bodySmall)
+                            Text("首次准备会占用额外本地空间；未变材料在不同版本间复用。暂无自动清理或导入功能。导出含原始照片和音频，请谨慎分享。",
+                                style = MaterialTheme.typography.bodySmall)
+                            if (versions.isEmpty()) Text("还没有固定版本。右上“结束”会先停止本篇录音、保存原稿，再安排本地材料准备。")
+                            if (materials.entries.any { it.noteId == null }) Text("有固定版本无法确定归属，原文件保留，没有用新稿替换。", color = MaterialTheme.colorScheme.error)
+                        }
+                        items(versions, key = { it.id }) { version ->
+                            OutlinedCard(Modifier.fillMaxWidth().testTag("material-version-${version.id}")) {
+                                Column(Modifier.padding(d.spaceMedium), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
+                                    Text("r${version.revision} · ${version.id.take(8)} · ${materialPhaseText(version.phase)}", style = MaterialTheme.typography.titleSmall)
+                                    Text("${version.recordingCount} 次录音 · ${version.segmentCount} 段 · ${if (version.matches(note, sessions)) "与当前材料相同" else "当前已有新修改或补录"}",
+                                        style = MaterialTheme.typography.bodySmall)
+                                    if (version.phase == NoteMaterialPhase.Ready) {
+                                        Text("${version.fileCount} 个文件 · ${android.text.format.Formatter.formatShortFileSize(androidx.compose.ui.platform.LocalContext.current, version.sizeBytes)} · 摘要已核验，导出时再次检查",
+                                            style = MaterialTheme.typography.bodySmall)
+                                        TextButton(onClick = { showMaterials = false; onExportMaterial(version.id) }, enabled = !busy,
+                                            modifier = Modifier.testTag("material-export-${version.id}")) { Text("导出此完整材料包（含录音）") }
+                                    }
+                                    if (version.phase == NoteMaterialPhase.Preparing) Text("正在本机准备，可关闭面板继续编辑；系统中断后继续原版本，不会自动开启麦克风。", style = MaterialTheme.typography.bodySmall)
+                                    version.problem?.let { Text(it.message, color = MaterialTheme.colorScheme.error, style = MaterialTheme.typography.bodySmall) }
+                                    if (version.phase == NoteMaterialPhase.Failed) TextButton(onClick = { onRetryMaterial(version.id) }, enabled = !busy,
+                                        modifier = Modifier.testTag("material-retry-${version.id}")) { Text("重试此版本，不改用新稿") }
+                                }
+                            }
+                        }
+                        item { TextButton(onClick = { showMaterials = false }) { Text("返回编辑") } }
+                    }
+                }
             }
         }
     }
+}
+
+private fun materialPhaseText(phase: NoteMaterialPhase): String = when (phase) {
+    NoteMaterialPhase.Preparing -> "本机准备中"
+    NoteMaterialPhase.Ready -> "本机材料已齐备"
+    NoteMaterialPhase.Failed -> "本机准备失败"
 }
 
 @Composable

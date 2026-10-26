@@ -31,19 +31,14 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val pending = Channel<String>(Channel.UNLIMITED)
     private val initialization = Mutex()
+    private val writes = Mutex()
 
     init {
         // Saving belongs to the application, not the lifetime of an editor Activity.
         scope.launch {
             for (id in pending) {
-                val note = state.value.documents[id] ?: continue
-                if (state.value.savedRevisions[id] == note.revision) continue
                 try {
-                    store.save(note)
-                    synchronized(this@NoteRepository) {
-                        val current = state.value
-                        mutableState.value = current.copy(savedRevisions = current.savedRevisions + (id to note.revision), errors = current.errors - id)
-                    }
+                    checkpoint(id)
                 } catch (_: Exception) {
                     synchronized(this@NoteRepository) { mutableState.value = state.value.copy(errors = state.value.errors + id) }
                 }
@@ -83,6 +78,18 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
 
     fun retry(id: String) { pending.trySend(id) }
     fun photoFile(noteId: String, assetId: String) = store.photoFile(noteId, assetId)
+
+    suspend fun checkpoint(id: String): NoteDocument = withContext(Dispatchers.IO) {
+        writes.withLock {
+            val note = checkNotNull(state.value.documents[id])
+            if (state.value.savedRevisions[id] != note.revision) store.save(note)
+            synchronized(this@NoteRepository) {
+                val current = state.value
+                mutableState.value = current.copy(savedRevisions = current.savedRevisions + (id to note.revision), errors = current.errors - id)
+            }
+            note
+        }
+    }
 
     suspend fun insertPhoto(id: String, anchor: NoteInsertion, open: () -> InputStream) = withContext(Dispatchers.IO) {
         // A camera result can arrive immediately after process recreation, before the initial load.

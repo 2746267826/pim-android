@@ -75,6 +75,18 @@ class RecordingRepository @Inject constructor(@ApplicationContext context: Conte
     fun audioFiles(session: RecordingSession): List<File> = session.chunks
         .filter { it.samples > 0 }.map { store.audioFile(session.id, it) }
 
+    @Synchronized
+    fun materialSessions(noteId: String): List<RecordingSession> {
+        initialize()
+        check(!state.value.preparing) { "Recording is still starting" }
+        check(state.value.session?.let { it.noteId == noteId && it.active } != true) { "Recording is still active" }
+        val archives = store.archives(recover = false)
+        // A damaged manifest with unknown ownership could contain this note's missing audio.
+        require(archives.none { it.session == null }) { "Cannot establish ownership of damaged audio" }
+        return archives.mapNotNull { it.session }.filter { it.noteId == noteId }
+            .also { sessions -> require(sessions.none { it.active }) { "Audio has not been finalized" } }
+    }
+
     private fun publish(peaks: List<Float> = emptyList()) {
         val current = engine?.session ?: state.value.session
         mutableState.value = state.value.copy(

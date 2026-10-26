@@ -14,8 +14,9 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.layout.onSizeChanged
-import androidx.compose.ui.unit.IntSize
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.layout.boundsInRoot
+import androidx.compose.ui.layout.onGloballyPositioned
 import androidx.compose.ui.unit.dp
 import com.pim.app.recording.*
 import com.pim.app.ui.components.PimStatusBanner
@@ -67,7 +68,7 @@ fun NativeNotesScreen(
                 val focus = LocalFocusManager.current
                 val keyboard = LocalSoftwareKeyboardController.current
                 val list = rememberLazyListState()
-                var viewportSize by remember { mutableStateOf(IntSize.Zero) }
+                var viewportBounds by remember { mutableStateOf<Rect?>(null) }
                 val scope = rememberCoroutineScope()
                 val saved = state.savedRevisions[note.id] == note.revision && !editor.pending && !committing
                 val ownSession = recording.session?.takeIf { it.noteId == note.id }
@@ -103,7 +104,7 @@ fun NativeNotesScreen(
                         }
                         Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
                             LazyColumn(
-                                Modifier.widthIn(max = d.noteDocumentMaxWidth).fillMaxSize().onSizeChanged { viewportSize = it }.testTag("note-document"), state = list,
+                                Modifier.widthIn(max = d.noteDocumentMaxWidth).fillMaxSize().onGloballyPositioned { viewportBounds = it.boundsInRoot() }.testTag("note-document"), state = list,
                                 contentPadding = PaddingValues(start = d.spaceLarge, end = d.spaceLarge, bottom = d.spaceLarge),
                                 verticalArrangement = Arrangement.spacedBy(d.spaceMedium)
                             ) {
@@ -131,7 +132,7 @@ fun NativeNotesScreen(
                                             onText = { text -> onChange(note.id) { doc -> doc.replaceBlock(block.string("id")) { JsonObject(it + ("text" to JsonPrimitive(text))) } } },
                                             onProblem = onProblem,
                                             minimumHeight = if (note.blocks.size == 1) d.noteEditorMinHeight else d.minimumTouchTarget,
-                                            viewportSize = viewportSize)
+                                            viewportBounds = viewportBounds)
                                         "photo" -> PhotoBlockView(photoFile(note.id, block.string("assetId")))
                                         "ink" -> InkCard(block.string("id"), inkOf(block), preview || busy || committing) { ink ->
                                             onChange(note.id) { doc -> doc.replaceBlock(block.string("id")) { withInk(it, ink) } }

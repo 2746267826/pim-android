@@ -54,8 +54,11 @@ directory.
 - Focused caret bounds are mapped into the native scrolling document. IME and
   editor-height changes bring that range above the native format bar/dock.
   The focused leaf is pinned through lazy remeasurement; caret scrolling also
-  reacts to the measured native viewport, after its new layout frame. This
-  avoids losing selection when the IME/toolbar reduces a compact viewport,
+  reacts to the measured native viewport and actual leaf position, after its
+  new layout frame. The host coalesces a fresh selection snapshot after the
+  browser layout frame, using the current native epoch rather than a queued
+  old source. This avoids losing selection when the IME/toolbar reduces a
+  compact viewport,
   rather than relying on WebView scrolling to understand a Compose viewport.
 - Only index.html, editor.js and editor.css are accessible to the WebView.
   Other assets, private files, content URIs, remote requests, navigation and

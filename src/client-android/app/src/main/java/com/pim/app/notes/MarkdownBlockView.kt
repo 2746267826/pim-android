@@ -25,8 +25,11 @@ import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.layout.LocalPinnableContainer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -34,7 +37,6 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
-import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -64,7 +66,7 @@ internal fun MarkdownBlockView(
     block: JsonObject, preview: Boolean, enabled: Boolean, coordinator: NoteEditorCoordinator,
     readCurrentText: () -> String?, onText: (String) -> Unit, onProblem: (String) -> Unit,
     minimumHeight: Dp = PimTheme.dimensions.minimumTouchTarget,
-    viewportSize: IntSize = IntSize.Zero
+    viewportBounds: Rect? = null
 ) {
     val id = block.string("id")
     var sourceMode by rememberSaveable(id) { mutableStateOf(false) }
@@ -74,6 +76,7 @@ internal fun MarkdownBlockView(
     var richView by remember { mutableStateOf<OfflineMarkdownView?>(null) }
     var richFocused by remember { mutableStateOf(false) }
     var caret by remember { mutableStateOf<Rect?>(null) }
+    var editorOrigin by remember { mutableStateOf<Offset?>(null) }
     val bringCaretIntoView = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
@@ -89,11 +92,18 @@ internal fun MarkdownBlockView(
         val pin = if (richFocused && !preview && !sourceMode) pinnable?.pin() else null
         onDispose { pin?.release() }
     }
-    LaunchedEffect(caret, richFocused, imeBottom, height, viewportSize, preview, sourceMode) {
+    LaunchedEffect(caret, richFocused, imeBottom, height, viewportBounds, editorOrigin, preview, sourceMode) {
         if (richFocused && !preview && !sourceMode) {
             // IME insets arrive before the parent has measured its smaller viewport and format bar.
             withFrameNanos { }
-            caret?.let { bringCaretIntoView.bringIntoView(it) }
+            val range = caret
+            val viewport = viewportBounds
+            val origin = editorOrigin
+            if (range != null && viewport != null && origin != null && viewport.height > 0f) {
+                val actual = range.translate(origin)
+                // Native focus can scroll the whole WebView after the first caret request.
+                if (actual.top < viewport.top || actual.bottom > viewport.bottom) bringCaretIntoView.bringIntoView(range)
+            }
         }
     }
     fun cssColor(argb: Int) = "#%06X".format(argb and 0xFFFFFF)
@@ -156,7 +166,8 @@ internal fun MarkdownBlockView(
                 view.onPending = { coordinator.pending(id, it) }
                 coordinator.register(id, view); richView = view
             } },
-            modifier = Modifier.fillMaxWidth().height(height).bringIntoViewRequester(bringCaretIntoView).testTag("rich-markdown-$id"),
+            modifier = Modifier.fillMaxWidth().height(height).bringIntoViewRequester(bringCaretIntoView)
+                .onGloballyPositioned { editorOrigin = it.positionInRoot() }.testTag("rich-markdown-$id"),
             onReset = null,
             onRelease = { view -> coordinator.unregister(id, view); view.releaseEditor(); if (richView === view) richView = null },
             update = { it.bind(block.string("text"), enabled && !preview && !changing, theme) }

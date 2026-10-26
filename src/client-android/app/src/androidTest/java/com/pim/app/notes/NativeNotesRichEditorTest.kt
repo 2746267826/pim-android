@@ -17,6 +17,7 @@ import com.pim.app.recording.RecordingController
 import java.io.File
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.atomic.AtomicReference
 import kotlinx.serialization.json.*
 import org.junit.After
 import org.junit.Assert.*
@@ -144,6 +145,12 @@ class NativeNotesRichEditorTest {
         compose.onNodeWithTag("note-start-recording").performClick()
         compose.waitUntil(10_000) { model.recordings.state.value.active && (model.recordings.state.value.session?.samples ?: 0) >= 3200 }
         val id = note().blocks.first().string("id")
+        val receivedCaret = AtomicReference("")
+        compose.runOnUiThread {
+            val view = web()
+            val forward = view.onCaret
+            view.onCaret = { top, bottom -> receivedCaret.set("$top..$bottom"); forward(top, bottom) }
+        }
         compose.onNodeWithTag("rich-markdown-$id").performScrollTo().performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
         eval("document.querySelector('.tiptap').focus();true")
         compose.waitUntil(10_000) { ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
@@ -167,7 +174,7 @@ class NativeNotesRichEditorTest {
             val tools = compose.onAllNodesWithTag("note-text-tools").fetchSemanticsNodes().singleOrNull()?.boundsInRoot
             val top = webOrigin[1] + bounds.getValue("top").jsonPrimitive.float * scale
             val bottom = webOrigin[1] + bounds.getValue("bottom").jsonPrimitive.float * scale
-            lastBounds = "caret=$top..$bottom, rootOrigin=${rootOrigin.toList()}, document=$document, tools=$tools, webOrigin=${webOrigin.toList()}"
+            lastBounds = "caret=$top..$bottom, nativeCaret=${receivedCaret.get()}, rootOrigin=${rootOrigin.toList()}, document=$document, tools=$tools, webOrigin=${webOrigin.toList()}"
             tools != null && bottom > top && top >= rootOrigin[1] + document.top &&
                 bottom <= rootOrigin[1] + minOf(document.bottom, tools.top)
         } }

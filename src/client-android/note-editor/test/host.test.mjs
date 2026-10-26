@@ -37,5 +37,14 @@ test('host keeps exact initial source, ignores delayed echoes, separates native 
   window.PimEditor.configure({ ...config, epoch: 1, text: '**材料插入后**' })
   assert.equal(document.querySelector('.tiptap').getAttribute('contenteditable'), 'true')
   assert.throws(() => window.PimEditor.configure({ ...config, session: 'another' }), /Wrong editor session/)
+  document.querySelector('.tiptap').innerHTML = '<p>下一帧之前的输入</p>'
+  snapshot()
+  window.PimEditor.configure({ ...config, epoch: 2, text: '**原生新版本**' })
+  const beforeFrame = messages.length
+  await new Promise(resolve => window.requestAnimationFrame(resolve))
+  const frameSnapshots = messages.slice(beforeFrame).filter(message => message.type === 'snapshot')
+  assert.equal(frameSnapshots.length, 1, 'layout publication is coalesced into one frame')
+  assert.equal(frameSnapshots[0].epoch, 2)
+  assert.equal(frameSnapshots[0].text, '**原生新版本**', 'a deferred geometry snapshot must not replay an old input epoch')
   dom.window.close()
 })

@@ -8,6 +8,7 @@ let session
 let enabled = false
 let frozen = false
 let nativeToolbar = false
+let geometryFrame = 0
 const markNames = ['bold', 'italic', 'heading', 'bulletList', 'taskList', 'blockquote', 'codeBlock', 'table']
 const tools = document.querySelector('#tools')
 const envelope = value => ({ protocol: 1, session, epoch, ...value })
@@ -34,6 +35,20 @@ function refreshTools() {
   tools.hidden = nativeToolbar || !enabled || frozen || !editor.isFocused
 }
 
+function publishSelection() {
+  post(snapshot(true)); refreshTools()
+  scheduleGeometry()
+}
+
+function scheduleGeometry() {
+  if (geometryFrame) return
+  // Native IME focus and layout can settle after the selection transaction.
+  geometryFrame = requestAnimationFrame(() => {
+    geometryFrame = 0
+    if (editor) { post(snapshot(true)); refreshTools() }
+  })
+}
+
 window.PimEditor = {
   configure(config) {
     if (session && session !== config.session) throw new Error('Wrong editor session')
@@ -57,10 +72,11 @@ window.PimEditor = {
           sequence += 1
           post(snapshot(true))
           refreshTools()
+          scheduleGeometry()
         },
-        onSelection() { post(snapshot(true)); refreshTools() },
-        onFocus() { post(snapshot(true)); refreshTools() },
-        onBlur() { post(snapshot(true)); refreshTools() },
+        onSelection: publishSelection,
+        onFocus: publishSelection,
+        onBlur: publishSelection,
         onProblem(reason) { post({ type: 'notice', reason }) },
       })
     } else if (source !== config.text) {
@@ -99,6 +115,10 @@ tools.addEventListener('pointerdown', event => event.preventDefault())
 tools.addEventListener('click', event => executeCommand(event.target.closest('button')?.dataset.command))
 document.addEventListener('click', event => { if (event.target.closest('a')) event.preventDefault() })
 document.addEventListener('compositionend', () => setTimeout(() => post(snapshot(true)), 0))
-new ResizeObserver(() => post({ type: 'height', height: Math.ceil(document.body.getBoundingClientRect().height) })).observe(document.body)
+new ResizeObserver(() => {
+  post({ type: 'height', height: Math.ceil(document.body.getBoundingClientRect().height) })
+  if (editor?.isFocused) scheduleGeometry()
+}).observe(document.body)
+window.addEventListener('resize', () => { if (editor?.isFocused) scheduleGeometry() })
 window.addEventListener('error', () => post({ type: 'error' }))
 post({ type: 'ready' })

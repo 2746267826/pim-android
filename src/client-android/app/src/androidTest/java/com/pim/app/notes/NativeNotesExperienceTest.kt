@@ -99,10 +99,12 @@ class NativeNotesExperienceTest {
     @Test fun endingRequiresConfirmationAndTheResultDoesNotPretendToBeCloudProcessing() {
         create(); startRecording()
         compose.onNodeWithTag("note-finish").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
         compose.onNodeWithText("继续记录").performClick()
         assertTrue(model.recordings.state.value.active)
         assertFalse(note().source.containsKey("endedAtMillis"))
         compose.onNodeWithTag("note-finish").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
         compose.onNodeWithTag("note-confirm-finish").performClick()
         compose.waitUntil(20_000) { !model.busy.value && model.completion.value != null }
         assertFalse(model.recordings.state.value.active)

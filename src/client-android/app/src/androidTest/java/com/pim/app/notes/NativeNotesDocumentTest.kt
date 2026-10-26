@@ -208,6 +208,7 @@ class NativeNotesDocumentTest {
     }
     private fun finishNote() {
         compose.onNodeWithTag("note-finish").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
         compose.onNodeWithTag("note-confirm-finish").performClick()
         compose.waitUntil(15_000) { model.completion.value != null && !model.busy.value }
         compose.onNodeWithTag("note-continue-editing").performClick()

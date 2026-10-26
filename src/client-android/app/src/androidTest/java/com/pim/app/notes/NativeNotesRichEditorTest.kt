@@ -68,6 +68,7 @@ class NativeNotesRichEditorTest {
         eval("for(let i=0;i<30;i++) document.execCommand('insertText', false, ' ' + i); true")
         // Immediately cross the native boundary, without waiting for Compose to echo each keystroke.
         compose.onNodeWithTag("note-finish").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
         compose.onNodeWithTag("note-confirm-finish").performClick()
         compose.waitUntil(20_000) { !model.busy.value && model.completion.value != null }
         val text = note().blocks.single().string("text")
@@ -160,6 +161,7 @@ class NativeNotesRichEditorTest {
         eval("document.execCommand('insertText',false,'补充');true")
         compose.waitUntil(10_000) { note().blocks.first().string("text").contains("补充") }
         compose.onNodeWithTag("note-finish").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
         compose.onNodeWithTag("note-confirm-finish").assertIsDisplayed().performClick()
         compose.waitUntil(20_000) { !model.busy.value && model.completion.value != null }
         assertFalse(model.recordings.state.value.active)

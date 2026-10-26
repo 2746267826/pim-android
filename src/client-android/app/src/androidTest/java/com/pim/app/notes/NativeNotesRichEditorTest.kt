@@ -145,9 +145,15 @@ class NativeNotesRichEditorTest {
         compose.waitUntil(10_000) { model.recordings.state.value.active && (model.recordings.state.value.session?.samples ?: 0) >= 3200 }
         val id = note().blocks.first().string("id")
         compose.onNodeWithTag("rich-markdown-$id").performScrollTo().performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
-        eval("const n=document.querySelector('.tiptap p').firstChild;const r=document.createRange();r.setStart(n,n.textContent.length);r.collapse(true);const s=window.getSelection();s.removeAllRanges();s.addRange(r);document.querySelector('.tiptap').focus();true")
+        eval("document.querySelector('.tiptap').focus();true")
         compose.waitUntil(10_000) { ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
-        withEditorEvidence("caret-viewport") { compose.waitUntil(10_000) {
+        compose.waitUntil(10_000) { eval("JSON.parse(window.PimEditor.snapshot(true)).focused") == "true" }
+        // Finish native IME focus before selecting the exact paragraph, not the earlier touch position.
+        eval("const n=document.querySelector('.tiptap p').firstChild;const r=document.createRange();r.setStart(n,n.textContent.length);r.collapse(true);const s=window.getSelection();s.removeAllRanges();s.addRange(r);JSON.parse(window.PimEditor.snapshot(true)).before")
+        val expectedBefore = note().blocks.first().string("text").substringBefore("\n\n- ")
+        compose.waitUntil(10_000) { eval("JSON.parse(window.PimEditor.snapshot(true)).before") == JsonPrimitive(expectedBefore).toString() }
+        var lastBounds = ""
+        withEditorEvidence("caret-viewport", { lastBounds }) { compose.waitUntil(10_000) {
             val bounds = NoteJson.parseToJsonElement(eval("(()=>{const r=window.getSelection().getRangeAt(0).getBoundingClientRect();return {top:r.top,bottom:r.bottom}})()")).jsonObject
             val webOrigin = IntArray(2)
             val rootOrigin = IntArray(2)
@@ -161,12 +167,14 @@ class NativeNotesRichEditorTest {
             val tools = compose.onAllNodesWithTag("note-text-tools").fetchSemanticsNodes().singleOrNull()?.boundsInRoot
             val top = webOrigin[1] + bounds.getValue("top").jsonPrimitive.float * scale
             val bottom = webOrigin[1] + bounds.getValue("bottom").jsonPrimitive.float * scale
+            lastBounds = "caret=$top..$bottom, rootOrigin=${rootOrigin.toList()}, document=$document, tools=$tools, webOrigin=${webOrigin.toList()}"
             tools != null && bottom > top && top >= rootOrigin[1] + document.top &&
                 bottom <= rootOrigin[1] + minOf(document.bottom, tools.top)
         } }
+        assertEquals(JsonPrimitive(expectedBefore).toString(), eval("JSON.parse(window.PimEditor.snapshot(true)).before"))
         captureEditorEvidence("caret-visible")
         eval("document.execCommand('insertText',false,'补充');true")
-        compose.waitUntil(10_000) { note().blocks.first().string("text").contains("补充") }
+        compose.waitUntil(10_000) { note().blocks.first().string("text").contains("重要。补充") }
         compose.onNodeWithTag("note-finish").performClick()
         compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
         compose.onNodeWithTag("note-confirm-finish").assertIsDisplayed().performClick()
@@ -225,8 +233,19 @@ class NativeNotesRichEditorTest {
         closeSoftKeyboard()
     }
     private fun saved() = compose.waitUntil(15_000) { model.notes.state.value.savedRevisions[note().id] == note().revision }
-    private fun ready() = compose.waitUntil(15_000) { eval("Boolean(document.querySelector('.tiptap'))") == "true" }
-    private fun web(): OfflineMarkdownView = descendants(compose.activity.window.decorView).filterIsInstance<OfflineMarkdownView>().first()
+    private fun ready() {
+        // Lazy native-view order is not document order; realize and identify the expected leaf.
+        compose.onNodeWithTag("note-document").performScrollToIndex(2)
+        compose.waitUntil(15_000) {
+            var attached = false
+            compose.runOnUiThread { attached = webOrNull() != null }
+            attached
+        }
+        compose.waitUntil(15_000) { eval("Boolean(document.querySelector('.tiptap'))") == "true" }
+    }
+    private fun webOrNull(): OfflineMarkdownView? = descendants(compose.activity.window.decorView).filterIsInstance<OfflineMarkdownView>()
+        .firstOrNull { it.blockId == note().blocks.first { block -> block.string("kind") == "markdown" }.string("id") }
+    private fun web(): OfflineMarkdownView = checkNotNull(webOrNull()) { "The expected Markdown leaf is not attached" }
     private fun eval(script: String): String {
         var result = ""
         val latch = CountDownLatch(1)
@@ -234,7 +253,7 @@ class NativeNotesRichEditorTest {
         check(latch.await(10, TimeUnit.SECONDS)) { "Editor JS did not respond" }
         return result
     }
-    private fun withEditorEvidence(name: String, action: () -> Unit) {
+    private fun withEditorEvidence(name: String, detail: () -> String = { "" }, action: () -> Unit) {
         try { action() } catch (error: Throwable) {
             val path = captureEditorEvidence(name)
             val dom = eval("JSON.stringify({active:document.activeElement?.className,viewport:window.innerHeight,selection:window.getSelection()?.rangeCount?window.getSelection().getRangeAt(0).getBoundingClientRect().toJSON():null,snapshot:JSON.parse(window.PimEditor.snapshot(true))})")
@@ -243,7 +262,7 @@ class NativeNotesRichEditorTest {
                 val location = IntArray(2); web().getLocationOnScreen(location)
                 native = "webOrigin=${location.toList()}, webHeight=${web().height}, scrollY=${web().scrollY}, focused=${web().hasFocus()}"
             }
-            throw AssertionError("$name: $native; DOM=$dom; tree=${compose.onRoot().printToString()}; screenshot=$path", error)
+            throw AssertionError("$name: ${detail()}; $native; DOM=$dom; tree=${compose.onRoot().printToString()}; screenshot=$path", error)
         }
     }
     private fun captureEditorEvidence(name: String): String {

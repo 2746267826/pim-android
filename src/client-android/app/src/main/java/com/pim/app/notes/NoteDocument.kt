@@ -30,9 +30,11 @@ data class NoteDocument(val source: JsonObject) {
         require(index >= 0) { "Insertion anchor no longer exists" }
         val old = blocks[index]
         val text = old.string("text")
+        anchor.validate()
+        require(anchor.expectedText == null || anchor.expectedText == text) { "Insertion source changed; original material retained" }
         val offset = anchor.offset.coerceIn(0, text.length)
-        val before = JsonObject(old + ("text" to JsonPrimitive(text.substring(0, offset))))
-        val after = markdownBlock(text.substring(offset))
+        val before = JsonObject(old + ("text" to JsonPrimitive(anchor.before ?: text.substring(0, offset))))
+        val after = markdownBlock(anchor.after ?: text.substring(offset))
         return withBlocks(blocks.take(index) + listOf(before, block, after) + blocks.drop(index + 1))
     }
 
@@ -60,7 +62,16 @@ data class NoteDocument(val source: JsonObject) {
     }
 }
 
-data class NoteInsertion(val blockId: String, val offset: Int)
+@Serializable
+data class NoteInsertion(
+    val blockId: String, val offset: Int,
+    val expectedText: String? = null, val before: String? = null, val after: String? = null
+) {
+    fun validate() {
+        require(validNoteId(blockId) && offset >= 0)
+        require(listOf(expectedText, before, after).count { it != null } in setOf(0, 3))
+    }
+}
 fun markdownBlock(text: String) = buildJsonObject {
     put("id", newNoteId()); put("kind", "markdown"); put("text", text)
 }

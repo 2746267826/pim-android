@@ -1,6 +1,7 @@
 package com.pim.app.notes
 
 import androidx.compose.foundation.layout.*
+import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
@@ -13,6 +14,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.unit.dp
 import com.pim.app.recording.*
 import com.pim.app.ui.components.PimStatusBanner
 import com.pim.app.ui.components.PimStatusTone
@@ -28,6 +30,7 @@ fun NativeNotesScreen(
     state: NotesState, selectedId: String?, recording: RecordingState, busy: Boolean, message: String?, playing: String?, notificationsVisible: Boolean,
     materials: NoteMaterialsState,
     onCreate: () -> Unit, onOpen: (String?) -> Unit,
+    readDocument: (String) -> NoteDocument?, onProblem: (String) -> Unit,
     onChange: (String, (NoteDocument) -> NoteDocument) -> Unit, onRetry: (String) -> Unit,
     photoFile: (String, String) -> File,
     onInsertPhoto: (String, NoteInsertion, Boolean) -> Unit, onRecord: (String) -> Unit,
@@ -39,6 +42,7 @@ fun NativeNotesScreen(
 ) {
     val d = PimTheme.dimensions
     val note = state.documents[selectedId]
+    BackHandler(busy && note == null) { onProblem("正在处理本地材料，请稍候") }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(message) {
         message?.let {
@@ -52,8 +56,8 @@ fun NativeNotesScreen(
                 NoteLibraryScreen(state, selectedId, recording, busy, onCreate, onOpen, onExit)
             } else key(note.id) {
                 var preview by rememberSaveable { mutableStateOf(false) }
-                var selectedBlock by rememberSaveable { mutableStateOf<String?>(null) }
-                var selectedOffset by rememberSaveable { mutableStateOf(0) }
+                val editor = remember { NoteEditorCoordinator() }
+                var committing by remember { mutableStateOf(false) }
                 var showMaterials by rememberSaveable { mutableStateOf(false) }
                 var showRecordings by rememberSaveable { mutableStateOf(false) }
                 var confirmFinish by rememberSaveable { mutableStateOf(false) }
@@ -62,21 +66,34 @@ fun NativeNotesScreen(
                 val keyboard = LocalSoftwareKeyboardController.current
                 val list = rememberLazyListState()
                 val scope = rememberCoroutineScope()
-                val saved = state.savedRevisions[note.id] == note.revision
+                val saved = state.savedRevisions[note.id] == note.revision && !editor.pending && !committing
                 val ownSession = recording.session?.takeIf { it.noteId == note.id }
                 val ownActive = ownSession?.active == true
                 val sessions = (listOfNotNull(ownSession) + recording.archives.mapNotNull { it.session }).distinctBy { it.id }
                     .filter { it.noteId == note.id }.sortedWith(compareBy({ it.createdAtMillis }, { it.id }))
                 val latest = materials.entries.firstOrNull { it.noteId == note.id }
                 val lastMarkdown = note.blocks.lastOrNull { it.string("kind") == "markdown" }
-                val anchor = NoteInsertion(selectedBlock ?: lastMarkdown?.string("id").orEmpty(),
-                    if (selectedBlock == null) lastMarkdown?.string("text")?.length ?: 0 else selectedOffset)
+                val showTextTools = editor.activeRichBlock != null && !preview && !busy && !committing
+                val dockClearance = d.noteDockClearance + if (showTextTools) d.minimumTouchTarget + d.spaceSmall else 0.dp
                 fun leaveInput() { keyboard?.hide(); focus.clearFocus() }
+                fun afterInput(action: (NoteDocument) -> Unit) {
+                    if (busy || committing) return
+                    leaveInput(); committing = true
+                    scope.launch {
+                        try { editor.flush(); action(checkNotNull(readDocument(note.id))) }
+                        catch (_: Exception) { onProblem("尚未确认正文输入或操作完成，原材料保留；请核对内容后重试。") }
+                        finally { editor.resume(); committing = false }
+                    }
+                }
+                BackHandler {
+                    if (busy || committing) onProblem("正在保存正文或处理本地材料，请稍候")
+                    else afterInput { onOpen(null) }
+                }
 
                 BoxWithConstraints(Modifier.fillMaxSize()) {
                     val wide = maxWidth >= d.noteWideBreakpoint
                     // Constrain the viewport too: content padding alone lets the caret scroll behind the dock.
-                    Row(Modifier.fillMaxSize().padding(top = d.noteHeaderClearance, bottom = d.noteDockClearance)) {
+                    Row(Modifier.fillMaxSize().padding(top = d.noteHeaderClearance, bottom = dockClearance)) {
                         if (wide) NoteMaterialsRail(note, sessions, { leaveInput(); showRecordings = true }, { leaveInput(); showMaterials = true }) { id ->
                             val index = note.blocks.indexOfFirst { it.string("id") == id }
                             if (index >= 0) scope.launch { list.animateScrollToItem(index + 2) }
@@ -88,7 +105,7 @@ fun NativeNotesScreen(
                                 verticalArrangement = Arrangement.spacedBy(d.spaceMedium)
                             ) {
                                 item(key = "heading") {
-                                    NoteDocumentHeading(note, !busy, preview, latest, latest?.matches(note, sessions) == false, sessions.size,
+                                    NoteDocumentHeading(note, !busy && !committing, preview, latest, latest?.matches(note, sessions) == false, sessions.size,
                                         onTitle = { title -> onChange(note.id) { it.withTitle(title) } },
                                         onMaterials = { leaveInput(); showMaterials = true }, onRecordings = { leaveInput(); showRecordings = true })
                                 }
@@ -106,12 +123,13 @@ fun NativeNotesScreen(
                                 }
                                 items(note.blocks, key = { it.string("id") }) { block ->
                                     when (block.string("kind")) {
-                                        "markdown" -> MarkdownBlockView(block, preview, !busy,
+                                        "markdown" -> MarkdownBlockView(block, preview, !busy && !committing, editor,
+                                            readCurrentText = { readDocument(note.id)?.blocks?.firstOrNull { it.string("id") == block.string("id") }?.string("text") },
                                             onText = { text -> onChange(note.id) { doc -> doc.replaceBlock(block.string("id")) { JsonObject(it + ("text" to JsonPrimitive(text))) } } },
-                                            onSelection = { offset -> selectedBlock = block.string("id"); selectedOffset = offset },
+                                            onProblem = onProblem,
                                             minimumHeight = if (note.blocks.size == 1) d.noteEditorMinHeight else d.minimumTouchTarget)
                                         "photo" -> PhotoBlockView(photoFile(note.id, block.string("assetId")))
-                                        "ink" -> InkCard(block.string("id"), inkOf(block), preview || busy) { ink ->
+                                        "ink" -> InkCard(block.string("id"), inkOf(block), preview || busy || committing) { ink ->
                                             onChange(note.id) { doc -> doc.replaceBlock(block.string("id")) { withInk(it, ink) } }
                                         }
                                         else -> PimStatusBanner("未知扩展块已保留，当前版本不能编辑它。", PimStatusTone.Warning)
@@ -125,24 +143,26 @@ fun NativeNotesScreen(
                             }
                         }
                     }
-                    NoteEditorTopBar(saved, note.id in state.errors, busy, preview,
-                        onBack = { leaveInput(); onOpen(null) },
+                    NoteEditorTopBar(saved, note.id in state.errors, busy || committing, preview,
+                        onBack = { afterInput { onOpen(null) } },
                         onSaveStatus = { if (note.id in state.errors) onRetry(note.id) else { leaveInput(); showAbout = true } },
-                        onPreview = { leaveInput(); preview = !preview }, onFinish = { leaveInput(); confirmFinish = true },
+                        onPreview = { afterInput { preview = !preview } }, onFinish = { afterInput { confirmFinish = true } },
                         onMaterials = { leaveInput(); showMaterials = true }, onRecordings = { leaveInput(); showRecordings = true },
-                        onExport = { leaveInput(); onExport(note) }, onAbout = { leaveInput(); showAbout = true })
-                    NoteEditorDock(recording, ownActive, saved && !busy && !recording.active && !recording.preparing,
-                        !busy && !preview && lastMarkdown != null,
-                        onRecord = { leaveInput(); onRecord(note.id) }, onPauseResume = onPauseResume,
+                        onExport = { afterInput(onExport) }, onAbout = { leaveInput(); showAbout = true })
+                    NoteEditorDock(recording, ownActive, saved && !busy && !committing && !recording.active && !recording.preparing,
+                        !busy && !committing && !preview && lastMarkdown != null,
+                        onRecord = { afterInput { onRecord(it.id) } }, onPauseResume = onPauseResume,
                         onRecordings = { leaveInput(); showRecordings = true },
-                        onPhoto = { capture -> leaveInput(); onInsertPhoto(note.id, anchor, capture) },
-                        onInk = { leaveInput(); onChange(note.id) { it.insert(anchor, inkBlock(d.noteDefaultInkWidth.value)) } },
+                        onPhoto = { capture -> afterInput { current -> onInsertPhoto(current.id, editor.insertion(current), capture) } },
+                        onInk = { afterInput { current -> onChange(current.id) { it.insert(editor.insertion(current), inkBlock(d.noteDefaultInkWidth.value)) } } },
                         modifier = Modifier.align(Alignment.BottomCenter).padding(d.spaceLarge))
+                    if (showTextTools) NoteTextToolbar(editor, Modifier.align(Alignment.BottomCenter)
+                        .padding(horizontal = d.spaceLarge).padding(bottom = d.noteDockClearance))
                 }
                 if (confirmFinish) AlertDialog(onDismissRequest = { confirmFinish = false },
                     title = { Text("结束这次记录？") },
                     text = { Text("本篇录音会停止，笔记与全部录音会固定为一个本机版本。之后仍可继续编辑和补录。\n\n此预览版尚不能上传、转写或生成分析。") },
-                    confirmButton = { TextButton(onClick = { confirmFinish = false; onFinish(note.id) }, modifier = Modifier.testTag("note-confirm-finish")) { Text("结束并保存") } },
+                    confirmButton = { TextButton(onClick = { confirmFinish = false; afterInput { onFinish(it.id) } }, modifier = Modifier.testTag("note-confirm-finish")) { Text("结束并保存") } },
                     dismissButton = { TextButton(onClick = { confirmFinish = false }) { Text("继续记录") } })
                 if (showAbout) AlertDialog(onDismissRequest = { showAbout = false }, title = { Text("本机笔记 · 预览版") },
                     text = { Text("支持离线编辑 Markdown、拍照、手写和后台录音。内容仅保存在这台设备，未上传。\n\n上传、逐段转写、完整记录和独立分析仍在完整首版路线图中，当前尚未接入。") },

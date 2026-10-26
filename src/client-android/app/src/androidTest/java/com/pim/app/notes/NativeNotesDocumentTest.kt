@@ -195,6 +195,11 @@ class NativeNotesDocumentTest {
     }
 
     private fun edit(text: String, offset: Int) {
+        val mode = "markdown-mode-${note().blocks.first { it.string("kind") == "markdown" }.string("id")}"
+        if (compose.onAllNodes(hasTestTag(mode) and hasText("Markdown 源码")).fetchSemanticsNodes().isNotEmpty()) {
+            compose.onNodeWithTag(mode).performScrollTo().performClick()
+            compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag(mode) and hasText("富文本")).fetchSemanticsNodes().isNotEmpty() }
+        }
         compose.runOnUiThread {
             val editor = descendants(compose.activity.window.decorView).filterIsInstance<MarkdownEditText>().first()
             editor.requestFocus(); editor.setText(text); editor.setSelection(offset)

@@ -33,6 +33,27 @@ class NoteDocumentTest {
         assertEquals(1, note.blocks.size)
     }
 
+    @Test fun richCaretUsesCompleteMarkdownFragmentsAndKeepsOpaqueFields() {
+        val block = JsonObject(markdownBlock("**beforeafter**") + ("future" to JsonPrimitive("keep")))
+        val anchor = NoteInsertion(block.string("id"), 0, "**beforeafter**", "**before**", "**after**")
+        val note = NoteDocument.create().withBlocks(listOf(block)).insert(anchor, inkBlock(320f))
+        assertEquals("**before**", note.blocks[0].string("text"))
+        assertEquals("**after**", note.blocks[2].string("text"))
+        assertEquals(block.string("id"), note.blocks[0].string("id"))
+        assertEquals("keep", note.blocks[0].string("future"))
+    }
+
+    @Test fun cancelledOrStaleRichCaretCannotRewriteNewerOriginalText() {
+        val original = markdownBlock("**beforeafter**")
+        val anchor = NoteInsertion(original.string("id"), 0, "**beforeafter**", "**before**", "**after**")
+        val note = NoteDocument.create().withBlocks(listOf(original))
+        assertEquals("**beforeafter**", note.blocks.single().string("text"))
+        val changed = note.replaceBlock(original.string("id")) { JsonObject(it + ("text" to JsonPrimitive("newer"))) }
+        assertThrows(IllegalArgumentException::class.java) { changed.insert(anchor, inkBlock(320f)) }
+        assertEquals("newer", changed.blocks.single().string("text"))
+        assertThrows(IllegalArgumentException::class.java) { NoteInsertion(original.string("id"), 0, expectedText = "partial").validate() }
+    }
+
     @Test fun growingAndShrinkingNeverStretchOrDiscardPoints() {
         val strokes = listOf(InkStroke(listOf(InkPoint(200f, 150f, 0.4f), InkPoint(220f, 170f))))
         val ink = InkData(strokes = strokes)

@@ -11,7 +11,6 @@ import android.net.Uri
 import android.os.Build
 import android.os.Bundle
 import androidx.activity.ComponentActivity
-import androidx.activity.compose.BackHandler
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.activity.viewModels
@@ -87,9 +86,6 @@ class NativeNotesActivity : ComponentActivity() {
             val busy by model.busy.collectAsStateWithLifecycle()
             val materials by model.materials.state.collectAsStateWithLifecycle()
             val completion by model.completion.collectAsStateWithLifecycle()
-            BackHandler(selected != null || busy) {
-                if (busy) model.tell("正在处理本地材料，请稍候") else model.open(null)
-            }
             PimTheme {
                 val barColor = (if (selected == null) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface).toArgb()
                 SideEffect {
@@ -102,12 +98,13 @@ class NativeNotesActivity : ComponentActivity() {
                 }
                 NativeNotesScreen(notes, selected, recording, busy, message, playing, notificationsVisible, materials,
                     onCreate = model::create, onOpen = model::open,
+                    readDocument = { model.notes.state.value.documents[it] }, onProblem = model::tell,
                     onChange = { id, change -> model.notes.update(id, change) },
                     onRetry = model.notes::retry, photoFile = model.notes::photoFile,
                     onInsertPhoto = { id, anchor, capture ->
                         if (capture) takePhoto(id, anchor) else {
-                            model.prepareMaterial(id, anchor)
-                            try { gallery.launch("image/*") } catch (_: Exception) { model.cancelMaterial(); model.tell("没有可用的照片选择器") }
+                            try { model.prepareMaterial(id, anchor); gallery.launch("image/*") }
+                            catch (_: Exception) { model.cancelMaterial(); model.tell("无法保存插入位置或没有可用的照片选择器，原材料保留") }
                         }
                     },
                     onRecord = { id ->

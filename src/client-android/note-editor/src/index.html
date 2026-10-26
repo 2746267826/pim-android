@@ -1,0 +1,25 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, maximum-scale=5">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'none'; connect-src 'none'; font-src 'self'; base-uri 'none'; form-action 'none'; frame-src 'none'">
+  <link rel="stylesheet" href="editor.css">
+  <script defer src="editor.js"></script>
+</head>
+<body>
+  <nav id="tools" aria-label="正文格式工具" hidden>
+    <button data-command="bold" aria-label="加粗"><b>B</b></button>
+    <button data-command="italic" aria-label="斜体"><i>I</i></button>
+    <button data-command="heading" aria-label="二级标题">H₂</button>
+    <button data-command="bulletList" aria-label="无序列表">• 列表</button>
+    <button data-command="taskList" aria-label="待办列表">☑ 待办</button>
+    <button data-command="blockquote" aria-label="引用">“ 引用</button>
+    <button data-command="codeBlock" aria-label="代码块">{ }</button>
+    <button data-command="table" aria-label="插入表格">表格</button>
+    <button data-command="undo" aria-label="撤销">↶</button>
+    <button data-command="redo" aria-label="重做">↷</button>
+  </nav>
+  <main id="editor"></main>
+</body>
+</html>

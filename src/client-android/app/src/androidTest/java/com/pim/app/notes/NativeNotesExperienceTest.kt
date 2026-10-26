@@ -155,6 +155,11 @@ class NativeNotesExperienceTest {
         compose.waitUntil(10_000) { model.recordings.state.value.active && (model.recordings.state.value.session?.samples ?: 0) >= 3200 }
     }
     private fun edit(text: String, keyboard: Boolean = false) {
+        val mode = "markdown-mode-${note().blocks.first { it.string("kind") == "markdown" }.string("id")}"
+        if (compose.onAllNodes(hasTestTag(mode) and hasText("Markdown 源码")).fetchSemanticsNodes().isNotEmpty()) {
+            compose.onNodeWithTag(mode).performScrollTo().performClick()
+            compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag(mode) and hasText("富文本")).fetchSemanticsNodes().isNotEmpty() }
+        }
         compose.runOnUiThread {
             fun descendants(view: View): List<View> = listOf(view) + if (view is ViewGroup)
                 (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()

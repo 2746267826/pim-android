@@ -36,6 +36,18 @@ class NoteFileStoreTest {
     @get:Rule val temp = TemporaryFolder()
     private val store get() = NoteFileStore(temp.root)
 
+    @Test fun richInsertionSurvivesStoreRecreationOutsideActivityBundleAndRejectsTraversal() {
+        val original = "**" + "中文原文".repeat(30_000) + "**"
+        val anchor = NoteInsertion(newNoteId(), 0, original, "**中文**", "**原文**")
+        val token = store.saveInsertion(anchor)
+        assertEquals(anchor, NoteFileStore(temp.root).readInsertion(token))
+        assertTrue(store.entries().isEmpty())
+        assertThrows(IllegalArgumentException::class.java) { store.readInsertion("../../private") }
+        assertThrows(IllegalArgumentException::class.java) { store.removeInsertion("../notes") }
+        store.removeInsertion(token)
+        assertFalse(File(temp.root, ".insertions/$token.json").exists())
+    }
+
     @Test fun documentPackageContainsExactEditableSourceRelativePhotoAndRealInkPng() {
         var note = NoteDocument.create()
         val photo = ByteArrayOutputStream().also { output ->

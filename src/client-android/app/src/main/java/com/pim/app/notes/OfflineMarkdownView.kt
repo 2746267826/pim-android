@@ -118,6 +118,10 @@ internal class OfflineMarkdownView(context: Context) : WebView(context) {
             outAttrs.imeOptions = outAttrs.imeOptions or android.view.inputmethod.EditorInfo.IME_FLAG_NO_PERSONALIZED_LEARNING
         }
 
+    // The Compose viewport owns caret scrolling; native whole-WebView requests fight its inset-aware range.
+    override fun requestRectangleOnScreen(rectangle: android.graphics.Rect): Boolean = false
+    override fun requestRectangleOnScreen(rectangle: android.graphics.Rect, immediate: Boolean): Boolean = false
+
     private fun configure() {
         if (!ready || failed || released) return
         val config = buildJsonObject {

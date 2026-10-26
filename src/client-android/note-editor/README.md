@@ -55,7 +55,10 @@ directory.
   editor-height changes bring that range above the native format bar/dock.
   The focused leaf is pinned through lazy remeasurement; caret scrolling also
   reacts to the measured native viewport and actual leaf position, after its
-  new layout frame. The host coalesces a fresh selection snapshot after the
+  new layout frame. The native list applies the actual missing caret distance;
+  whole-WebView rectangle requests are suppressed to avoid competing scrolls.
+  Reading leaf position does not itself recompose or restart scrolling.
+  The host coalesces a fresh selection snapshot after the
   browser layout frame, using the current native epoch rather than a queued
   old source. This avoids losing selection when the IME/toolbar reduces a
   compact viewport,

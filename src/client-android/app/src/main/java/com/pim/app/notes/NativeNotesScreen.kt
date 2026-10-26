@@ -1,6 +1,7 @@
 package com.pim.app.notes
 
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.gestures.scrollBy
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
@@ -132,7 +133,15 @@ fun NativeNotesScreen(
                                             onText = { text -> onChange(note.id) { doc -> doc.replaceBlock(block.string("id")) { JsonObject(it + ("text" to JsonPrimitive(text))) } } },
                                             onProblem = onProblem,
                                             minimumHeight = if (note.blocks.size == 1) d.noteEditorMinHeight else d.minimumTouchTarget,
-                                            viewportBounds = viewportBounds)
+                                            viewportBounds = viewportBounds,
+                                            onRevealCaret = { caret -> viewportBounds?.let { viewport ->
+                                                val distance = when {
+                                                    caret.bottom > viewport.bottom -> caret.bottom - viewport.bottom
+                                                    caret.top < viewport.top -> caret.top - viewport.top
+                                                    else -> 0f
+                                                }
+                                                if (kotlin.math.abs(distance) > 1f) list.scrollBy(distance)
+                                            } })
                                         "photo" -> PhotoBlockView(photoFile(note.id, block.string("assetId")))
                                         "ink" -> InkCard(block.string("id"), inkOf(block), preview || busy || committing) { ink ->
                                             onChange(note.id) { doc -> doc.replaceBlock(block.string("id")) { withInk(it, ink) } }

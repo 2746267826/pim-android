@@ -16,8 +16,6 @@ import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
 import androidx.compose.foundation.layout.WindowInsets
 import androidx.compose.foundation.layout.ime
-import androidx.compose.foundation.relocation.BringIntoViewRequester
-import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
@@ -60,13 +58,16 @@ internal class MarkdownEditText(context: Context) : EditText(context) {
     }
 }
 
+private class NoteEditorGeometry { var origin: Offset? = null }
+
 @Composable
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 internal fun MarkdownBlockView(
     block: JsonObject, preview: Boolean, enabled: Boolean, coordinator: NoteEditorCoordinator,
     readCurrentText: () -> String?, onText: (String) -> Unit, onProblem: (String) -> Unit,
     minimumHeight: Dp = PimTheme.dimensions.minimumTouchTarget,
-    viewportBounds: Rect? = null
+    viewportBounds: Rect? = null,
+    onRevealCaret: suspend (Rect) -> Unit = {}
 ) {
     val id = block.string("id")
     var sourceMode by rememberSaveable(id) { mutableStateOf(false) }
@@ -76,8 +77,7 @@ internal fun MarkdownBlockView(
     var richView by remember { mutableStateOf<OfflineMarkdownView?>(null) }
     var richFocused by remember { mutableStateOf(false) }
     var caret by remember { mutableStateOf<Rect?>(null) }
-    var editorOrigin by remember { mutableStateOf<Offset?>(null) }
-    val bringCaretIntoView = remember { BringIntoViewRequester() }
+    val geometry = remember { NoteEditorGeometry() }
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -92,17 +92,17 @@ internal fun MarkdownBlockView(
         val pin = if (richFocused && !preview && !sourceMode) pinnable?.pin() else null
         onDispose { pin?.release() }
     }
-    LaunchedEffect(caret, richFocused, imeBottom, height, viewportBounds, editorOrigin, preview, sourceMode) {
+    LaunchedEffect(caret, richFocused, imeBottom, height, viewportBounds, preview, sourceMode) {
         if (richFocused && !preview && !sourceMode) {
             // IME insets arrive before the parent has measured its smaller viewport and format bar.
             withFrameNanos { }
             val range = caret
             val viewport = viewportBounds
-            val origin = editorOrigin
+            val origin = geometry.origin
             if (range != null && viewport != null && origin != null && viewport.height > 0f) {
                 val actual = range.translate(origin)
-                // Native focus can scroll the whole WebView after the first caret request.
-                if (actual.top < viewport.top || actual.bottom > viewport.bottom) bringCaretIntoView.bringIntoView(range)
+                // Reveal the actual range with the document's single scroll owner.
+                if (actual.top < viewport.top || actual.bottom > viewport.bottom) onRevealCaret(actual)
             }
         }
     }
@@ -166,8 +166,8 @@ internal fun MarkdownBlockView(
                 view.onPending = { coordinator.pending(id, it) }
                 coordinator.register(id, view); richView = view
             } },
-            modifier = Modifier.fillMaxWidth().height(height).bringIntoViewRequester(bringCaretIntoView)
-                .onGloballyPositioned { editorOrigin = it.positionInRoot() }.testTag("rich-markdown-$id"),
+            modifier = Modifier.fillMaxWidth().height(height)
+                .onGloballyPositioned { geometry.origin = it.positionInRoot() }.testTag("rich-markdown-$id"),
             onReset = null,
             onRelease = { view -> coordinator.unregister(id, view); view.releaseEditor(); if (richView === view) richView = null },
             update = { it.bind(block.string("text"), enabled && !preview && !changing, theme) }

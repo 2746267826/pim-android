@@ -2,6 +2,7 @@ package com.pim.app.notes
 
 import android.Manifest
 import android.os.Build
+import android.os.ParcelFileDescriptor
 import android.view.View
 import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
@@ -11,6 +12,7 @@ import androidx.core.view.ViewCompat
 import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.rule.GrantPermissionRule
+import androidx.test.platform.app.InstrumentationRegistry
 import com.pim.app.recording.RecordingController
 import java.io.File
 import java.util.concurrent.CountDownLatch
@@ -114,10 +116,14 @@ class NativeNotesRichEditorTest {
         compose.onNodeWithTag("rich-markdown-${note().blocks.single().string("id")}").performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
         eval("document.querySelector('.tiptap').focus();document.execCommand('insertText',false,'正文');true")
         compose.waitUntil(10_000) { note().blocks.single().string("text") == "正文" }
+        withEditorEvidence("format-tools") {
+            compose.waitUntil(10_000) { compose.onAllNodesWithTag("note-text-tools").fetchSemanticsNodes().size == 1 }
+        }
         compose.onNodeWithTag("note-text-tools").assertIsDisplayed()
         val tools = compose.onNodeWithTag("note-text-tools").fetchSemanticsNode().boundsInRoot
         val dock = compose.onNodeWithTag("note-dock").fetchSemanticsNode().boundsInRoot
         assertTrue(tools.bottom <= dock.top)
+        captureEditorEvidence("format-tools-visible")
         compose.onNodeWithTag("note-format-bold").performClick()
         eval("document.execCommand('insertText',false,'结论');true")
         compose.waitUntil(10_000) { note().blocks.single().string("text").contains("**结论**") }
@@ -141,7 +147,7 @@ class NativeNotesRichEditorTest {
         compose.onNodeWithTag("rich-markdown-$id").performScrollTo().performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
         eval("const n=document.querySelector('.tiptap p').firstChild;const r=document.createRange();r.setStart(n,n.textContent.length);r.collapse(true);const s=window.getSelection();s.removeAllRanges();s.addRange(r);document.querySelector('.tiptap').focus();true")
         compose.waitUntil(10_000) { ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
-        compose.waitUntil(10_000) {
+        withEditorEvidence("caret-viewport") { compose.waitUntil(10_000) {
             val bounds = NoteJson.parseToJsonElement(eval("(()=>{const r=window.getSelection().getRangeAt(0).getBoundingClientRect();return {top:r.top,bottom:r.bottom}})()")).jsonObject
             val webOrigin = IntArray(2)
             val rootOrigin = IntArray(2)
@@ -157,7 +163,8 @@ class NativeNotesRichEditorTest {
             val bottom = webOrigin[1] + bounds.getValue("bottom").jsonPrimitive.float * scale
             tools != null && bottom > top && top >= rootOrigin[1] + document.top &&
                 bottom <= rootOrigin[1] + minOf(document.bottom, tools.top)
-        }
+        } }
+        captureEditorEvidence("caret-visible")
         eval("document.execCommand('insertText',false,'补充');true")
         compose.waitUntil(10_000) { note().blocks.first().string("text").contains("补充") }
         compose.onNodeWithTag("note-finish").performClick()
@@ -226,6 +233,26 @@ class NativeNotesRichEditorTest {
         compose.runOnUiThread { web().evaluateJavascript(script) { result = it; latch.countDown() } }
         check(latch.await(10, TimeUnit.SECONDS)) { "Editor JS did not respond" }
         return result
+    }
+    private fun withEditorEvidence(name: String, action: () -> Unit) {
+        try { action() } catch (error: Throwable) {
+            val path = captureEditorEvidence(name)
+            val dom = eval("JSON.stringify({active:document.activeElement?.className,viewport:window.innerHeight,selection:window.getSelection()?.rangeCount?window.getSelection().getRangeAt(0).getBoundingClientRect().toJSON():null,snapshot:JSON.parse(window.PimEditor.snapshot(true))})")
+            var native = ""
+            compose.runOnUiThread {
+                val location = IntArray(2); web().getLocationOnScreen(location)
+                native = "webOrigin=${location.toList()}, webHeight=${web().height}, scrollY=${web().scrollY}, focused=${web().hasFocus()}"
+            }
+            throw AssertionError("$name: $native; DOM=$dom; tree=${compose.onRoot().printToString()}; screenshot=$path", error)
+        }
+    }
+    private fun captureEditorEvidence(name: String): String {
+        val config = compose.activity.resources.configuration
+        val path = "/sdcard/Download/pim-rich-editor-$name-${config.screenWidthDp}-${config.fontScale}.png"
+        ParcelFileDescriptor.AutoCloseInputStream(InstrumentationRegistry.getInstrumentation().uiAutomation.executeShellCommand(
+            "screencap -p $path"
+        )).use { it.readBytes() }
+        return path
     }
     private fun descendants(view: View): List<View> = listOf(view) + if (view is ViewGroup)
         (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()

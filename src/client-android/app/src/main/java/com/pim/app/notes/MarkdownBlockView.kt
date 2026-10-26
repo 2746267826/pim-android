@@ -26,6 +26,7 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.LocalPinnableContainer
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
@@ -33,6 +34,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.IntSize
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
 import androidx.lifecycle.Lifecycle
@@ -61,7 +63,8 @@ internal class MarkdownEditText(context: Context) : EditText(context) {
 internal fun MarkdownBlockView(
     block: JsonObject, preview: Boolean, enabled: Boolean, coordinator: NoteEditorCoordinator,
     readCurrentText: () -> String?, onText: (String) -> Unit, onProblem: (String) -> Unit,
-    minimumHeight: Dp = PimTheme.dimensions.minimumTouchTarget
+    minimumHeight: Dp = PimTheme.dimensions.minimumTouchTarget,
+    viewportSize: IntSize = IntSize.Zero
 ) {
     val id = block.string("id")
     var sourceMode by rememberSaveable(id) { mutableStateOf(false) }
@@ -80,8 +83,18 @@ internal fun MarkdownBlockView(
     val colors = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography.bodyLarge
     val imeBottom = WindowInsets.ime.getBottom(density)
-    LaunchedEffect(caret, richFocused, imeBottom, height, preview, sourceMode) {
-        if (richFocused && !preview && !sourceMode) caret?.let { bringCaretIntoView.bringIntoView(it) }
+    val pinnable = LocalPinnableContainer.current
+    // WebView focus is not a Compose text field: keep its live selection through lazy remeasurement.
+    DisposableEffect(pinnable, richFocused, preview, sourceMode) {
+        val pin = if (richFocused && !preview && !sourceMode) pinnable?.pin() else null
+        onDispose { pin?.release() }
+    }
+    LaunchedEffect(caret, richFocused, imeBottom, height, viewportSize, preview, sourceMode) {
+        if (richFocused && !preview && !sourceMode) {
+            // IME insets arrive before the parent has measured its smaller viewport and format bar.
+            withFrameNanos { }
+            caret?.let { bringCaretIntoView.bringIntoView(it) }
+        }
     }
     fun cssColor(argb: Int) = "#%06X".format(argb and 0xFFFFFF)
     val theme = mapOf(

@@ -48,6 +48,7 @@ internal class OfflineMarkdownView(context: Context) : WebView(context) {
     var readCurrentText: () -> String? = { null }
     var onText: (String) -> Unit = {}
     var onInsertion: (NoteInsertion, Boolean, Set<String>) -> Unit = { _, _, _ -> }
+    var onCaret: (Float, Float) -> Unit = { _, _ -> }
     var onHeight: (Int) -> Unit = {}
     var onFailure: (String) -> Unit = {}
     var onNotice: (String) -> Unit = {}
@@ -158,6 +159,12 @@ internal class OfflineMarkdownView(context: Context) : WebView(context) {
         onPending(false)
         val marks = data["active"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet().orEmpty()
         onInsertion(anchor, data.getValue("focused").jsonPrimitive.boolean, marks)
+        data["caret"]?.jsonObject?.let { caret ->
+            val top = caret.getValue("top").jsonPrimitive.float
+            val bottom = caret.getValue("bottom").jsonPrimitive.float
+            require(top.isFinite() && bottom.isFinite() && bottom >= top && top >= -1_000_000 && bottom <= 1_000_000)
+            onCaret(top, bottom)
+        }
     }
 
     suspend fun commitAndFreeze() {

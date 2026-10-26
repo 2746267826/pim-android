@@ -17,8 +17,13 @@ const post = value => {
 const snapshot = split => {
   editor?.view.domObserver.flush()
   if (!editor || editor.view.composing) return { type: 'composing', composing: true }
+  let caret
+  if (editor.isFocused) {
+    const { top, bottom } = editor.view.coordsAtPos(editor.state.selection.head)
+    caret = { top, bottom }
+  }
   return { type: 'snapshot', text: source, sequence, focused: editor.isFocused,
-    active: markNames.filter(name => editor.isActive(name)), ...(split ? insertionAtCaret(editor, source) : {}) }
+    caret, active: markNames.filter(name => editor.isActive(name)), ...(split ? insertionAtCaret(editor, source) : {}) }
 }
 
 function refreshTools() {

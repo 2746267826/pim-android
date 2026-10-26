@@ -14,12 +14,17 @@ import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
+import androidx.compose.foundation.relocation.BringIntoViewRequester
+import androidx.compose.foundation.relocation.bringIntoViewRequester
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.*
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
@@ -52,7 +57,7 @@ internal class MarkdownEditText(context: Context) : EditText(context) {
 }
 
 @Composable
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 internal fun MarkdownBlockView(
     block: JsonObject, preview: Boolean, enabled: Boolean, coordinator: NoteEditorCoordinator,
     readCurrentText: () -> String?, onText: (String) -> Unit, onProblem: (String) -> Unit,
@@ -64,6 +69,9 @@ internal fun MarkdownBlockView(
     var changing by remember { mutableStateOf(false) }
     var height by remember { mutableStateOf(minimumHeight) }
     var richView by remember { mutableStateOf<OfflineMarkdownView?>(null) }
+    var richFocused by remember { mutableStateOf(false) }
+    var caret by remember { mutableStateOf<Rect?>(null) }
+    val bringCaretIntoView = remember { BringIntoViewRequester() }
     val scope = rememberCoroutineScope()
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -71,6 +79,10 @@ internal fun MarkdownBlockView(
     val d = PimTheme.dimensions
     val colors = MaterialTheme.colorScheme
     val typography = MaterialTheme.typography.bodyLarge
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    LaunchedEffect(caret, richFocused, imeBottom, height, preview, sourceMode) {
+        if (richFocused && !preview && !sourceMode) caret?.let { bringCaretIntoView.bringIntoView(it) }
+    }
     fun cssColor(argb: Int) = "#%06X".format(argb and 0xFFFFFF)
     val theme = mapOf(
         "text" to cssColor(colors.onSurface.toArgb()), "muted" to cssColor(colors.onSurfaceVariant.toArgb()),
@@ -118,14 +130,20 @@ internal fun MarkdownBlockView(
                 view.blockId = id
                 view.readCurrentText = { currentText.value() }
                 view.onText = { textCallback.value(it) }
-                view.onInsertion = { anchor, focused, marks -> coordinator.remember(anchor, focused, marks) }
+                view.onInsertion = { anchor, focused, marks -> richFocused = focused; coordinator.remember(anchor, focused, marks) }
+                view.onCaret = { top, bottom ->
+                    // The WebView cannot account for the native IME, format bar or LazyColumn viewport.
+                    val start = (top - d.spaceSmall.value).coerceAtLeast(0f)
+                    caret = Rect(0f, start * density.density,
+                        density.density, (bottom + d.spaceSmall.value).coerceAtLeast(start + 1f) * density.density)
+                }
                 view.onHeight = { height = it.dp.coerceAtLeast(minimumHeight) }
                 view.onFailure = { reason = it; sourceMode = true }
                 view.onNotice = onProblem
                 view.onPending = { coordinator.pending(id, it) }
                 coordinator.register(id, view); richView = view
             } },
-            modifier = Modifier.fillMaxWidth().height(height).testTag("rich-markdown-$id"),
+            modifier = Modifier.fillMaxWidth().height(height).bringIntoViewRequester(bringCaretIntoView).testTag("rich-markdown-$id"),
             onReset = null,
             onRelease = { view -> coordinator.unregister(id, view); view.releaseEditor(); if (richView === view) richView = null },
             update = { it.bind(block.string("text"), enabled && !preview && !changing, theme) }

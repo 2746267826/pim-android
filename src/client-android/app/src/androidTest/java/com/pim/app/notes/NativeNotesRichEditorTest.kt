@@ -7,6 +7,8 @@ import android.view.ViewGroup
 import android.view.inputmethod.EditorInfo
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.core.view.ViewCompat
+import androidx.core.view.WindowInsetsCompat
 import androidx.test.espresso.Espresso.closeSoftKeyboard
 import androidx.test.rule.GrantPermissionRule
 import com.pim.app.recording.RecordingController
@@ -123,6 +125,47 @@ class NativeNotesRichEditorTest {
         compose.waitUntil(10_000) { note().blocks.single().string("text") != beforeUndo }
         compose.onNodeWithTag("note-format-redo").performScrollTo().performClick()
         compose.waitUntil(10_000) { note().blocks.single().string("text") == beforeUndo }
+    }
+
+    @Test fun richCaretRemainsInsideTheNativeViewportAboveTheKeyboardAndToolsInAMixedRecording() {
+        create()
+        compose.runOnUiThread { model.notes.update(note().id) { it.withTitle("研究方法 · 第四讲").withBlocks(listOf(
+            markdownBlock("## 从问题到证据\n\n比较两份数据之前，先核对时间、区域与样本的范围。方法的适用条件，和结论一样重要。\n\n- 保留原始材料"),
+            inkBlock(320f), markdownBlock("留给自己的问题")
+        )) } }
+        ready(); saved()
+        compose.onNodeWithTag("note-start-recording").performClick()
+        compose.waitUntil(10_000) { model.recordings.state.value.active && (model.recordings.state.value.session?.samples ?: 0) >= 3200 }
+        val id = note().blocks.first().string("id")
+        compose.onNodeWithTag("rich-markdown-$id").performScrollTo().performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
+        eval("const n=document.querySelector('.tiptap p').firstChild;const r=document.createRange();r.setStart(n,n.textContent.length);r.collapse(true);const s=window.getSelection();s.removeAllRanges();s.addRange(r);document.querySelector('.tiptap').focus();true")
+        compose.waitUntil(10_000) { ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
+        compose.waitUntil(10_000) {
+            val bounds = NoteJson.parseToJsonElement(eval("(()=>{const r=window.getSelection().getRangeAt(0).getBoundingClientRect();return {top:r.top,bottom:r.bottom}})()")).jsonObject
+            val webOrigin = IntArray(2)
+            val rootOrigin = IntArray(2)
+            var scale = 1f
+            compose.runOnUiThread {
+                web().getLocationOnScreen(webOrigin)
+                compose.activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0).getLocationOnScreen(rootOrigin)
+                scale = compose.activity.resources.displayMetrics.density
+            }
+            val document = compose.onNodeWithTag("note-document").fetchSemanticsNode().boundsInRoot
+            val tools = compose.onAllNodesWithTag("note-text-tools").fetchSemanticsNodes().singleOrNull()?.boundsInRoot
+            val top = webOrigin[1] + bounds.getValue("top").jsonPrimitive.float * scale
+            val bottom = webOrigin[1] + bounds.getValue("bottom").jsonPrimitive.float * scale
+            tools != null && bottom > top && top >= rootOrigin[1] + document.top &&
+                bottom <= rootOrigin[1] + minOf(document.bottom, tools.top)
+        }
+        eval("document.execCommand('insertText',false,'补充');true")
+        compose.waitUntil(10_000) { note().blocks.first().string("text").contains("补充") }
+        compose.onNodeWithTag("note-finish").performClick()
+        compose.onNodeWithTag("note-confirm-finish").assertIsDisplayed().performClick()
+        compose.waitUntil(20_000) { !model.busy.value && model.completion.value != null }
+        assertFalse(model.recordings.state.value.active)
+        val input = NoteMaterialStore.at(compose.activity.noBackupFilesDir).read(model.completion.value!!.versionId)
+        assertEquals(note().blocks, input.document.blocks)
+        assertTrue(input.recordings.single().samples > 0)
     }
 
     @Test fun merelyOpeningPreviewingAndRecreatingDoesNotCanonicalizeExistingMarkdown() {

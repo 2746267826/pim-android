@@ -51,6 +51,9 @@ directory.
   snapshot; renderer failures retain the latest received source and visibly
   fall back. This cannot promise recovery of characters never received from a
   crashed renderer or OS-killed process.
+- Focused caret bounds are mapped into the native scrolling document. IME and
+  editor-height changes bring that range above the native format bar/dock,
+  rather than relying on WebView scrolling to understand a Compose viewport.
 - Only index.html, editor.js and editor.css are accessible to the WebView.
   Other assets, private files, content URIs, remote requests, navigation and
   frames are blocked; CSP also denies network/image/frame access. There is no

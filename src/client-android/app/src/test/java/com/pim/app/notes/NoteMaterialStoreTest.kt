@@ -198,6 +198,7 @@ class NoteMaterialStoreTest {
         val pinned = File(temp.root, "note-material-versions/blobs/${manifest.files.first().sha256}")
         pinned.appendText("damaged")
         assertThrows(IllegalArgumentException::class.java) { export(input.id) }
+        assertEquals(NoteMaterialPhase.Failed, store.entries().single().phase)
         assertThrows(IllegalArgumentException::class.java) { store.prepare(input.id) }
         assertTrue(pinned.readText().endsWith("damaged"))
         assertEquals(note, store.read(input.id).document)
@@ -305,6 +306,7 @@ class NoteMaterialStoreTest {
         assertThrows(IOException::class.java) { store.export(input.id, object : java.io.OutputStream() {
             override fun write(b: Int) { throw IOException("synthetic destination full") }
         }) }
+        assertEquals(NoteMaterialPhase.Ready, store.entries().single().phase)
         assertEquals(manifest, store.prepare(input.id))
         assertEquals(note, notes.read(note.id))
         assertTrue(export(input.id).containsKey("note.json"))

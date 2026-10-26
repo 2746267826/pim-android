@@ -8,6 +8,7 @@ import java.io.InputStream
 import java.io.OutputStream
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlinx.coroutines.CancellationException
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 
@@ -100,8 +101,14 @@ class NoteMaterialStore(
 
     fun export(id: String, output: OutputStream, checkActive: () -> Unit = {}) = synchronized(diskLock) {
         val input = read(id)
-        val committed = manifest(input)
-        committed.files.forEach { blobs.verify(it, checkActive) }
+        val committed = try {
+            manifest(input).also { it.files.forEach { file -> blobs.verify(file, checkActive) } }
+        } catch (error: CancellationException) { throw error }
+        catch (error: Exception) {
+            // Source corruption invalidates readiness; a later destination failure must not.
+            runCatching { status(id, NoteMaterialStatus(NoteMaterialPhase.Failed, NoteMaterialProblem.Incomplete)) }
+            throw error
+        }
         ZipOutputStream(output).use { zip ->
             fun entry(path: String, write: () -> Unit) { zip.putNextEntry(ZipEntry(path)); write(); zip.closeEntry() }
             entry("material-version.json") { zip.write(NoteJson.encodeToString(input).toByteArray(Charsets.UTF_8)) }

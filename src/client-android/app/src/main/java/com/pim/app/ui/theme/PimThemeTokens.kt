@@ -22,7 +22,19 @@ data class PimDimensions(
     val sectionGap: Dp = 10.dp,
     val borderWidth: Dp = 1.dp,
     val iconSize: Dp = 18.dp,
-    val minimumTouchTarget: Dp = 48.dp
+    val minimumTouchTarget: Dp = 48.dp,
+    val recordingWaveWidth: Dp = 32.dp,
+    val recordingWaveHeight: Dp = 20.dp,
+    val notePhotoMaxHeight: Dp = 360.dp,
+    val floatingElevation: Dp = 4.dp,
+    val noteDocumentMaxWidth: Dp = 760.dp,
+    val noteWideBreakpoint: Dp = 1000.dp,
+    val noteMaterialsRailWidth: Dp = 208.dp,
+    val noteEditorMinHeight: Dp = 200.dp,
+    val noteDockClearance: Dp = 88.dp,
+    val noteHeaderClearance: Dp = 72.dp,
+    val noteDefaultInkWidth: Dp = 320.dp,
+    val inkGridSpacing: Dp = 24.dp
 )
 
 internal val PimDefaultDimensions = PimDimensions()
@@ -43,6 +55,8 @@ private fun textStyle(size: Int, lineHeight: Int, weight: FontWeight = FontWeigh
 )
 
 internal val PimTypography = Typography(
+    headlineLarge = textStyle(30, 42, FontWeight.Medium),
+    headlineMedium = textStyle(26, 38, FontWeight.Medium),
     titleLarge = textStyle(24, 34, FontWeight.Medium),
     titleMedium = textStyle(19, 28, FontWeight.Medium),
     titleSmall = textStyle(16, 24, FontWeight.Medium),

@@ -75,6 +75,10 @@ directory.
   new layout frame. The native list applies the actual missing caret distance;
   whole-WebView rectangle requests are suppressed to avoid competing scrolls.
   Reading leaf position does not itself recompose or restart scrolling.
+  Actual placement changes request a coalesced UI-queue reveal using the latest
+  geometry; a frame-clock callback alone does not mean placement has finished.
+  A range taller than the available viewport aligns its lower edge without
+  alternating between two impossible bounds.
   The host coalesces a fresh selection snapshot after the
   browser layout frame, using the current native epoch rather than a queued
   old source. This avoids losing selection when the IME/toolbar reduces a

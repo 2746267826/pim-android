@@ -154,6 +154,7 @@ fun NativeNotesScreen(
                                             viewportBounds = viewportBounds,
                                             onRevealCaret = { caret -> viewportBounds?.let { viewport ->
                                                 val distance = when {
+                                                     caret.height >= viewport.height -> (caret.bottom - viewport.bottom).coerceAtLeast(0f)
                                                     caret.bottom > viewport.bottom -> caret.bottom - viewport.bottom
                                                     caret.top < viewport.top -> caret.top - viewport.top
                                                     else -> 0f

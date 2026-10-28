@@ -32,6 +32,7 @@ import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
@@ -55,7 +56,7 @@ internal class MarkdownEditText(context: Context) : EditText(context) {
     }
 }
 
-private class NoteEditorGeometry { var origin: Offset? = null }
+private class NoteEditorGeometry { var origin: Offset? = null; var revealPosted = false }
 
 @Composable
 @OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
@@ -78,6 +79,7 @@ internal fun MarkdownBlockView(
     var caret by remember { mutableStateOf<Rect?>(null) }
     val geometry = remember { NoteEditorGeometry() }
     val scope = rememberCoroutineScope()
+    val host = LocalView.current
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val density = LocalDensity.current
@@ -91,10 +93,8 @@ internal fun MarkdownBlockView(
         val pin = if ((richFocused || coordinator.committing) && !preview && !useSource) pinnable?.pin() else null
         onDispose { pin?.release() }
     }
-    LaunchedEffect(caret, richFocused, imeBottom, height, viewportBounds, preview, useSource) {
+    val reveal = rememberUpdatedState<suspend () -> Unit> {
         if (richFocused && !preview && !useSource) {
-            // IME insets arrive before the parent has measured its smaller viewport and format bar.
-            withFrameNanos { }
             val range = caret
             val viewport = viewportBounds
             val origin = geometry.origin
@@ -105,6 +105,14 @@ internal fun MarkdownBlockView(
             }
         }
     }
+    fun requestReveal() {
+        if (!geometry.revealPosted) {
+            geometry.revealPosted = true
+            // Frame callbacks run before placement. Post after traversal and read the latest measurement.
+            host.post { geometry.revealPosted = false; scope.launch { reveal.value() } }
+        }
+    }
+    LaunchedEffect(caret, richFocused, imeBottom, height, viewportBounds, preview, useSource) { requestReveal() }
     fun cssColor(argb: Int) = "#%06X".format(argb and 0xFFFFFF)
     val theme = mapOf(
         "text" to cssColor(colors.onSurface.toArgb()), "muted" to cssColor(colors.onSurfaceVariant.toArgb()),
@@ -155,7 +163,7 @@ internal fun MarkdownBlockView(
                 coordinator.register(id, view); richView = view
             } },
             modifier = Modifier.fillMaxWidth().height(height)
-                .onGloballyPositioned { geometry.origin = it.positionInRoot() }.testTag("rich-markdown-$id"),
+                .onGloballyPositioned { geometry.origin = it.positionInRoot(); requestReveal() }.testTag("rich-markdown-$id"),
             onReset = null,
             onRelease = { view -> coordinator.retire(view); if (richView === view) richView = null },
             update = { it.bind(block.string("text"), enabled && !preview && !changing, theme) }

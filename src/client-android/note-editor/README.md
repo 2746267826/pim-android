@@ -51,6 +51,23 @@ directory.
   snapshot; renderer failures retain the latest received source and visibly
   fall back. This cannot promise recovery of characters never received from a
   crashed renderer or OS-killed process.
+- A per-note coroutine gate owns the whole commit/action/resume transaction,
+  including backgrounding. Live leaves remain pinned during that transaction.
+  Each physical view has its own pending state and final capture; retiring
+  views stay registered until acknowledgement. A replacement for the same
+  block cannot initialize or accept input until its predecessor finishes.
+  Concurrent callers share a capture, and a destroyed, confirmed predecessor
+  is not mistaken for an unavailable live editor. Native rebinding cannot
+  disable the DOM or change its epoch mid-commit.
+- Failed/unconfirmed input opens the native source editor with an explicit
+  review action. The header says “待核对正文” and locates the affected block.
+  Review survives Activity recreation; merely editing source does not silently
+  acknowledge it. Only block IDs are saved for recovery state, not a second
+  large copy of source. A known format fallback needs no failure acknowledgement.
+  Renderer termination follows the [Android WebView lifecycle](https://developer.android.com/develop/ui/views/layout/webapps/handle-termination);
+  recording remains independent. The recovery tests use a real renderer kill
+  with controlled bridge delay, user-page scrolling, and a separate real-view
+  handoff with delayed capture. These are not OPPO or acoustic acceptance.
 - Focused caret bounds are mapped into the native scrolling document. IME and
   editor-height changes bring that range above the native format bar/dock.
   The focused leaf is pinned through lazy remeasurement; caret scrolling also

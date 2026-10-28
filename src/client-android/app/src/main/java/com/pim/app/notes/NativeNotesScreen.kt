@@ -60,7 +60,8 @@ fun NativeNotesScreen(
                 NoteLibraryScreen(state, selectedId, recording, busy, onCreate, onOpen, onExit)
             } else key(note.id) {
                 var preview by rememberSaveable { mutableStateOf(false) }
-                val editor = remember { NoteEditorCoordinator() }
+                val scope = rememberCoroutineScope()
+                val editor = rememberSaveable(saver = remember(scope) { NoteEditorCoordinator.saver(scope) }) { NoteEditorCoordinator(scope) }
                 var committing by remember { mutableStateOf(false) }
                 var showMaterials by rememberSaveable { mutableStateOf(false) }
                 var showRecordings by rememberSaveable { mutableStateOf(false) }
@@ -70,7 +71,6 @@ fun NativeNotesScreen(
                 val keyboard = LocalSoftwareKeyboardController.current
                 val list = rememberLazyListState()
                 var viewportBounds by remember { mutableStateOf<Rect?>(null) }
-                val scope = rememberCoroutineScope()
                 val saved = state.savedRevisions[note.id] == note.revision && !editor.pending && !committing
                 val ownSession = recording.session?.takeIf { it.noteId == note.id }
                 val ownActive = ownSession?.active == true
@@ -83,12 +83,23 @@ fun NativeNotesScreen(
                 fun leaveInput() { keyboard?.hide(); focus.clearFocus() }
                 fun afterInput(action: (NoteDocument) -> Unit) {
                     if (busy || committing) return
-                    leaveInput(); committing = true
+                    committing = true
                     scope.launch {
-                        try { editor.flush(); action(checkNotNull(readDocument(note.id))) }
+                        try { editor.withCommitted(before = ::leaveInput) { action(checkNotNull(readDocument(note.id))) } }
                         catch (_: Exception) { onProblem("尚未确认正文输入或操作完成，原材料保留；请核对内容后重试。") }
-                        finally { editor.resume(); committing = false }
+                        finally { committing = false }
                     }
+                }
+                val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+                DisposableEffect(lifecycle, editor) {
+                    val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+                        if (event == androidx.lifecycle.Lifecycle.Event.ON_PAUSE) scope.launch {
+                            try { editor.withCommitted {} }
+                            catch (_: Exception) { onProblem("切换应用时未能确认正文输入完成，请返回核对；已收到的原文保留。") }
+                        }
+                    }
+                    lifecycle.addObserver(observer)
+                    onDispose { lifecycle.removeObserver(observer) }
                 }
                 BackHandler {
                     if (busy || committing) onProblem("正在保存正文或处理本地材料，请稍候")
@@ -124,6 +135,13 @@ fun NativeNotesScreen(
                                         if (ownActive && !notificationsVisible) PimStatusBanner("系统通知权限或录音渠道已关闭，后台录音状态可能不可见。", PimStatusTone.Warning)
                                         if (recording.active && !ownActive) PimStatusBanner("另一篇笔记正在录音，本页编辑不会改变录音归属。", PimStatusTone.Info)
                                         if (materials.loadFailed) PimStatusBanner("材料版本暂时无法读取，原文件保留；请重新打开页面。", PimStatusTone.Warning)
+                                         if (editor.reviewIds.isNotEmpty()) {
+                                             PimStatusBanner("有正文需要核对，确认后才能结束、导出或离开本篇。录音仍独立进行。", PimStatusTone.Warning)
+                                             TextButton(modifier = Modifier.testTag("note-review-pending"), onClick = {
+                                                 val index = note.blocks.indexOfFirst { it.string("id") in editor.reviewIds }
+                                                 if (index >= 0) scope.launch { list.scrollToItem(index + 2) }
+                                             }) { Text("查看待核对正文") }
+                                         }
                                     }
                                 }
                                 items(note.blocks, key = { it.string("id") }) { block ->
@@ -159,10 +177,16 @@ fun NativeNotesScreen(
                     }
                     NoteEditorTopBar(saved, note.id in state.errors, busy || committing, preview,
                         onBack = { afterInput { onOpen(null) } },
-                        onSaveStatus = { if (note.id in state.errors) onRetry(note.id) else { leaveInput(); showAbout = true } },
+                        onSaveStatus = {
+                            if (note.id in state.errors) onRetry(note.id)
+                            else if (editor.reviewIds.isNotEmpty()) {
+                                val index = note.blocks.indexOfFirst { it.string("id") in editor.reviewIds }
+                                if (index >= 0) scope.launch { list.scrollToItem(index + 2) }
+                            } else { leaveInput(); showAbout = true }
+                        },
                         onPreview = { afterInput { preview = !preview } }, onFinish = { afterInput { confirmFinish = true } },
                         onMaterials = { leaveInput(); showMaterials = true }, onRecordings = { leaveInput(); showRecordings = true },
-                        onExport = { afterInput(onExport) }, onAbout = { leaveInput(); showAbout = true })
+                        onExport = { afterInput(onExport) }, onAbout = { leaveInput(); showAbout = true }, needsReview = editor.reviewIds.isNotEmpty())
                     NoteEditorDock(recording, ownActive, saved && !busy && !committing && !recording.active && !recording.preparing,
                         !busy && !committing && !preview && lastMarkdown != null,
                         onRecord = { afterInput { onRecord(it.id) } }, onPauseResume = onPauseResume,

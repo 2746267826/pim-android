@@ -24,7 +24,8 @@ import com.pim.app.ui.theme.PimTheme
 internal fun NoteEditorTopBar(
     saved: Boolean, saveFailed: Boolean, busy: Boolean, preview: Boolean,
     onBack: () -> Unit, onSaveStatus: () -> Unit, onPreview: () -> Unit, onFinish: () -> Unit,
-    onMaterials: () -> Unit, onRecordings: () -> Unit, onExport: () -> Unit, onAbout: () -> Unit
+    onMaterials: () -> Unit, onRecordings: () -> Unit, onExport: () -> Unit, onAbout: () -> Unit,
+    needsReview: Boolean = false
 ) {
     val d = PimTheme.dimensions
     var menu by remember { mutableStateOf(false) }
@@ -34,13 +35,14 @@ internal fun NoteEditorTopBar(
             IconButton(onClick = onBack, enabled = !busy, modifier = Modifier.size(d.minimumTouchTarget)) { Icon(Icons.Default.ArrowBack, "返回记录列表") }
             Row(Modifier.weight(1f).heightIn(min = d.minimumTouchTarget).clickable(onClick = onSaveStatus),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.spaceExtraSmall)) {
-                Icon(when { saveFailed -> Icons.Default.ErrorOutline; saved -> Icons.Default.Check; else -> Icons.Default.Sync },
+                Icon(when { saveFailed -> Icons.Default.ErrorOutline; needsReview -> Icons.Default.WarningAmber; saved -> Icons.Default.Check; else -> Icons.Default.Sync },
                     null, Modifier.size(d.iconSize), tint = when {
                         saveFailed -> MaterialTheme.colorScheme.error
+                        needsReview -> PimTheme.statusColors.onWarningContainer
                         saved -> PimTheme.statusColors.onSuccessContainer
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     })
-                Text(when { saveFailed -> "保存失败"; saved -> "已保存本机"; else -> "保存中" },
+                Text(when { saveFailed -> "保存失败"; needsReview -> "待核对正文"; saved -> "已保存本机"; else -> "保存中" },
                     Modifier.testTag("note-save-status"), style = MaterialTheme.typography.bodySmall,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }

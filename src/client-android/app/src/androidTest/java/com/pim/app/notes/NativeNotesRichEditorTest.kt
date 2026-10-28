@@ -183,7 +183,9 @@ class NativeNotesRichEditorTest {
         eval("document.execCommand('insertText',false,'补充');true")
         compose.waitUntil(10_000) { note().blocks.first().string("text").contains("重要。补充") }
         compose.onNodeWithTag("note-finish").performClick()
-        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
+        withEditorEvidence("first-finish") {
+            compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
+        }
         compose.onNodeWithTag("note-confirm-finish").assertIsDisplayed().performClick()
         compose.waitUntil(20_000) { !model.busy.value && model.completion.value != null }
         assertFalse(model.recordings.state.value.active)

@@ -31,14 +31,11 @@ import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.platform.LocalFocusManager
-import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import com.pim.app.ui.components.PimStatusBanner
 import com.pim.app.ui.components.PimStatusTone
 import com.pim.app.ui.theme.PimTheme
@@ -72,6 +69,8 @@ internal fun MarkdownBlockView(
     val id = block.string("id")
     var sourceMode by rememberSaveable(id) { mutableStateOf(false) }
     var reason by rememberSaveable(id) { mutableStateOf<String?>(null) }
+    val review = coordinator.reviewReason(id)
+    val useSource = sourceMode || review != null
     var changing by remember { mutableStateOf(false) }
     var height by remember { mutableStateOf(minimumHeight) }
     var richView by remember { mutableStateOf<OfflineMarkdownView?>(null) }
@@ -88,12 +87,12 @@ internal fun MarkdownBlockView(
     val imeBottom = WindowInsets.ime.getBottom(density)
     val pinnable = LocalPinnableContainer.current
     // WebView focus is not a Compose text field: keep its live selection through lazy remeasurement.
-    DisposableEffect(pinnable, richFocused, preview, sourceMode) {
-        val pin = if (richFocused && !preview && !sourceMode) pinnable?.pin() else null
+    DisposableEffect(pinnable, richFocused, coordinator.committing, preview, useSource) {
+        val pin = if ((richFocused || coordinator.committing) && !preview && !useSource) pinnable?.pin() else null
         onDispose { pin?.release() }
     }
-    LaunchedEffect(caret, richFocused, imeBottom, height, viewportBounds, preview, sourceMode) {
-        if (richFocused && !preview && !sourceMode) {
+    LaunchedEffect(caret, richFocused, imeBottom, height, viewportBounds, preview, useSource) {
+        if (richFocused && !preview && !useSource) {
             // IME insets arrive before the parent has measured its smaller viewport and format bar.
             withFrameNanos { }
             val range = caret
@@ -119,59 +118,53 @@ internal fun MarkdownBlockView(
     )
     val textCallback = rememberUpdatedState(onText)
     val currentText = rememberUpdatedState(readCurrentText)
-    val lifecycle = LocalLifecycleOwner.current.lifecycle
-    DisposableEffect(lifecycle, richView) {
-        val view = richView
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_PAUSE && view != null) scope.launch {
-                try { view.commitAndFreeze() }
-                catch (_: Exception) { onProblem("切换应用时未能确认正文输入完成，请返回后核对；已收到的原文保留。") }
-                finally { view.resumeEditing() }
-            }
-        }
-        lifecycle.addObserver(observer)
-        onDispose { lifecycle.removeObserver(observer) }
-    }
     Column(Modifier.fillMaxWidth()) {
         if (!preview) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
-            TextButton(enabled = enabled && !changing, modifier = Modifier.testTag("markdown-mode-$id"), onClick = {
-                keyboard?.hide(); focus.clearFocus()
+            TextButton(enabled = enabled && !changing && review == null, modifier = Modifier.testTag("markdown-mode-$id"), onClick = {
                 changing = true
                 scope.launch {
-                    try { coordinator.flush(); reason = null; sourceMode = !sourceMode }
+                    try { coordinator.withCommitted(before = { keyboard?.hide(); focus.clearFocus() }) { reason = null; sourceMode = !sourceMode } }
                     catch (_: Exception) { onProblem("尚未确认正文输入完成，没有切换编辑模式；请稍后重试。") }
-                    finally { changing = false; coordinator.resume() }
+                    finally { changing = false }
                 }
-            }) { Text(if (sourceMode) "富文本" else "Markdown 源码", style = MaterialTheme.typography.labelMedium) }
+            }) { Text(if (useSource) "富文本" else "Markdown 源码", style = MaterialTheme.typography.labelMedium) }
         }
-        reason?.let { PimStatusBanner(it, PimStatusTone.Warning) }
-        if (sourceMode) SourceMarkdownBlockView(block, preview, enabled && !changing,
-            readCurrentText = readCurrentText, onText = { coordinator.pending(id, false); onText(it) },
+        (review ?: reason)?.let { PimStatusBanner(it, PimStatusTone.Warning) }
+        if (useSource) SourceMarkdownBlockView(block, preview, enabled && !changing,
+            readCurrentText = readCurrentText, onText = onText,
             onSelection = { coordinator.select(NoteInsertion(id, it)) }, minimumHeight = minimumHeight)
         else AndroidView(
             factory = { context -> OfflineMarkdownView(context).also { view ->
                 view.blockId = id
                 view.readCurrentText = { currentText.value() }
                 view.onText = { textCallback.value(it) }
-                view.onInsertion = { anchor, focused, marks -> richFocused = focused; coordinator.remember(anchor, focused, marks) }
+                view.onInsertion = { anchor, focused, marks ->
+                    if (coordinator.isCurrent(id, view)) { richFocused = focused; coordinator.remember(anchor, focused, marks) }
+                }
                 view.onCaret = { top, bottom ->
                     // The WebView cannot account for the native IME, format bar or LazyColumn viewport.
                     val start = (top - d.spaceSmall.value).coerceAtLeast(0f)
-                    caret = Rect(0f, start * density.density,
+                    if (coordinator.isCurrent(id, view)) caret = Rect(0f, start * density.density,
                         density.density, (bottom + d.spaceSmall.value).coerceAtLeast(start + 1f) * density.density)
                 }
                 view.onHeight = { height = it.dp.coerceAtLeast(minimumHeight) }
                 view.onFailure = { reason = it; sourceMode = true }
+                view.onReviewRequired = { coordinator.review(id, it) }
                 view.onNotice = onProblem
-                view.onPending = { coordinator.pending(id, it) }
+                view.onPending = { coordinator.pending(view, it) }
                 coordinator.register(id, view); richView = view
             } },
             modifier = Modifier.fillMaxWidth().height(height)
                 .onGloballyPositioned { geometry.origin = it.positionInRoot() }.testTag("rich-markdown-$id"),
             onReset = null,
-            onRelease = { view -> coordinator.unregister(id, view); view.releaseEditor(); if (richView === view) richView = null },
+            onRelease = { view -> coordinator.retire(view); if (richView === view) richView = null },
             update = { it.bind(block.string("text"), enabled && !preview && !changing, theme) }
         )
+        if (review != null && !preview) TextButton(
+            enabled = enabled && !changing && coordinator.canAcknowledge(id),
+            modifier = Modifier.testTag("note-review-source-$id"),
+            onClick = { coordinator.acknowledge(id); reason = null; sourceMode = true }
+        ) { Text("已核对以上原文，继续") }
     }
 }
 

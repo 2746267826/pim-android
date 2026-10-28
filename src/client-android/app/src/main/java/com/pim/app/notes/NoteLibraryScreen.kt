@@ -40,10 +40,10 @@ internal fun NoteLibraryScreen(
     var search by rememberSaveable { mutableStateOf("") }
     val entries = state.entries.filter { entry -> search.isBlank() || entry.title.contains(search, true) ||
         state.documents[entry.id]?.blocks?.any { it.string("kind") == "markdown" && it.string("text").contains(search, true) } == true }
-    Box(modifier.fillMaxSize()) {
+    Column(modifier.fillMaxSize()) {
         LazyColumn(
-            Modifier.align(Alignment.TopCenter).widthIn(max = d.noteDocumentMaxWidth).fillMaxSize().testTag("notes-library"),
-            contentPadding = PaddingValues(start = d.spaceLarge, end = d.spaceLarge, bottom = d.noteDockClearance),
+            Modifier.align(Alignment.CenterHorizontally).widthIn(max = d.noteDocumentMaxWidth).weight(1f).fillMaxWidth().testTag("notes-library"),
+            contentPadding = PaddingValues(start = d.spaceLarge, end = d.spaceLarge, bottom = d.spaceLarge),
             verticalArrangement = Arrangement.spacedBy(d.spaceMedium)
         ) {
             item {
@@ -132,7 +132,7 @@ internal fun NoteLibraryScreen(
         }
         ExtendedFloatingActionButton(
             onClick = { if (state.loaded && !busy) onCreate() },
-            modifier = Modifier.align(Alignment.BottomEnd).padding(d.spaceLarge).testTag("notes-create")
+            modifier = Modifier.align(Alignment.End).padding(horizontal = d.spaceLarge, vertical = d.spaceSmall).testTag("notes-create")
                 .semantics { if (!state.loaded || busy) disabled() },
             icon = { Icon(Icons.Default.Add, null) }, text = { Text(if (busy) "处理中" else "新建记录") },
             containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary

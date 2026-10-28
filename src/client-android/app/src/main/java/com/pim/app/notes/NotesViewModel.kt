@@ -48,18 +48,26 @@ class NotesViewModel @Inject constructor(
     fun dismissCompletion() { mutableCompletion.value = null }
 
     fun prepareMaterial(noteId: String, anchor: NoteInsertion, cameraToken: String? = null) {
+        cancelMaterial()
+        // A formatted caret may need two complete Markdown fragments. Keep them out of the Activity Bundle.
+        val token = notes.saveInsertion(anchor)
         saved["materialNote"] = noteId; saved["materialBlock"] = anchor.blockId; saved["materialOffset"] = anchor.offset
+        saved["materialInsertionToken"] = token
         saved["cameraToken"] = cameraToken
     }
     fun cameraToken(): String? = saved["cameraToken"]
     fun cancelMaterial() {
+        saved.remove<String>("materialInsertionToken")?.let(notes::removeInsertion)
         saved.remove<String>("materialNote"); saved.remove<String>("materialBlock")
         saved.remove<Int>("materialOffset"); saved.remove<String>("cameraToken")
     }
 
     fun importPhoto(open: () -> java.io.InputStream, onImported: () -> Unit = {}) {
         val id = saved.get<String>("materialNote") ?: return
-        val anchor = NoteInsertion(saved.get<String>("materialBlock") ?: return, saved["materialOffset"] ?: 0)
+        val anchor = try {
+            saved.get<String>("materialInsertionToken")?.let(notes::readInsertion)
+                ?: NoteInsertion(saved.get<String>("materialBlock") ?: return, saved["materialOffset"] ?: 0)
+        } catch (_: Exception) { tell("插入位置无法恢复，原材料保留；请重新选择插入位置"); return }
         if (busy.value) return
         mutableBusy.value = true
         viewModelScope.launch {
@@ -67,7 +75,7 @@ class NotesViewModel @Inject constructor(
                 notes.insertPhoto(id, anchor, open)
                 cancelMaterial(); onImported(); tell("照片已插入笔记")
             } catch (error: CancellationException) { throw error }
-            catch (_: Exception) { tell("照片导入失败，没有插入占位图片。请检查空间及图片格式（JPEG/PNG/WebP，单张不超过32 MB）") }
+            catch (_: Exception) { tell("照片导入失败或插入位置已变化，没有插入占位图片；原材料保留。请重选位置，并检查空间及图片格式（JPEG/PNG/WebP，单张不超过32 MB）") }
             finally { mutableBusy.value = false }
         }
     }

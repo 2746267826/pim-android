@@ -11,11 +11,30 @@ import java.io.OutputStream
 import java.security.MessageDigest
 import java.util.zip.ZipEntry
 import java.util.zip.ZipOutputStream
+import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 
 data class NoteEntry(val id: String, val title: String, val damaged: Boolean = false)
 
 class NoteFileStore(private val root: File) {
+    fun saveInsertion(anchor: NoteInsertion): String {
+        anchor.validate()
+        val token = newNoteId()
+        atomicWrite(insertionFile(token)) { it.write(NoteJson.encodeToString(anchor).toByteArray(Charsets.UTF_8)) }
+        return token
+    }
+
+    fun readInsertion(token: String): NoteInsertion = NoteJson.decodeFromString<NoteInsertion>(
+        AtomicFile(insertionFile(token)).readFully().toString(Charsets.UTF_8)
+    ).also { it.validate() }
+
+    fun removeInsertion(token: String) { AtomicFile(insertionFile(token)).delete() }
+
+    private fun insertionFile(token: String): File {
+        require(validNoteId(token))
+        return File(root, ".insertions/$token.json")
+    }
+
     fun entries(): List<NoteEntry> = root.listFiles().orEmpty().filter { it.isDirectory && validNoteId(it.name) }
         .sortedByDescending { it.lastModified() }.map {
             runCatching { read(it.name).let { note -> NoteEntry(note.id, note.title) } }

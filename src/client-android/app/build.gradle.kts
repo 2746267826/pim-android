@@ -1,9 +1,55 @@
+import java.io.RandomAccessFile
+import java.security.MessageDigest
+
 plugins {
     id("com.android.application")
     id("org.jetbrains.kotlin.android")
     id("com.google.dagger.hilt.android")
     kotlin("kapt")
     kotlin("plugin.serialization")
+}
+
+val noteEditorDirectory = rootProject.file("note-editor")
+val noteEditorAssets = layout.buildDirectory.dir("generated/note-editor-assets")
+val npmCommand = if (System.getProperty("os.name").startsWith("Windows")) listOf("cmd.exe", "/d", "/c", "npm.cmd") else listOf("npm")
+val buildNoteEditor by tasks.registering {
+    val sources = fileTree(noteEditorDirectory) {
+        include("src/**", "test/**", "package.json", "package-lock.json", "build.mjs")
+    }
+    inputs.files(sources)
+    outputs.dir(noteEditorAssets)
+    doLast {
+        val lock = layout.buildDirectory.file("note-editor-build.lock").get().asFile
+        lock.parentFile.mkdirs()
+        // CI runs unit-test and release Gradle processes concurrently in one checkout.
+        RandomAccessFile(lock, "rw").use { file -> file.channel.use { channel -> channel.lock().use {
+            fun fingerprint(files: List<File>): String {
+                val hash = MessageDigest.getInstance("SHA-256")
+                files.sortedBy { it.invariantSeparatorsPath }.forEach { input ->
+                    hash.update(input.relativeTo(rootProject.projectDir).invariantSeparatorsPath.toByteArray(Charsets.UTF_8))
+                    input.inputStream().use { stream ->
+                        val buffer = ByteArray(8192)
+                        while (true) { val n = stream.read(buffer); if (n < 0) break; hash.update(buffer, 0, n) }
+                    }
+                }
+                return hash.digest().joinToString("") { "%02x".format(it) }
+            }
+            val output = noteEditorAssets.get().asFile.resolve("note-editor")
+            val assets = listOf("index.html", "editor.js", "editor.css", "THIRD-PARTY-NOTICES.txt").map(output::resolve)
+            val stamp = noteEditorAssets.get().asFile.resolve(".verified-inputs")
+            val inputHash = fingerprint(sources.files.toList())
+            val current = if (assets.all { it.isFile }) "$inputHash\n${fingerprint(assets)}" else ""
+            if (current.isEmpty() || !stamp.isFile || stamp.readText() != current) {
+                listOf(listOf("ci", "--ignore-scripts", "--no-audit", "--no-fund"), listOf("test"), listOf("run", "build")).forEach { args ->
+                    project.exec {
+                        workingDir(noteEditorDirectory); commandLine(npmCommand + args)
+                        environment("NOTE_EDITOR_OUT", output.absolutePath)
+                    }
+                }
+                stamp.writeText("$inputHash\n${fingerprint(assets)}")
+            }
+        } } }
+    }
 }
 
 val ciKeystoreFile = System.getenv("ANDROID_KEYSTORE_FILE")
@@ -44,6 +90,7 @@ android {
         jvmTarget = "17"
     }
     sourceSets.getByName("debug").assets.srcDir("$projectDir/schemas")
+    sourceSets.getByName("main").assets.srcDir(noteEditorAssets)
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
     testOptions {
         unitTests.isIncludeAndroidResources = true
@@ -71,6 +118,8 @@ android {
         }
     }
 }
+
+tasks.named("preBuild") { dependsOn(buildNoteEditor) }
 
 kapt {
     correctErrorTypes = true

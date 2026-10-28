@@ -195,6 +195,11 @@ class NativeNotesDocumentTest {
     }
 
     private fun edit(text: String, offset: Int) {
+        val mode = "markdown-mode-${note().blocks.first { it.string("kind") == "markdown" }.string("id")}"
+        if (compose.onAllNodes(hasTestTag(mode) and hasText("Markdown 源码")).fetchSemanticsNodes().isNotEmpty()) {
+            compose.onNodeWithTag(mode).performScrollTo().performClick()
+            compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag(mode) and hasText("富文本")).fetchSemanticsNodes().isNotEmpty() }
+        }
         compose.runOnUiThread {
             val editor = descendants(compose.activity.window.decorView).filterIsInstance<MarkdownEditText>().first()
             editor.requestFocus(); editor.setText(text); editor.setSelection(offset)
@@ -203,6 +208,7 @@ class NativeNotesDocumentTest {
     }
     private fun finishNote() {
         compose.onNodeWithTag("note-finish").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
         compose.onNodeWithTag("note-confirm-finish").performClick()
         compose.waitUntil(15_000) { model.completion.value != null && !model.busy.value }
         compose.onNodeWithTag("note-continue-editing").performClick()

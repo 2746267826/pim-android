@@ -20,6 +20,8 @@ import androidx.compose.ui.graphics.toArgb
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
 import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
@@ -41,6 +43,7 @@ internal fun PhotoBlockView(file: File) {
 }
 
 @Composable
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
 internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (InkData) -> Unit) {
     val d = PimTheme.dimensions
     var draw by rememberSaveable(id) { mutableStateOf(false) }
@@ -52,6 +55,8 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
     val inkColor = MaterialTheme.colorScheme.primary.toArgb()
     val gridColor = MaterialTheme.colorScheme.outlineVariant
     val density = LocalDensity.current.density
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
     val commit: (InkData) -> Unit = { next ->
         if (next != ink) { history = (history + ink).takeLast(100); onChange(next) }
     }
@@ -60,7 +65,7 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
             Icon(Icons.Default.Draw, null, Modifier.size(d.iconSize), tint = MaterialTheme.colorScheme.onSurfaceVariant)
             Spacer(Modifier.width(d.spaceSmall))
             Text("手写卡片", Modifier.weight(1f), style = MaterialTheme.typography.labelMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-            if (!readOnly) TextButton(onClick = { draw = !draw }, modifier = Modifier.testTag("ink-draw-$id")) {
+            if (!readOnly) TextButton(onClick = { keyboard?.hide(); focus.clearFocus(); draw = !draw }, modifier = Modifier.testTag("ink-draw-$id")) {
                 Text(if (draw) "完成书写" else "书写")
             }
         }

@@ -78,6 +78,9 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
 
     fun retry(id: String) { pending.trySend(id) }
     fun photoFile(noteId: String, assetId: String) = store.photoFile(noteId, assetId)
+    fun saveInsertion(anchor: NoteInsertion) = store.saveInsertion(anchor)
+    fun readInsertion(token: String) = store.readInsertion(token)
+    fun removeInsertion(token: String) = store.removeInsertion(token)
 
     suspend fun checkpoint(id: String): NoteDocument = withContext(Dispatchers.IO) {
         writes.withLock {

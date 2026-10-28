@@ -3,6 +3,7 @@ build/
 */build/
 **/build/
 .gradle/
+node_modules/
 local.properties
 captures/
 .externalNativeBuild/

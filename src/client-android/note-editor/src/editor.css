@@ -1,0 +1,32 @@
+:root { color-scheme: light; }
+* { box-sizing: border-box; }
+html, body { padding: 0; margin: 0; background: transparent; }
+body { color: var(--text); font-family: sans-serif; font-size: var(--font-size); line-height: var(--line-height); overflow-wrap: anywhere; }
+#tools { display: flex; gap: var(--tool-gap); overflow-x: auto; padding-block: var(--tool-gap); border-bottom: 1px solid var(--border); }
+#tools[hidden] { display: none; }
+button { flex: 0 0 auto; min-width: var(--touch); min-height: var(--touch); border: 0; border-radius: var(--radius); padding-inline: var(--tool-gap); background: transparent; color: var(--muted); font: inherit; font-size: .85em; }
+button[aria-pressed="true"] { color: var(--primary); background: var(--selected); }
+button:focus-visible { outline: 2px solid var(--primary); }
+.tiptap { outline: none; padding-block: var(--paragraph-gap); min-height: var(--minimum-height); caret-color: var(--primary); }
+.tiptap > :first-child { margin-top: 0; }
+.tiptap > :last-child { margin-bottom: 0; }
+p { margin: 0 0 var(--paragraph-gap); }
+h1, h2, h3 { line-height: 1.4; margin: 1em 0 .5em; font-weight: 650; }
+h1 { font-size: 1.65em; } h2 { font-size: 1.35em; } h3 { font-size: 1.15em; }
+ul, ol { padding-inline-start: 1.5em; margin-block: .5em; }
+li p { margin-bottom: .25em; }
+blockquote { border-inline-start: 3px solid var(--primary); margin-inline: 0; padding-inline-start: 1em; color: var(--muted); }
+pre { background: var(--code-surface); border-radius: var(--radius); padding: var(--paragraph-gap); overflow-x: auto; white-space: pre; font-size: .9em; }
+code { font-family: monospace; }
+a { color: var(--primary); text-decoration: underline; }
+hr { border: 0; border-top: 1px solid var(--border); }
+table { border-collapse: collapse; table-layout: fixed; width: 100%; margin-block: 1em; }
+td, th { border: 1px solid var(--border); padding: .4em; min-width: 2em; vertical-align: top; }
+th { background: var(--code-surface); text-align: start; }
+.selectedCell { background: var(--selected); }
+ul[data-type="taskList"] { list-style: none; padding: 0; }
+ul[data-type="taskList"] li { display: flex; align-items: baseline; gap: .5em; }
+ul[data-type="taskList"] li > div { flex: 1; }
+input[type="checkbox"] { accent-color: var(--primary); width: 1.1em; height: 1.1em; }
+.tiptap p:only-child:empty::before { content: attr(data-placeholder); }
+.tiptap:has(> p:only-child:empty)::before { content: attr(data-placeholder); color: var(--muted); float: left; pointer-events: none; height: 0; }

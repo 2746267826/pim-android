@@ -9,17 +9,36 @@ import android.view.Gravity
 import android.widget.EditText
 import android.widget.TextView
 import androidx.compose.foundation.layout.fillMaxWidth
+import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.Row
+import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.heightIn
+import androidx.compose.foundation.layout.WindowInsets
+import androidx.compose.foundation.layout.ime
 import androidx.compose.material3.MaterialTheme
-import androidx.compose.runtime.Composable
-import androidx.compose.runtime.remember
-import androidx.compose.runtime.rememberUpdatedState
+import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.geometry.Rect
+import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.graphics.toArgb
+import androidx.compose.ui.layout.LocalPinnableContainer
+import androidx.compose.ui.layout.onGloballyPositioned
+import androidx.compose.ui.layout.positionInRoot
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.platform.LocalDensity
+import androidx.compose.ui.platform.LocalFocusManager
+import androidx.compose.ui.platform.LocalSoftwareKeyboardController
+import androidx.compose.ui.platform.LocalView
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.unit.Dp
+import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.pim.app.ui.components.PimStatusBanner
+import com.pim.app.ui.components.PimStatusTone
 import com.pim.app.ui.theme.PimTheme
 import io.noties.markwon.Markwon
 import io.noties.markwon.AbstractMarkwonPlugin
@@ -27,6 +46,7 @@ import io.noties.markwon.MarkwonConfiguration
 import io.noties.markwon.editor.MarkwonEditor
 import io.noties.markwon.editor.MarkwonEditorTextWatcher
 import kotlinx.serialization.json.JsonObject
+import kotlinx.coroutines.launch
 
 internal class MarkdownEditText(context: Context) : EditText(context) {
     var selectionChanged: (Int) -> Unit = {}
@@ -36,10 +56,131 @@ internal class MarkdownEditText(context: Context) : EditText(context) {
     }
 }
 
+private class NoteEditorGeometry { var origin: Offset? = null; var revealPosted = false }
+
 @Composable
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.foundation.ExperimentalFoundationApi::class)
 internal fun MarkdownBlockView(
-    block: JsonObject, preview: Boolean, enabled: Boolean, onText: (String) -> Unit, onSelection: (Int) -> Unit,
-    minimumHeight: Dp = PimTheme.dimensions.minimumTouchTarget
+    block: JsonObject, preview: Boolean, enabled: Boolean, coordinator: NoteEditorCoordinator,
+    readCurrentText: () -> String?, onText: (String) -> Unit, onProblem: (String) -> Unit,
+    minimumHeight: Dp = PimTheme.dimensions.minimumTouchTarget,
+    viewportBounds: Rect? = null,
+    onRevealCaret: suspend (Rect) -> Unit = {}
+) {
+    val id = block.string("id")
+    var sourceMode by rememberSaveable(id) { mutableStateOf(false) }
+    var reason by rememberSaveable(id) { mutableStateOf<String?>(null) }
+    val review = coordinator.reviewReason(id)
+    val useSource = sourceMode || review != null
+    var changing by remember { mutableStateOf(false) }
+    var height by remember { mutableStateOf(minimumHeight) }
+    var richView by remember { mutableStateOf<OfflineMarkdownView?>(null) }
+    var richFocused by remember { mutableStateOf(false) }
+    var caret by remember { mutableStateOf<Rect?>(null) }
+    val geometry = remember { NoteEditorGeometry() }
+    val scope = rememberCoroutineScope()
+    val host = LocalView.current
+    val focus = LocalFocusManager.current
+    val keyboard = LocalSoftwareKeyboardController.current
+    val density = LocalDensity.current
+    val d = PimTheme.dimensions
+    val colors = MaterialTheme.colorScheme
+    val typography = MaterialTheme.typography.bodyLarge
+    val imeBottom = WindowInsets.ime.getBottom(density)
+    val pinnable = LocalPinnableContainer.current
+    // WebView focus is not a Compose text field: keep its live selection through lazy remeasurement.
+    DisposableEffect(pinnable, richFocused, coordinator.committing, preview, useSource) {
+        val pin = if ((richFocused || coordinator.committing) && !preview && !useSource) pinnable?.pin() else null
+        onDispose { pin?.release() }
+    }
+    val reveal = rememberUpdatedState<suspend () -> Unit> {
+        if (richFocused && !preview && !useSource) {
+            val range = caret
+            val viewport = viewportBounds
+            val origin = geometry.origin
+            if (range != null && viewport != null && origin != null && viewport.height > 0f) {
+                val actual = range.translate(origin)
+                // Reveal the actual range with the document's single scroll owner.
+                if (actual.top < viewport.top || actual.bottom > viewport.bottom) onRevealCaret(actual)
+            }
+        }
+    }
+    fun requestReveal() {
+        if (!geometry.revealPosted) {
+            geometry.revealPosted = true
+            // Frame callbacks run before placement. Post after traversal and read the latest measurement.
+            host.post { geometry.revealPosted = false; scope.launch { reveal.value() } }
+        }
+    }
+    LaunchedEffect(caret, richFocused, imeBottom, height, viewportBounds, preview, useSource) { requestReveal() }
+    fun cssColor(argb: Int) = "#%06X".format(argb and 0xFFFFFF)
+    val theme = mapOf(
+        "text" to cssColor(colors.onSurface.toArgb()), "muted" to cssColor(colors.onSurfaceVariant.toArgb()),
+        "primary" to cssColor(colors.primary.toArgb()), "selected" to cssColor(colors.primaryContainer.toArgb()),
+        "border" to cssColor(colors.outlineVariant.toArgb()), "code-surface" to cssColor(colors.surfaceVariant.toArgb()),
+        "font-size" to "${typography.fontSize.value * density.fontScale}px",
+        "line-height" to "${typography.lineHeight.value * density.fontScale}px",
+        "paragraph-gap" to "${d.spaceMedium.value}px", "tool-gap" to "${d.spaceExtraSmall.value}px",
+        "touch" to "${d.minimumTouchTarget.value}px", "radius" to "${d.spaceSmall.value}px",
+        "minimum-height" to "${minimumHeight.value}px"
+    )
+    val textCallback = rememberUpdatedState(onText)
+    val currentText = rememberUpdatedState(readCurrentText)
+    Column(Modifier.fillMaxWidth()) {
+        if (!preview) Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.End) {
+            TextButton(enabled = enabled && !changing && review == null, modifier = Modifier.testTag("markdown-mode-$id"), onClick = {
+                changing = true
+                scope.launch {
+                    try { coordinator.withCommitted(before = { keyboard?.hide(); focus.clearFocus() }) { reason = null; sourceMode = !sourceMode } }
+                    catch (_: Exception) { onProblem("尚未确认正文输入完成，没有切换编辑模式；请稍后重试。") }
+                    finally { changing = false }
+                }
+            }) { Text(if (useSource) "富文本" else "Markdown 源码", style = MaterialTheme.typography.labelMedium) }
+        }
+        (review ?: reason)?.let { PimStatusBanner(it, PimStatusTone.Warning) }
+        if (useSource) SourceMarkdownBlockView(block, preview, enabled && !changing,
+            readCurrentText = readCurrentText, onText = onText,
+            onSelection = { coordinator.select(NoteInsertion(id, it)) }, minimumHeight = minimumHeight)
+        else AndroidView(
+            factory = { context -> OfflineMarkdownView(context).also { view ->
+                view.blockId = id
+                view.readCurrentText = { currentText.value() }
+                view.onText = { textCallback.value(it) }
+                view.onInsertion = { anchor, focused, marks ->
+                    if (coordinator.isCurrent(id, view)) { richFocused = focused; coordinator.remember(anchor, focused, marks) }
+                }
+                view.onCaret = { top, bottom ->
+                    // The WebView cannot account for the native IME, format bar or LazyColumn viewport.
+                    val start = (top - d.spaceSmall.value).coerceAtLeast(0f)
+                    if (coordinator.isCurrent(id, view)) caret = Rect(0f, start * density.density,
+                        density.density, (bottom + d.spaceSmall.value).coerceAtLeast(start + 1f) * density.density)
+                }
+                view.onHeight = { height = it.dp.coerceAtLeast(minimumHeight) }
+                view.onFailure = { reason = it; sourceMode = true }
+                view.onReviewRequired = { coordinator.review(id, it) }
+                view.onNotice = onProblem
+                view.onPending = { coordinator.pending(view, it) }
+                coordinator.register(id, view); richView = view
+            } },
+            modifier = Modifier.fillMaxWidth().height(height)
+                .onGloballyPositioned { geometry.origin = it.positionInRoot(); requestReveal() }.testTag("rich-markdown-$id"),
+            onReset = null,
+            onRelease = { view -> coordinator.retire(view); if (richView === view) richView = null },
+            update = { it.bind(block.string("text"), enabled && !preview && !changing, theme) }
+        )
+        if (review != null && !preview) TextButton(
+            enabled = enabled && !changing && coordinator.canAcknowledge(id),
+            modifier = Modifier.testTag("note-review-source-$id"),
+            onClick = { coordinator.acknowledge(id); reason = null; sourceMode = true }
+        ) { Text("已核对以上原文，继续") }
+    }
+}
+
+@Composable
+private fun SourceMarkdownBlockView(
+    block: JsonObject, preview: Boolean, enabled: Boolean, readCurrentText: () -> String?,
+    onText: (String) -> Unit, onSelection: (Int) -> Unit,
+    minimumHeight: Dp
 ) {
     val context = LocalContext.current
     val markwon = remember(context) { Markwon.builder(context).usePlugin(object : AbstractMarkwonPlugin() {
@@ -86,9 +227,10 @@ internal fun MarkdownBlockView(
     }, modifier = modifier, update = {
         it.isEnabled = enabled; it.setTextColor(textColor); it.setHintTextColor(hintColor)
         it.applyTypography()
-        if (it.text.toString() != text) {
-            val offset = it.selectionStart.coerceIn(0, text.length)
-            it.setText(text); it.setSelection(offset)
+        val current = readCurrentText() ?: text
+        if (it.text.toString() != current) {
+            val offset = it.selectionStart.coerceIn(0, current.length)
+            it.setText(current); it.setSelection(offset)
         }
     })
 }

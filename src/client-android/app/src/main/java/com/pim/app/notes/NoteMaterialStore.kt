@@ -58,6 +58,31 @@ class NoteMaterialStore(
         }
     }
 
+    fun uploadSnapshot(id: String): NoteUploadSnapshot = synchronized(diskLock) {
+        val input = read(id)
+        val ready = entries().single { it.id == id }
+        require(ready.phase == NoteMaterialPhase.Ready) { "Material is not ready" }
+        val committed = manifest(input)
+        val inputJson = readMaterialFile(inputFile(id))
+        require(materialDigest(inputJson) == committed.inputSha256) { "Pinned input bytes changed" }
+        NoteUploadSnapshot(id, input.document.id, input.document.revision, inputJson,
+            readMaterialFile(manifestFile(id)), committed.files)
+    }
+
+    fun uploadPart(id: String, fileIndex: Int, partIndex: Int, partSize: Int, checkActive: () -> Unit = {}): ByteArray = synchronized(diskLock) {
+        require(partSize in 1..1_048_576 && partIndex >= 0)
+        val snapshot = uploadSnapshot(id)
+        val file = snapshot.files[fileIndex]
+        blobs.verify(file, checkActive)
+        val position = partIndex.toLong() * partSize
+        require(position < file.sizeBytes)
+        val bytes = ByteArray(minOf(partSize.toLong(), file.sizeBytes - position).toInt())
+        java.io.RandomAccessFile(blobs.file(file.sha256), "r").use { stream ->
+            stream.seek(position); stream.readFully(bytes)
+        }
+        checkActive(); bytes
+    }
+
     fun prepare(id: String, checkActive: () -> Unit = {}): NoteMaterialManifest = synchronized(diskLock) {
         val input = read(id)
         if (materialFileExists(manifestFile(id))) {

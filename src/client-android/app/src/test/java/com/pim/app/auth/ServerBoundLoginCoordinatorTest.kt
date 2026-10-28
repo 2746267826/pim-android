@@ -145,7 +145,7 @@ class ServerBoundLoginCoordinatorTest {
                 refreshToken = "refresh-a",
                 expiresAt = "2099-01-01T00:00:00Z",
                 user = UserInfo(
-                    id = "user-a",
+                    id = "11111111-1111-4111-8111-111111111111",
                     username = "alice",
                     displayName = "Alice",
                     role = "user"

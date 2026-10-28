@@ -8,6 +8,8 @@ import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.*
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
@@ -28,10 +30,17 @@ import kotlinx.serialization.json.longOrNull
 @Composable
 internal fun NoteLibraryScreen(
     state: NotesState, selectedId: String?, recording: RecordingState, busy: Boolean,
-    onCreate: () -> Unit, onOpen: (String?) -> Unit, onExit: () -> Unit
+    onCreate: () -> Unit, onOpen: (String?) -> Unit, onExit: (() -> Unit)?,
+    modifier: Modifier = Modifier,
+    uploads: NoteUploadsState = NoteUploadsState(),
+    currentTarget: NoteUploadTarget? = null,
+    onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {}
 ) {
     val d = PimTheme.dimensions
-    Box(Modifier.fillMaxSize()) {
+    var search by rememberSaveable { mutableStateOf("") }
+    val entries = state.entries.filter { entry -> search.isBlank() || entry.title.contains(search, true) ||
+        state.documents[entry.id]?.blocks?.any { it.string("kind") == "markdown" && it.string("text").contains(search, true) } == true }
+    Box(modifier.fillMaxSize()) {
         LazyColumn(
             Modifier.align(Alignment.TopCenter).widthIn(max = d.noteDocumentMaxWidth).fillMaxSize().testTag("notes-library"),
             contentPadding = PaddingValues(start = d.spaceLarge, end = d.spaceLarge, bottom = d.noteDockClearance),
@@ -39,7 +48,7 @@ internal fun NoteLibraryScreen(
         ) {
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    IconButton(onClick = onExit) { Icon(Icons.Default.ArrowBack, "返回今日") }
+                    if (onExit != null) IconButton(onClick = onExit) { Icon(Icons.Default.ArrowBack, "返回应用") }
                     Spacer(Modifier.weight(1f))
                     Text("本机 · 离线记录", style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant)
@@ -50,7 +59,13 @@ internal fun NoteLibraryScreen(
                     Text(if (state.entries.isEmpty()) "留住课堂、会议与每一个想法" else "${state.entries.size} 篇记录，保存在这台设备",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                PimStatusBanner("本地预览版支持笔记、照片、手写和录音；上传、转写与 AI 分析尚未接入。", PimStatusTone.Info)
+                PimStatusBanner("笔记和原始材料保存在本机。结束后可确认上传固定版本；转写与分析暂未开放。", PimStatusTone.Info)
+                Spacer(Modifier.height(d.spaceMedium))
+                OutlinedTextField(search, { search = it }, label = { Text("搜索本机笔记") }, singleLine = true,
+                    leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth().testTag("notes-search"))
+            }
+            if (uploads.jobs.isNotEmpty() || uploads.loadFailed) item {
+                NoteUploadJobs(uploads, currentTarget, onResumeUpload, onPauseUpload)
             }
             if (state.loadFailed) item { PimStatusBanner("本地记录读取失败，原文件保留。请重新打开页面。", PimStatusTone.Error) }
             if (selectedId != null) item { PimStatusBanner("该记录仍在加载或无法读取，不会用空白文档覆盖它。", PimStatusTone.Warning) }
@@ -83,7 +98,8 @@ internal fun NoteLibraryScreen(
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            items(state.entries, key = { it.id }) { entry ->
+            if (state.loaded && entries.isEmpty() && state.entries.isNotEmpty()) item { Text("没有匹配的本机笔记", style = MaterialTheme.typography.bodyMedium) }
+            items(entries, key = { it.id }) { entry ->
                 val note = state.documents[entry.id]
                 OutlinedCard(
                     onClick = { onOpen(entry.id) }, enabled = !entry.damaged && !busy,

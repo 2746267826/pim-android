@@ -59,7 +59,9 @@ class ServerBoundLoginCoordinator @Inject constructor(
                     auth.accessToken,
                     auth.refreshToken,
                     auth.expiresAt,
-                    serverUrl
+                    serverUrl,
+                    auth.user.id,
+                    auth.user.username
                 )
             }
         ) {

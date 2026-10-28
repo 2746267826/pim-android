@@ -90,7 +90,7 @@ class UpdateCheckViewModelTest {
         val restorer = RunningStateRestorer(trackingSettings, permissionRepo, com.pim.app.mobile.logs.StructuredLogRepository(context, trackingSettings) { 0L }, {}, { scheduler.ensurePeriodic() }, { false }, { controller.start() })
         val cleaner = object : WebViewSiteDataCleaner { override fun clearOrigin(origin: String) {} }
         val cacheStore = ScheduleCacheStore(Json { ignoreUnknownKeys = true }, File(context.filesDir, "uc-cache-${System.nanoTime()}"))
-        val fakeApi = object : ApiService {
+        val fakeApi = object : com.pim.app.testing.UnusedNoteOperations {
             override suspend fun getTaskSegments(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
             override suspend fun getTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
             override suspend fun startTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")

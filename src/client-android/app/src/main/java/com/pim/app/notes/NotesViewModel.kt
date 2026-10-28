@@ -22,7 +22,8 @@ class NotesViewModel @Inject constructor(
     val notes: NoteRepository,
     val recordings: RecordingRepository,
     val materials: NoteMaterialRepository,
-    private val saved: SavedStateHandle
+    private val saved: SavedStateHandle,
+    val uploads: NoteUploadRepository
 ) : ViewModel() {
     val selectedId = saved.getStateFlow<String?>("noteId", null)
     private val mutableMessage = MutableStateFlow<String?>(null)
@@ -38,6 +39,7 @@ class NotesViewModel @Inject constructor(
             try { kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { recordings.initialize() } }
             catch (_: Exception) { tell("录音材料暂时无法读取，原始文件保留") }
             materials.initialize()
+            uploads.initialize()
         }
     }
 
@@ -46,6 +48,33 @@ class NotesViewModel @Inject constructor(
     fun tell(text: String) { mutableMessage.value = text }
     fun dismissMessage(text: String) { if (mutableMessage.value == text) mutableMessage.value = null }
     fun dismissCompletion() { mutableCompletion.value = null }
+
+    fun submitUpload(versionId: String, target: NoteUploadTarget) {
+        viewModelScope.launch {
+            try {
+                val id = uploads.submit(versionId, target)
+                tell(when (uploads.state.value.jobs.firstOrNull { it.id == id }?.phase) {
+                    NoteUploadPhase.Uploaded -> "服务器已接收该版本，本次没有创建重复上传"
+                    NoteUploadPhase.Conflict -> "该版本已保存服务器但存在冲突，双方材料保留"
+                    else -> "固定材料已加入上传队列；编辑或补录不会改变此版本"
+                })
+            }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) { tell("未能确认上传队列。请核对账号、服务器、材料和空间；未改用当前新稿，请重新打开上传确认。") }
+        }
+    }
+
+    fun resumeUpload(id: String) { viewModelScope.launch {
+        try { uploads.resume(id) }
+        catch (error: CancellationException) { throw error }
+        catch (_: Exception) { tell("请登录任务原绑定的账号与服务器后继续；原材料与已传分块保留") }
+    } }
+
+    fun pauseUpload(id: String) { viewModelScope.launch {
+        try { uploads.pause(id) }
+        catch (error: CancellationException) { throw error }
+        catch (_: Exception) { tell("未确认暂停成功，请重新核对上传状态") }
+    } }
 
     fun prepareMaterial(noteId: String, anchor: NoteInsertion, cameraToken: String? = null) {
         cancelMaterial()

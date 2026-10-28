@@ -16,6 +16,7 @@ import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
+import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
 import com.pim.app.MainActivity
 import com.pim.app.ui.theme.PimTheme
@@ -28,12 +29,11 @@ class PimRootScreenNavTest {
     val composeTestRule = createAndroidComposeRule<MainActivity>()
 
     private val allTags = listOf(
-        "pim-nav-today", "pim-nav-location", "pim-nav-tracks",
-        "pim-nav-schedule", "pim-nav-status", "pim-nav-settings"
+        "pim-nav-today", "pim-nav-notes", "pim-nav-more", "pim-nav-settings"
     )
 
     @Test
-    fun navigationHasSixItemsWithCorrectTags() {
+    fun navigationHasFourPrimaryItemsWithCorrectTags() {
         for (tag in allTags) {
             composeTestRule.onNodeWithTag(tag).assertIsDisplayed()
         }
@@ -41,14 +41,16 @@ class PimRootScreenNavTest {
 
     @Test
     fun navigationLabelsAreChinese() {
-        for (label in listOf("今日", "定位", "轨迹", "日程", "状态", "设置")) {
+        for (label in listOf("今日", "笔记", "更多", "设置")) {
             composeTestRule.onNodeWithText(label).assertIsDisplayed()
         }
     }
 
     @Test
     fun clickingLocationNavShowsLocationPage() {
-        composeTestRule.onNodeWithTag("pim-nav-location").performClick()
+        composeTestRule.onNodeWithTag("pim-nav-more").performClick()
+        for (tag in listOf("location", "tracks", "schedule", "status")) composeTestRule.onNodeWithTag("pim-more-$tag").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("pim-more-location").performScrollTo().performClick()
         composeTestRule.onNodeWithTag("location-status-section").assertIsDisplayed()
     }
 }
@@ -58,8 +60,7 @@ class PimBottomNavigationLayoutTest {
     val composeTestRule = createAndroidComposeRule<ComponentActivity>()
 
     private val allTags = listOf(
-        "pim-nav-today", "pim-nav-location", "pim-nav-tracks",
-        "pim-nav-schedule", "pim-nav-status", "pim-nav-settings"
+        "pim-nav-today", "pim-nav-notes", "pim-nav-more", "pim-nav-settings"
     )
 
     @Test
@@ -111,10 +112,10 @@ class PimBottomNavigationLayoutTest {
                 )
             }
 
-            composeTestRule.onNodeWithTag("pim-nav-location").performClick()
+            composeTestRule.onNodeWithTag("pim-nav-notes").performClick()
             assertTrue(
-                "clicking Location at ${widthDpValue}dp",
-                selected == PimDestination.Location
+                "clicking Notes at ${widthDpValue}dp",
+                selected == PimDestination.Notes
             )
         }
     }

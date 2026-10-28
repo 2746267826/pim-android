@@ -109,7 +109,7 @@ class NativeNotesExperienceTest {
         compose.waitUntil(20_000) { !model.busy.value && model.completion.value != null }
         assertFalse(model.recordings.state.value.active)
         compose.onNodeWithTag("note-completion").assertIsDisplayed()
-        compose.onNodeWithText("当前预览版尚不能上传、转写或生成 AI 分析。").assertIsDisplayed()
+        compose.onNodeWithText("可在材料版本中核对目标并上传。上传只保存原材料，不自动发起转写或 AI 分析。").assertIsDisplayed()
         evidence("completed")
         compose.onNodeWithTag("note-continue-editing").performScrollTo().performClick()
         compose.onNodeWithTag("note-title").performScrollTo().performTextReplacement("结束后仍可编辑")

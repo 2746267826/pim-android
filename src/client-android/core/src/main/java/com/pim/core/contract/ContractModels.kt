@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 7915843f576c64303307c5852be3f046ead948d4ca394eaacd8d21eab118ce8e)
+//   契约快照 : contract/openapi.json (sha256 506c34ab015746e5ebe8ec8aa3c8568c3cb5652b25d1e23b75f59cf6f2ff8061)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -30,6 +30,17 @@ data class AuthResponseApiResponse(
     val data: AuthResponse? = null,
     val message: String,
     val timestamp: String,
+)
+
+/** 契约 `components.schemas.BeginNoteMaterialUploadRequest`（request）。 */
+@Serializable
+data class BeginNoteMaterialUploadRequest(
+    val baseVersionId: String? = null,
+    val inputJson: String,
+    val manifestJson: String,
+    val noteId: String,
+    val storageConsent: Boolean,
+    val versionId: String,
 )
 
 /** 契约 `components.schemas.CalendarOperationResult`（response）。 */
@@ -1016,6 +1027,73 @@ data class MobileUsageSummaryResponse(
 data class MobileUsageSummaryResponseApiResponse(
     val code: Int,
     val data: MobileUsageSummaryResponse? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteMaterialUploadDto`（response）。 */
+@Serializable
+data class NoteMaterialUploadDto(
+    val baseVersionId: String? = null,
+    val createdAt: String,
+    val currentVersionId: String? = null,
+    val expiresAt: String,
+    val files: List<NoteMaterialUploadFileDto>,
+    val hasConflict: Boolean,
+    val isCurrent: Boolean,
+    val limits: NoteMaterialUploadLimitsDto,
+    val noteId: String,
+    val phase: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteMaterialUploadDtoApiResponse`（response）。 */
+@Serializable
+data class NoteMaterialUploadDtoApiResponse(
+    val code: Int,
+    val data: NoteMaterialUploadDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteMaterialUploadFileDto`（response）。 */
+@Serializable
+data class NoteMaterialUploadFileDto(
+    val index: Int,
+    val kind: String,
+    val partCount: Int,
+    val path: String,
+    val sha256: String,
+    val sizeBytes: Long,
+    val uploadedParts: List<Int>,
+)
+
+/** 契约 `components.schemas.NoteMaterialUploadLimitsDto`（response）。 */
+@Serializable
+data class NoteMaterialUploadLimitsDto(
+    val maxFiles: Int,
+    val maxMetadataCharacters: Int,
+    val maxPendingVersions: Int,
+    val maxUserReservedBytes: Long,
+    val maxVersionBytes: Long,
+    val maxVersionsPerUser: Int,
+    val partSizeBytes: Int,
+    val uploadExpiryHours: Int,
+)
+
+/** 契约 `components.schemas.NoteMaterialVersionDto`（response）。 */
+@Serializable
+data class NoteMaterialVersionDto(
+    val inputJson: String,
+    val manifestJson: String,
+    val upload: NoteMaterialUploadDto,
+)
+
+/** 契约 `components.schemas.NoteMaterialVersionDtoApiResponse`（response）。 */
+@Serializable
+data class NoteMaterialVersionDtoApiResponse(
+    val code: Int,
+    val data: NoteMaterialVersionDto? = null,
     val message: String,
     val timestamp: String,
 )

@@ -287,6 +287,53 @@ class TokenManagerTest {
         assertNull(manager.accessToken())
     }
 
+    @Test fun ownedSessionPersistsAtomicallyAndInvalidOwnerCannotReplaceIt() {
+        val prefs = InMemorySharedPreferences()
+        val factory = FakeSecurePreferencesFactory(prefs)
+        val manager = TokenManager(factory, nowMillis = { 1_000L })
+        val owner = "11111111-1111-4111-8111-111111111111"
+        assertTrue(manager.saveOwned("access-a", "refresh-a", 4_000L, "https://pim.example", owner, "alice"))
+        assertEquals(owner, TokenManager(factory, nowMillis = { 1_000L }).snapshot().ownerId)
+        assertEquals("alice", manager.snapshot().ownerName)
+        val before = manager.snapshot()
+        assertFalse(manager.saveOwned("access-b", "refresh-b", 4_000L, "https://pim.example", "alice", "bob"))
+        assertEquals(before, manager.snapshot())
+        assertTrue(manager.save("legacy-a", "legacy-r", 4_000L, "https://pim.example"))
+        assertNull(manager.snapshot().ownerId)
+    }
+
+    @Test fun staleRefreshAndClearCannotOverwriteOrClearNewlyLoggedInOwner() {
+        val manager = manager(1_000L)
+        val a = "11111111-1111-4111-8111-111111111111"
+        val b = "22222222-2222-4222-8222-222222222222"
+        assertTrue(manager.saveOwned("access-a", "refresh-a", 4_000L, "https://pim.example", a, "alice"))
+        val captured = manager.snapshot()
+        assertTrue(manager.saveOwned("access-b", "refresh-b", 4_000L, "https://pim.example", b, "bob"))
+        assertFalse(manager.saveRefreshed(captured, AuthTokens("late-a", "late-ra", 5_000L), a, "alice"))
+        assertFalse(manager.clearIfCurrent(captured))
+        assertEquals(b, manager.snapshot().ownerId)
+        assertEquals("access-b", manager.accessToken())
+    }
+
+    @Test fun refreshCanRotateTokensButCannotChangeTheirBoundOwner() = runBlocking {
+        val manager = manager(1_000L)
+        val a = "11111111-1111-4111-8111-111111111111"
+        val b = "22222222-2222-4222-8222-222222222222"
+        assertTrue(manager.saveOwned("access-a", "refresh-a", 1_500L, "https://pim.example", a, "alice"))
+        val coordinator = AuthRefreshCoordinator(manager, AuthRefreshOperation { _, _ ->
+            AuthRefreshResult.Success(AuthTokens("bad-b", "bad-rb", 5_000L), b, "bob")
+        }, nowMillis = { 2_000L })
+        assertFalse(coordinator.refreshIfExpired("https://pim.example"))
+        assertNull(manager.snapshot().tokens)
+        assertTrue(manager.saveOwned("access-a", "refresh-a", 1_500L, "https://pim.example", a, "alice"))
+        val valid = AuthRefreshCoordinator(manager, AuthRefreshOperation { _, _ ->
+            AuthRefreshResult.Success(AuthTokens("new-a", "new-ra", 5_000L), a, "alice")
+        }, nowMillis = { 2_000L })
+        assertTrue(valid.refreshIfExpired("https://pim.example"))
+        assertEquals(a, manager.snapshot().ownerId)
+        assertEquals("new-a", manager.accessToken())
+    }
+
     private fun manager(nowMillis: Long): TokenManager {
         return TokenManager(
             FakeSecurePreferencesFactory(InMemorySharedPreferences()),

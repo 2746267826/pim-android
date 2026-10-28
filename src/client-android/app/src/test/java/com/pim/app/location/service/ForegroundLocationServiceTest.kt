@@ -265,7 +265,7 @@ class ForegroundLocationServiceTest {
         val serverSettings = ServerSettingsStore(context, authStore).also {
             runCatching { it.setBaseUrl("http://127.0.0.1:5858/api/v1/") }
         }
-        val api = object : ApiService {
+        val api = object : com.pim.app.testing.UnusedNoteOperations {
             override suspend fun getTaskSegments(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
             override suspend fun getTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
             override suspend fun startTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
@@ -848,7 +848,7 @@ class ForegroundLocationServiceTest {
         val nm = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
         nm.cancel(LocationNotificationRenderer.NOTIFICATION_ID)
 
-        val apiService = object : ApiService {
+        val apiService = object : com.pim.app.testing.UnusedNoteOperations {
             override suspend fun getTaskSegments(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
             override suspend fun getTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
             override suspend fun startTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
@@ -3522,7 +3522,7 @@ class ForegroundLocationServiceTest {
         }
     }
 
-    private class GatedApiService : ApiService {
+    private class GatedApiService : com.pim.app.testing.UnusedNoteOperations {
         override suspend fun getTaskSegments(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
         override suspend fun getTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
         override suspend fun startTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")

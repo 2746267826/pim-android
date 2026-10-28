@@ -781,7 +781,7 @@ class ScheduleWindowRepositoryTest {
         status = "confirmed",
         uid = "uid-1",id = id, title = title, location = location, dtStart = start, dtEnd = end)
 
-    class FakeApiService : ApiService {
+    class FakeApiService : com.pim.app.testing.UnusedNoteOperations {
         override suspend fun getTaskSegments(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
         override suspend fun getTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
         override suspend fun startTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
@@ -846,7 +846,7 @@ class ScheduleWindowRepositoryTest {
         override suspend fun getClientLatest() = com.pim.core.contract.ClientShellLatestResponse()
     }
 
-    class ScriptedApiService : ApiService {
+    class ScriptedApiService : com.pim.app.testing.UnusedNoteOperations {
         override suspend fun getTaskSegments(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
         override suspend fun getTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")
         override suspend fun startTaskTimer(id: String) = error("not mocked: 任务计时由内嵌 web 工作台使用")

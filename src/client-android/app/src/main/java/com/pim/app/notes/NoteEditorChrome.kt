@@ -55,11 +55,11 @@ internal fun NoteEditorTopBar(
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
                     DropdownMenuItem(text = { Text("本篇录音") }, leadingIcon = { Icon(Icons.Default.GraphicEq, null) },
                         onClick = { menu = false; onRecordings() })
-                    DropdownMenuItem(text = { Text("材料版本 · 仅本机") }, leadingIcon = { Icon(Icons.Default.Layers, null) },
+                    DropdownMenuItem(text = { Text("材料版本与上传") }, leadingIcon = { Icon(Icons.Default.Layers, null) },
                         modifier = Modifier.testTag("note-material-versions"), onClick = { menu = false; onMaterials() })
                     DropdownMenuItem(text = { Text("导出文档包（不含录音）") }, leadingIcon = { Icon(Icons.Default.FileDownload, null) },
                         enabled = saved, onClick = { menu = false; onExport() })
-                    DropdownMenuItem(text = { Text("关于此预览版") }, onClick = { menu = false; onAbout() })
+                    DropdownMenuItem(text = { Text("关于笔记") }, onClick = { menu = false; onAbout() })
                 }
             }
             Button(onClick = onFinish, enabled = !busy, shape = CircleShape,

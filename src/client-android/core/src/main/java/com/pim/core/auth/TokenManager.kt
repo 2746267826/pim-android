@@ -77,7 +77,9 @@ class TokenManager(
         prefs = p
         currentSnapshot = AuthSessionSnapshot(
             tokens = snapshot?.tokens,
-            serverIdentity = snapshot?.serverIdentity
+            serverIdentity = snapshot?.serverIdentity,
+            ownerId = snapshot?.ownerId,
+            ownerName = snapshot?.ownerName
         )
     }
 
@@ -85,7 +87,9 @@ class TokenManager(
         accessToken: String,
         refreshToken: String,
         expiresAt: String?,
-        serverUrl: String
+        serverUrl: String,
+        ownerId: String? = null,
+        ownerName: String? = null
     ): Boolean {
         val expiresAtUtcMillis = expiresAt
             ?.takeIf(String::isNotBlank)
@@ -94,7 +98,8 @@ class TokenManager(
         val serverIdentity = runCatching {
             PimServerEndpoints.from(serverUrl).trustedOrigin
         }.getOrNull() ?: return false
-        return save(accessToken, refreshToken, expiresAtUtcMillis, serverIdentity)
+        return if (ownerId != null) saveOwned(accessToken, refreshToken, expiresAtUtcMillis, serverIdentity, ownerId, ownerName)
+            else save(accessToken, refreshToken, expiresAtUtcMillis, serverIdentity)
     }
 
     override fun snapshot(): AuthSessionSnapshot = synchronized(lock) { currentSnapshot }
@@ -104,7 +109,27 @@ class TokenManager(
         refreshToken: String,
         expiresAtUtcMillis: Long,
         serverIdentity: String
-    ): Boolean {
+    ): Boolean = persist(accessToken, refreshToken, expiresAtUtcMillis, serverIdentity, null, null)
+
+    override fun saveOwned(accessToken: String, refreshToken: String, expiresAtUtcMillis: Long,
+        serverIdentity: String, ownerId: String, ownerName: String?): Boolean {
+        if (!validOwnerId(ownerId)) return false
+        return persist(accessToken, refreshToken, expiresAtUtcMillis, serverIdentity, ownerId.lowercase(), ownerName?.take(200))
+    }
+
+    override fun saveRefreshed(expected: AuthSessionSnapshot, tokens: AuthTokens, ownerId: String?, ownerName: String?): Boolean = synchronized(lock) {
+        if (currentSnapshot != expected || expected.serverIdentity == null) return@synchronized false
+        if (expected.ownerId != null && ownerId != expected.ownerId) return@synchronized false
+        if (ownerId != null) saveOwned(tokens.accessToken, tokens.refreshToken, tokens.expiresAtUtcMillis, expected.serverIdentity, ownerId, ownerName)
+        else save(tokens.accessToken, tokens.refreshToken, tokens.expiresAtUtcMillis, expected.serverIdentity)
+    }
+
+    override fun clearIfCurrent(expected: AuthSessionSnapshot): Boolean = synchronized(lock) {
+        if (currentSnapshot != expected) false else clear()
+    }
+
+    private fun persist(accessToken: String, refreshToken: String, expiresAtUtcMillis: Long,
+        serverIdentity: String, ownerId: String?, ownerName: String?): Boolean {
         val tokens = AuthTokens(accessToken, refreshToken, expiresAtUtcMillis)
         if (!tokens.isValidAt(nowMillis())) return false
         val normalizedIdentity = runCatching {
@@ -119,11 +144,15 @@ class TokenManager(
                     .putString("refresh_token", tokens.refreshToken)
                     .putLong("expires_at", tokens.expiresAtUtcMillis)
                     .putString("server_identity", normalizedIdentity)
+                    .putString("owner_id", ownerId)
+                    .putString("owner_name", ownerName)
                     .commit()
                 if (!committed) throw IllegalStateException("Secure token storage write failed")
                 currentSnapshot = AuthSessionSnapshot(
                     tokens = tokens,
-                    serverIdentity = normalizedIdentity
+                    serverIdentity = normalizedIdentity,
+                    ownerId = ownerId,
+                    ownerName = ownerName
                 )
                 true
             } catch (failure: Exception) {
@@ -187,7 +216,9 @@ class TokenManager(
         }
         return StoredSession(
             tokens = AuthTokens(accessToken, refreshToken, getLong("expires_at", 0L)),
-            serverIdentity = serverIdentity
+            serverIdentity = serverIdentity,
+            ownerId = getString("owner_id", null)?.takeIf(::validOwnerId),
+            ownerName = getString("owner_name", null)?.take(200)
         )
     }
 
@@ -199,10 +230,16 @@ class TokenManager(
 
     private data class StoredSession(
         val tokens: AuthTokens,
-        val serverIdentity: String
+        val serverIdentity: String,
+        val ownerId: String?,
+        val ownerName: String?
     )
 
     private companion object {
         const val TAG = "TokenManager"
     }
 }
+
+fun validOwnerId(value: String): Boolean = value.length == 36 && runCatching {
+    java.util.UUID.fromString(value).toString() == value.lowercase()
+}.getOrDefault(false)

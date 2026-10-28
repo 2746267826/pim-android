@@ -42,10 +42,13 @@ fun NativeNotesScreen(
     onPlay: (RecordingSession, Int) -> Unit, onExport: (NoteDocument) -> Unit,
     onRetryMaterial: (String) -> Unit, onExportMaterial: (String) -> Unit,
     onExit: () -> Unit = {}, onStopRecording: () -> Unit = {},
-    completion: NoteCompletion? = null, onDismissCompletion: () -> Unit = {}, onDismissMessage: (String) -> Unit = {}
+    completion: NoteCompletion? = null, onDismissCompletion: () -> Unit = {}, onDismissMessage: (String) -> Unit = {},
+    uploads: NoteUploadsState = NoteUploadsState(), uploadTarget: NoteUploadTarget? = null,
+    onUpload: (String, NoteUploadTarget) -> Unit = { _, _ -> }, onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {}
 ) {
     val d = PimTheme.dimensions
     val note = state.documents[selectedId]
+    var uploadVersionId by rememberSaveable { mutableStateOf<String?>(null) }
     BackHandler(busy && note == null) { onProblem("正在处理本地材料，请稍候") }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(message) {
@@ -57,7 +60,8 @@ fun NativeNotesScreen(
     Surface(Modifier.fillMaxSize(), color = if (note == null) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface) {
         Box(Modifier.fillMaxSize().imePadding()) {
             if (note == null) {
-                NoteLibraryScreen(state, selectedId, recording, busy, onCreate, onOpen, onExit)
+                NoteLibraryScreen(state, selectedId, recording, busy, onCreate, onOpen, onExit,
+                    uploads = uploads, currentTarget = uploadTarget, onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload)
             } else key(note.id) {
                 var preview by rememberSaveable { mutableStateOf(false) }
                 val scope = rememberCoroutineScope()
@@ -200,19 +204,24 @@ fun NativeNotesScreen(
                 }
                 if (confirmFinish) AlertDialog(onDismissRequest = { confirmFinish = false },
                     title = { Text("结束这次记录？") },
-                    text = { Text("本篇录音会停止，笔记与全部录音会固定为一个本机版本。之后仍可继续编辑和补录。\n\n此预览版尚不能上传、转写或生成分析。") },
+                    text = { Text("本篇录音会停止，笔记与全部录音会固定为一个本机版本。之后仍可继续编辑和补录。\n\n材料齐备后可核对目标再上传，不会自动发送或调用模型。") },
                     confirmButton = { TextButton(onClick = { confirmFinish = false; afterInput { onFinish(it.id) } }, modifier = Modifier.testTag("note-confirm-finish")) { Text("结束并保存") } },
                     dismissButton = { TextButton(onClick = { confirmFinish = false }) { Text("继续记录") } })
-                if (showAbout) AlertDialog(onDismissRequest = { showAbout = false }, title = { Text("本机笔记 · 预览版") },
-                    text = { Text("支持离线编辑 Markdown、拍照、手写和后台录音。内容仅保存在这台设备，未上传。\n\n上传、逐段转写、完整记录和独立分析仍在完整首版路线图中，当前尚未接入。") },
+                if (showAbout) AlertDialog(onDismissRequest = { showAbout = false }, title = { Text("笔记与原始材料") },
+                    text = { Text("支持离线编辑 Markdown、拍照、手写和后台录音。材料版本中的服务器状态单独显示；本机保存成功不等于已上传。\n\n逐段转写、完整记录和独立分析尚未在安卓开放。") },
                     confirmButton = { TextButton(onClick = { showAbout = false }) { Text("知道了") } })
-                if (showMaterials) NoteMaterialsSheet(note, sessions, materials, busy, { showMaterials = false }, onRetryMaterial, onExportMaterial)
+                if (showMaterials) NoteMaterialsSheet(note, sessions, materials, busy, { showMaterials = false }, onRetryMaterial, onExportMaterial,
+                    onUpload = { uploadVersionId = it; showMaterials = false }, uploads = uploads, target = uploadTarget,
+                    onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload)
                 if (showRecordings) NoteRecordingsSheet(sessions, recording, playing, { showRecordings = false }, onPlay, onPauseResume, onStopRecording)
                 completion?.takeIf { it.noteId == note.id }?.let { finished ->
                     NoteCompletionSheet(materials.entries.firstOrNull { it.id == finished.versionId }, onDismissCompletion,
                         onMaterials = { onDismissCompletion(); showMaterials = true },
                         onLibrary = { onDismissCompletion(); onOpen(null) })
                 }
+            }
+            materials.entries.firstOrNull { it.id == uploadVersionId }?.let { version ->
+                NoteUploadConsentSheet(version, uploadTarget, { uploadVersionId = null }, onUpload)
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(horizontal = d.spaceLarge)
                 .padding(bottom = if (note != null) d.noteDockClearance else d.spaceLarge).testTag("note-message"))

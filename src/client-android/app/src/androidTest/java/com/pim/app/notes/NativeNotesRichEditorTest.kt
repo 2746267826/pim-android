@@ -164,20 +164,29 @@ class NativeNotesRichEditorTest {
             val bounds = NoteJson.parseToJsonElement(eval("(()=>{const r=window.getSelection().getRangeAt(0).getBoundingClientRect();return {top:r.top,bottom:r.bottom}})()")).jsonObject
             val webOrigin = IntArray(2)
             val rootOrigin = IntArray(2)
+            val beforeLayout = IntArray(2)
             var scale = 1f
-            compose.runOnUiThread {
+            compose.runOnUiThread { web().getLocationOnScreen(beforeLayout) }
+            val documentNode = compose.onNodeWithTag("note-document").fetchSemanticsNode()
+            val toolsNode = compose.onAllNodesWithTag("note-text-tools").fetchSemanticsNodes().singleOrNull()
+            var document = androidx.compose.ui.geometry.Rect.Zero
+            var tools: androidx.compose.ui.geometry.Rect? = null
+            // Semantics queries wait for placement. Sample native and Compose bounds after that same barrier.
+            compose.runOnIdle {
                 web().getLocationOnScreen(webOrigin)
                 compose.activity.findViewById<ViewGroup>(android.R.id.content).getChildAt(0).getLocationOnScreen(rootOrigin)
                 scale = compose.activity.resources.displayMetrics.density
+                document = documentNode.boundsInRoot
+                tools = toolsNode?.boundsInRoot
             }
-            val document = compose.onNodeWithTag("note-document").fetchSemanticsNode().boundsInRoot
-            val tools = compose.onAllNodesWithTag("note-text-tools").fetchSemanticsNodes().singleOrNull()?.boundsInRoot
             val top = webOrigin[1] + bounds.getValue("top").jsonPrimitive.float * scale
             val bottom = webOrigin[1] + bounds.getValue("bottom").jsonPrimitive.float * scale
-            lastBounds = "caret=$top..$bottom, nativeCaret=${receivedCaret.get()}, rootOrigin=${rootOrigin.toList()}, document=$document, tools=$tools, webOrigin=${webOrigin.toList()}"
-            tools != null && bottom > top && top >= rootOrigin[1] + document.top &&
-                bottom <= rootOrigin[1] + minOf(document.bottom, tools.top)
+            lastBounds = "caret=$top..$bottom, nativeCaret=${receivedCaret.get()}, beforeLayout=${beforeLayout.toList()}, rootOrigin=${rootOrigin.toList()}, document=$document, tools=$tools, webOrigin=${webOrigin.toList()}"
+            val currentTools = tools
+            currentTools != null && bottom > top && top >= rootOrigin[1] + document.top &&
+                bottom <= rootOrigin[1] + minOf(document.bottom, currentTools.top)
         } }
+        android.util.Log.i("PimCaretEvidence", lastBounds)
         assertEquals(JsonPrimitive(expectedBefore).toString(), eval("JSON.parse(window.PimEditor.snapshot(true)).before"))
         captureEditorEvidence("caret-visible")
         eval("document.execCommand('insertText',false,'补充');true")

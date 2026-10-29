@@ -69,9 +69,13 @@ class NativeNotesDocumentTest {
         compose.waitUntil(5000) { model.selectedId.value == snapshot.id }
         assertEquals(snapshot, note())
         compose.onNodeWithTag("note-preview").performClick()
+        awaitPreview("编辑笔记")
         compose.onNodeWithTag("note-preview").performClick()
+        awaitPreview("预览笔记")
         assertEquals(snapshot, note())
         compose.onNodeWithContentDescription("返回记录列表").performClick()
+        compose.waitUntil(5000) { model.selectedId.value == null }
+        compose.onNodeWithTag("notes-library").performScrollToNode(hasTestTag("note-open-${snapshot.id}"))
         compose.onNodeWithTag("note-open-${snapshot.id}").performScrollTo().performClick()
         assertEquals(snapshot, note())
     }
@@ -185,6 +189,21 @@ class NativeNotesDocumentTest {
             SystemClock.sleep(100)
         }
         error("Dedicated emulator camera control not found: $id")
+    }
+
+    private fun awaitPreview(description: String) {
+        try {
+            compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("note-preview") and hasContentDescription(description) and isEnabled()).fetchSemanticsNodes().size == 1 }
+        } catch (failure: Throwable) {
+            println("Preview transition failed: busy=${model.busy.value}, message=${model.message.value}, finishing=${compose.activity.isFinishing}")
+            println(compose.onRoot(useUnmergedTree = true).printToString().take(24_000))
+            val folder = File(compose.activity.getExternalFilesDir(null), "native-note-upload-qa").apply { mkdirs() }
+            InstrumentationRegistry.getInstrumentation().uiAutomation.takeScreenshot()?.let { bitmap ->
+                File(folder, "document-preview-failure.png").outputStream().use { bitmap.compress(Bitmap.CompressFormat.PNG, 100, it) }
+                bitmap.recycle()
+            }
+            throw failure
+        }
     }
 
     private fun create() {

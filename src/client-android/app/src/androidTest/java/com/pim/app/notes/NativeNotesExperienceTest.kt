@@ -67,6 +67,8 @@ class NativeNotesExperienceTest {
         assertTrue("The final content must scroll above the floating controls", end.bottom <= dock.top)
         compose.onNodeWithTag("note-finish").assertIsDisplayed()
         compose.onNodeWithContentDescription("返回记录列表").performClick()
+        compose.waitUntil(5000) { model.selectedId.value == null }
+        compose.onNodeWithTag("notes-library").performScrollToNode(hasTestTag("note-open-${noteId}"))
         compose.onNodeWithTag("note-open-${noteId}").assertIsDisplayed()
         evidence("library")
     }

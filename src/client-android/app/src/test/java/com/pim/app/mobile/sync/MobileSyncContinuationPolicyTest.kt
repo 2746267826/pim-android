@@ -227,6 +227,78 @@ class MobileSyncContinuationPolicyTest {
     }
 
     @Test
+    fun `lease lost remains retryable and reuses the same stable batch generation`() {
+        val binding = UsageBatchRecoveryBinding(
+            serverIdentity = "https://pim.example",
+            ownerId = "11111111-1111-1111-1111-111111111111",
+            payloadFingerprint = "payload-a"
+        )
+        val initial = UsageBatchRecoveryState(binding = binding)
+
+        val retryable = usageBatchRecoveryStateAfterConflict(
+            state = initial,
+            reason = UsageBatchBlockReason.LEASE_LOST,
+            message = "lease lost"
+        )
+
+        assertFalse(retryable.blockedBy409)
+        assertEquals(UsageBatchBlockReason.LEASE_LOST, retryable.blockReason)
+        assertEquals(0, retryable.recoveryEpoch)
+        assertEquals(1, retryable.noProgressAttempts)
+        assertFalse(
+            advanceUsageBatchRecoveryOnManualRetry(retryable, binding).batchIdRotated
+        )
+
+        val legacyLatched = retryable.copy(blockedBy409 = true)
+        assertFalse(normalizeUsageBatchRecoveryState(legacyLatched).blockedBy409)
+
+        val items = setOf(MobileAcknowledgementItem("usage-event", "7"))
+        assertEquals(
+            stableBatchId("device", "start", "end", items, recoveryEpoch = 0),
+            stableBatchId(
+                "device",
+                "start",
+                "end",
+                items,
+                recoveryEpoch = normalizeUsageBatchRecoveryState(legacyLatched).recoveryEpoch
+            )
+        )
+    }
+
+    @Test
+    fun `payload and unknown conflicts stay latched while retry exhausted alone rotates`() {
+        val binding = UsageBatchRecoveryBinding(
+            serverIdentity = "https://pim.example",
+            ownerId = "11111111-1111-1111-1111-111111111111",
+            payloadFingerprint = "payload-a"
+        )
+        val initial = UsageBatchRecoveryState(binding = binding)
+
+        val payload = usageBatchRecoveryStateAfterConflict(
+            initial,
+            UsageBatchBlockReason.PAYLOAD_CONFLICT,
+            "payload conflict"
+        )
+        val unknown = usageBatchRecoveryStateAfterConflict(
+            initial,
+            UsageBatchBlockReason.UNKNOWN_CONFLICT,
+            "unknown conflict"
+        )
+        val exhausted = usageBatchRecoveryStateAfterConflict(
+            initial,
+            UsageBatchBlockReason.RETRY_EXHAUSTED,
+            "retry exhausted"
+        )
+
+        assertTrue(payload.blockedBy409)
+        assertTrue(unknown.blockedBy409)
+        assertTrue(exhausted.blockedBy409)
+        assertFalse(advanceUsageBatchRecoveryOnManualRetry(payload, binding).batchIdRotated)
+        assertFalse(advanceUsageBatchRecoveryOnManualRetry(unknown, binding).batchIdRotated)
+        assertTrue(advanceUsageBatchRecoveryOnManualRetry(exhausted, binding).batchIdRotated)
+    }
+
+    @Test
     fun `recovery epoch changes batch id while preserving deterministic item signature`() {
         val items = setOf(
             MobileAcknowledgementItem("usage-event", "1"),

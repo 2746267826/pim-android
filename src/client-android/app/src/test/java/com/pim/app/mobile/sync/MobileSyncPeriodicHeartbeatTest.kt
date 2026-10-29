@@ -26,8 +26,11 @@ import com.pim.core.auth.TokenManager
 import com.pim.core.contract.DaemonHeartbeatDtoApiResponse
 import com.pim.core.contract.MobileLocationPointsUploadResultApiResponse
 import com.pim.core.network.ApiService
+import com.pim.core.network.ApiClientProvider
 import com.pim.core.settings.ServerSettingsStore
 import java.lang.reflect.Proxy
+import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.test.runTest
@@ -100,10 +103,16 @@ class MobileSyncPeriodicHeartbeatTest {
         val trackSettings = TrackingSettingsStore(trackPrefs)
         val logs = StructuredLogRepository(context, trackSettings) { System.currentTimeMillis() }
         val tokenManager = TokenManager(TestSecurePreferencesFactory(trackPrefs))
+        val serverSettingsStore = ServerSettingsStore(context, tokenManager)
 
         return MobileSyncCoordinator(
             context = context,
             api = api,
+            apiClientProvider = ApiClientProvider(
+                OkHttpClient(),
+                Json { ignoreUnknownKeys = true },
+                serverSettingsStore
+            ),
             tokenManager = tokenManager,
             usageAccessChecker = UsageAccessChecker(context),
             usageEventCollector = UsageEventCollector(context, UsageAccessChecker(context)),
@@ -111,7 +120,7 @@ class MobileSyncPeriodicHeartbeatTest {
             database = db,
             logs = logs,
             heartbeatReporter = MobileHeartbeatReporter(context, api),
-            serverSettingsStore = ServerSettingsStore(context, tokenManager),
+            serverSettingsStore = serverSettingsStore,
             locationUploadCoordinator = LocationUploadCoordinator(context, db, api, DeviceIdentityProvider(context)),
             forensicUploadCoordinator = ForensicUploadCoordinator(
                 context = context,

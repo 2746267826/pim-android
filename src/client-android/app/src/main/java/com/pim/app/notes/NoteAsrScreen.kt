@@ -15,6 +15,8 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.semantics
+import androidx.compose.ui.semantics.stateDescription
 import androidx.compose.ui.text.style.TextOverflow
 import com.pim.app.ui.components.PimStatusBanner
 import com.pim.app.ui.components.PimStatusTone
@@ -602,8 +604,13 @@ private fun SegmentCard(
                     modifier = Modifier.testTag("note-asr-segment-select-${segment.index}"),
                 )
                 Column(Modifier.weight(1f)) {
-                    Text("内部片 ${segment.index + 1} · ${noteAsrWireStatusLabel(segment.status)}",
-                        style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "内部片 ${segment.index + 1} · ${noteAsrWireStatusLabel(segment.status)}",
+                        style = MaterialTheme.typography.titleSmall,
+                        modifier = Modifier
+                            .testTag("note-asr-segment-status-${record.taskId}-${segment.index}")
+                            .semantics { stateDescription = segment.status },
+                    )
                     Text("录音段 ${segment.recordingSegment} · 分块 ${segment.chunkIndex} · " +
                         "录音内 ${asrDuration(segment.recordingOffsetSamples)} · 全篇 ${asrDuration(segment.timelineOffsetSamples)}",
                         style = MaterialTheme.typography.bodySmall,
@@ -621,11 +628,16 @@ private fun SegmentCard(
                 color = if (segment.transcript.isNullOrBlank()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
             )
             segment.attempts.lastOrNull()?.let { attempt ->
-                Text("最近尝试 ${noteAsrWireStatusLabel(attempt.status)} · ${attempt.requestId.take(8)}" +
-                    (attempt.errorMessage?.takeIf(String::isNotBlank)?.let { " · $it" } ?: ""),
+                Text(
+                    "最近尝试 ${noteAsrWireStatusLabel(attempt.status)} · ${attempt.requestId.take(8)}" +
+                        (attempt.errorMessage?.takeIf(String::isNotBlank)?.let { " · $it" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (attempt.errorMessage.isNullOrBlank()) MaterialTheme.colorScheme.onSurfaceVariant
-                    else MaterialTheme.colorScheme.error)
+                    else MaterialTheme.colorScheme.error,
+                    modifier = Modifier
+                        .testTag("note-asr-attempt-status-${record.taskId}-${segment.index}")
+                        .semantics { stateDescription = attempt.status },
+                )
             }
             if (selecting && !eligible) Text(
                 if (segment.status in setOf("Succeeded", "Running", "Queued"))

@@ -169,6 +169,22 @@ class NoteAsrTaskStoreTest {
         assertFalse(after.canClaimWholeComplete())
     }
 
+    @Test fun needsAttentionUsesChineseFailureLabelWithoutClaimingSuccess() {
+        val store = store()
+        val intent = store.createIntent(source, null, binding, "alice", destination, "auto")
+        store.importRemote(
+            task(intent.taskId, phase = "NeedsAttention", completedSegments = 1),
+            binding,
+            "alice",
+            null,
+        )
+        val status = store.read(intent.taskId).statusView(target())
+        assertEquals(NoteAsrStatus.NeedsAttention, status.status)
+        assertEquals("存在失败或未确认片段", status.label)
+        assertTrue(status.detail.contains("失败"))
+        assertFalse(store.read(intent.taskId).canClaimWholeComplete())
+    }
+
     @Test fun destinationConsentIdentityChangesForEndpointPresetAndVersionWithSameModelRevision() {
         val base = NoteAsrDestinationDto(
             backgroundProcessingAvailable = true,

@@ -118,6 +118,105 @@ function Set-OwnedDeviceProfile([string]$Adb) {
     return $output
 }
 
+function Capture-FailureEvidence([string]$Adb, [string]$RunLog, [object]$Ready) {
+    $stamp = [DateTime]::Now.ToString("yyyyMMdd-HHmmssfff")
+    $evidenceDir = [IO.Path]::GetFullPath((Join-Path $DeliverablesRoot (
+        "failure-" + [IO.Path]::GetFileNameWithoutExtension($RunLog) + "-$stamp"
+    )))
+    New-Item -ItemType Directory -Path $evidenceDir -Force | Out-Null
+    $capture = [ordered]@{
+        capturedAt = [DateTimeOffset]::Now.ToString("o")
+        serial = $Serial
+        expectedAvd = $ExpectedAvd
+        runLog = $RunLog
+        directory = $evidenceDir
+        uiTreePulled = $false
+        screenshotPulled = $false
+        localTaskJsonPulled = $false
+        localTaskFileCount = 0
+        apiSummaryPulled = $false
+        appScreenshotsPulled = $false
+    }
+
+    try {
+        $foreground = @(& $Adb -s $Serial shell dumpsys activity activities 2>&1 |
+            Select-String -Pattern "topResumedActivity|mFocusedApp|Hist #0" |
+            Select-Object -First 40 | ForEach-Object { "$_" })
+        $windows = @(& $Adb -s $Serial shell dumpsys window windows 2>&1 |
+            Select-String -Pattern "mCurrentFocus|mFocusedApp|Window #" |
+            Select-Object -First 80 | ForEach-Object { "$_" })
+        $foreground | Set-Content -LiteralPath (Join-Path $evidenceDir "foreground-activity.txt") -Encoding UTF8
+        $windows | Set-Content -LiteralPath (Join-Path $evidenceDir "windows.txt") -Encoding UTF8
+    } catch {
+        "window capture failed: $_" | Set-Content -LiteralPath (Join-Path $evidenceDir "windows-error.txt") -Encoding UTF8
+    }
+
+    try {
+        $remoteXml = "/sdcard/Download/native-note-asr-qa-failure-$stamp.xml"
+        $dumpOutput = @(& $Adb -s $Serial shell uiautomator dump $remoteXml 2>&1 |
+            ForEach-Object { "$_" })
+        $dumpOutput | Set-Content -LiteralPath (Join-Path $evidenceDir "uiautomator-dump-command.txt") -Encoding UTF8
+        $localXml = Join-Path $evidenceDir "ui.xml"
+        & $Adb -s $Serial pull $remoteXml $localXml 2>&1 | Out-Null
+        $capture["uiTreePulled"] = ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $localXml))
+    } catch {
+        "ui tree capture failed: $_" | Set-Content -LiteralPath (Join-Path $evidenceDir "ui-tree-error.txt") -Encoding UTF8
+    }
+
+    try {
+        $remoteShot = "/sdcard/Download/native-note-asr-qa-failure-$stamp.png"
+        & $Adb -s $Serial shell screencap -p $remoteShot 2>&1 | Out-Null
+        $localShot = Join-Path $evidenceDir "screen.png"
+        & $Adb -s $Serial pull $remoteShot $localShot 2>&1 | Out-Null
+        $capture["screenshotPulled"] = ($LASTEXITCODE -eq 0 -and (Test-Path -LiteralPath $localShot))
+    } catch {
+        "screenshot capture failed: $_" | Set-Content -LiteralPath (Join-Path $evidenceDir "screenshot-error.txt") -Encoding UTF8
+    }
+
+    try {
+        $taskNames = @(& $Adb -s $Serial shell run-as com.pim.app ls -1 no_backup/note-asr-tasks 2>&1 |
+            ForEach-Object { "$_".Trim() } |
+            Where-Object { $_ -match "^[0-9a-f-]+\.json$" })
+        $taskLines = [Collections.Generic.List[string]]::new()
+        foreach ($name in $taskNames) {
+            $taskLines.Add("=== $name") | Out-Null
+            foreach ($line in @(& $Adb -s $Serial shell run-as com.pim.app cat "no_backup/note-asr-tasks/$name" 2>&1)) {
+                $taskLines.Add([string]$line) | Out-Null
+            }
+        }
+        if ($taskNames.Count -gt 0) {
+            $taskLines | Set-Content -LiteralPath (Join-Path $evidenceDir "local-task-json.txt") -Encoding UTF8
+            $capture["localTaskJsonPulled"] = $true
+            $capture["localTaskFileCount"] = $taskNames.Count
+        }
+    } catch {
+        "local task capture failed: $_" | Set-Content -LiteralPath (Join-Path $evidenceDir "local-task-error.txt") -Encoding UTF8
+    }
+
+    try {
+        $summary = (Invoke-WebRequest -UseBasicParsing -TimeoutSec 10 `
+            -Uri ($Ready.url.TrimEnd("/") + "/__qa/asr/summary")).Content
+        $summary | Set-Content -LiteralPath (Join-Path $evidenceDir "api-summary.json") -Encoding UTF8
+        $capture["apiSummaryPulled"] = $true
+    } catch {
+        "API summary capture failed: $_" | Set-Content -LiteralPath (Join-Path $evidenceDir "api-summary-error.txt") -Encoding UTF8
+    }
+
+    try {
+        $remoteEvidence = "/sdcard/Android/data/com.pim.app/files/native-note-asr-qa"
+        & $Adb -s $Serial shell test -d $remoteEvidence
+        if ($LASTEXITCODE -eq 0) {
+            & $Adb -s $Serial pull $remoteEvidence (Join-Path $evidenceDir "app-screenshots") 2>&1 | Out-Null
+            $capture["appScreenshotsPulled"] = ($LASTEXITCODE -eq 0)
+        }
+    } catch {
+        "app screenshot capture failed: $_" | Set-Content -LiteralPath (Join-Path $evidenceDir "app-screenshots-error.txt") -Encoding UTF8
+    }
+
+    $capture | ConvertTo-Json | Set-Content -LiteralPath (Join-Path $evidenceDir "capture.json") -Encoding UTF8
+    return $evidenceDir
+}
+
 if ($Action -eq "PrepareHost") {
     if (-not (Test-Path -LiteralPath $sourceHost -PathType Leaf)) {
         throw "Missing host source: $sourceHost"
@@ -281,6 +380,12 @@ if ($Action -eq "RunDeviceTest") {
         foreach ($line in $output) { $logLines.Add([string]$line) }
         $joined = $output -join "`n"
         if ($joined -match "FAILURES!!!|INSTRUMENTATION_FAILED|Process crashed" -or $joined -notmatch "OK \(\d+ tests?\)") {
+            try {
+                $failureDir = Capture-FailureEvidence $adb $runLog $ready
+                $logLines.Add("failureEvidenceDir=$failureDir")
+            } catch {
+                $logLines.Add("failureEvidenceCaptureError=$_")
+            }
             throw "Instrumentation did not report a passing NativeNoteAsrTest result. See $runLog"
         }
         $remoteEvidence = "/sdcard/Android/data/com.pim.app/files/native-note-asr-qa"

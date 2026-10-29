@@ -96,7 +96,8 @@ pwsh -File scripts/qa/AndroidNoteAsrQa.ps1 -Action RunDeviceTest `
 
 6. 截图只从 `native-note-asr-qa` 专属目录拉到 `deliverables/native-note-asr-qa`；
 7. 记录 instrumentation 的 `OK (N tests)` 原文，不能只依据 adb 退出码；
-8. 先 `StopHost`，其只会删除本次由模板复制且 SHA256 未变化的临时 API 测试源；随后人工核对设备与应用状态。
+8. 失败时 driver 在清理 reverse 或开始下个 case 前，先在当前 slot 保存 UI 树、截图、前台 activity、本地 ASR task JSON 和 `/__qa/asr/summary`；
+9. 先 `StopHost`，其只会删除本次由模板复制且 SHA256 未变化的临时 API 测试源；随后人工核对设备与应用状态。
 
 ## 证据分类
 

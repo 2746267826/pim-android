@@ -274,7 +274,9 @@ private fun TaskCard(record: NoteAsrTaskRecord, currentTarget: NoteUploadTarget?
                 modifier = Modifier.testTag("note-asr-task-open-${record.taskId}"),
             ) { Text("查看任务与逐段结果") }
             Text(status.label, style = MaterialTheme.typography.titleSmall,
-                modifier = Modifier.testTag("note-asr-phase-${record.taskId}"))
+                modifier = Modifier
+                    .testTag("note-asr-phase-${record.taskId}")
+                    .semantics { stateDescription = task?.phase ?: record.localPhase.name })
             Text(status.detail, style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             if (presentation.showProgress && task != null) {

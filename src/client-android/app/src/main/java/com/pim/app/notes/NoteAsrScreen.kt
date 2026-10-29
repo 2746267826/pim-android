@@ -163,7 +163,7 @@ private fun NoteAsrTaskList(
             if (state.loadFailed) item {
                 PimStatusBanner("部分本机转写任务无法读取；其余任务保留，损坏文件未被覆盖。", PimStatusTone.Error)
             }
-            if (initialVersionId != null) item {
+            if (initialVersionId != null) item(key = "note-asr-fixed-source-$initialVersionId") {
                 FixedSourceCard(initialVersionId, source)
             }
             if (state.tasks.isEmpty() && !state.syncing) item {
@@ -210,12 +210,17 @@ private fun NoteAsrTaskList(
 @Composable
 internal fun FixedSourceCard(versionId: String, source: NoteAsrSourceDto?) {
     val d = PimTheme.dimensions
+    val sourceTag = if (source == null) {
+        "note-asr-source-unavailable-$versionId"
+    } else {
+        "note-asr-source-$versionId"
+    }
     // Keep one merge boundary for the source facts. Tagging a child layout as
     // well exposes the same test tag through both merged and unmerged nodes.
     OutlinedCard(
         Modifier.fillMaxWidth()
             .semantics(mergeDescendants = true) {}
-            .testTag("note-asr-source-$versionId"),
+            .testTag(sourceTag),
     ) {
         Column(Modifier.padding(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
             Row(verticalAlignment = Alignment.CenterVertically,
@@ -254,12 +259,11 @@ private fun TaskCard(record: NoteAsrTaskRecord, currentTarget: NoteUploadTarget?
     val status = record.statusView(currentTarget)
     val task = record.task
     val presentation = record.listPresentation(currentTarget)
-    OutlinedCard(
-        onClick = { onOpen(record.taskId) },
-        modifier = Modifier.fillMaxWidth().testTag("note-asr-task-${record.taskId}"),
-    ) {
+    OutlinedCard(Modifier.fillMaxWidth().testTag("note-asr-task-${record.taskId}")) {
         Column(Modifier.padding(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
-            Row(verticalAlignment = Alignment.CenterVertically,
+            Row(
+                modifier = Modifier.fillMaxWidth().clickable { onOpen(record.taskId) },
+                verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
                 Icon(statusIcon(status.status), null, tint = statusTone(status.status).let {
                     if (it == PimStatusTone.Error) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.primary

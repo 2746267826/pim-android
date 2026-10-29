@@ -38,4 +38,17 @@ class NoteAsrSourceSemanticsTest {
 
         compose.onNodeWithTag("note-asr-source-$versionId").assertExists()
     }
+
+    @Test
+    fun unavailableSourceUsesASeparateSemanticsNode() {
+        val versionId = "source-unavailable-version"
+        compose.setContent {
+            PimTheme {
+                FixedSourceCard(versionId = versionId, source = null)
+            }
+        }
+
+        compose.onNodeWithTag("note-asr-source-unavailable-$versionId").assertExists()
+        compose.onNodeWithTag("note-asr-source-$versionId").assertDoesNotExist()
+    }
 }

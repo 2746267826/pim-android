@@ -208,13 +208,16 @@ private fun NoteAsrTaskList(
 }
 
 @Composable
-private fun FixedSourceCard(versionId: String, source: NoteAsrSourceDto?) {
+internal fun FixedSourceCard(versionId: String, source: NoteAsrSourceDto?) {
     val d = PimTheme.dimensions
-    OutlinedCard(Modifier.fillMaxWidth().testTag("note-asr-source-card-$versionId")) {
-        Column(
-            Modifier.padding(d.spaceLarge).testTag("note-asr-source-$versionId"),
-            verticalArrangement = Arrangement.spacedBy(d.spaceSmall),
-        ) {
+    // Keep one merge boundary for the source facts. Tagging a child layout as
+    // well exposes the same test tag through both merged and unmerged nodes.
+    OutlinedCard(
+        Modifier.fillMaxWidth()
+            .semantics(mergeDescendants = true) {}
+            .testTag("note-asr-source-$versionId"),
+    ) {
+        Column(Modifier.padding(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
                 Icon(Icons.Default.LibraryMusic, null, tint = MaterialTheme.colorScheme.primary)

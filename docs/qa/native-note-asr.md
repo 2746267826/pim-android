@@ -39,6 +39,9 @@
 - 账号：Alice 生成/上传材料并创建任务；Bob 不可读取 Alice 的源、任务或片段。
 - 目标：一个启用的 `mimo-asr` 合成目标；另有一个 disabled 目标用于确认安全目标目录不会暴露可用入口。
 - 上传材料不会自动创建 ASR 任务；host 在 Test 环境禁用 Hangfire，测试先断言合成 ASR 发送次数为 0，再通过 `/__qa/asr/run` 调用真实 job。
+- 再次执行真实 job 前，测试先等待 `/__qa/asr/summary.runningTaskIds` 不含当前
+  TaskId；accepted 后也等待该 TaskId 退出运行，再比较发送数和 TaskId 数。不会把
+  运行活跃时的 HTTP 409 当作“已执行且未重发”的替代证据。
 
 host ready 文件中的安全事实包括 API base、合成账号、模型显示名/模型/revision/endpoint/preset/version、3 片预期，不包含 token、API key 或内部文件路径。
 
@@ -98,6 +101,11 @@ pwsh -File scripts/qa/AndroidNoteAsrQa.ps1 -Action RunDeviceTest `
 7. 记录 instrumentation 的 `OK (N tests)` 原文，不能只依据 adb 退出码；
 8. 失败时 driver 在清理 reverse 或开始下个 case 前，先在当前 slot 保存 UI 树、截图、前台 activity、本地 ASR task JSON 和 `/__qa/asr/summary`；
 9. 先 `StopHost`，其只会删除本次由模板复制且 SHA256 未变化的临时 API 测试源；随后人工核对设备与应用状态。
+
+六个 ASR 测试方法各自在测试体 `finally` 中保存 case name、实际发送 count 和当前
+Compose roots 概览；失败时额外保存 Compose 树、截图、`note-asr-tasks` 本地 JSON
+和 3 秒上限的 QA summary。该捕获在 JUnit 进入下一 case 的 `@Before` reset 前执行，
+且不复制认证 prefs，也不覆盖原始失败。
 
 ## 证据分类
 

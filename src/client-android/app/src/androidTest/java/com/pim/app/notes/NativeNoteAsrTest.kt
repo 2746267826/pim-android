@@ -4,6 +4,7 @@ import android.content.Intent
 import android.graphics.Bitmap
 import android.view.View
 import android.view.ViewGroup
+import androidx.compose.ui.semantics.SemanticsNode
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.test.espresso.Espresso.closeSoftKeyboard
@@ -68,7 +69,8 @@ class NativeNoteAsrTest {
     }
 
     @Test
-    fun ordinaryAccountUsesPinnedOlderVersionForThreeSegmentsAndTaskSurvivesRebuildAndAccountSwitch() {
+    fun ordinaryAccountUsesPinnedOlderVersionForThreeSegmentsAndTaskSurvivesRebuildAndAccountSwitch() =
+        captureCaseFailure("normal-three-slices-account-switch") {
         login("notes-qa-alice")
         val fixture = prepareFixture(versionCount = 2)
         val versionB = checkNotNull(fixture.versionB) { "Two-version QA fixture must expose version B" }
@@ -164,7 +166,8 @@ class NativeNoteAsrTest {
     }
 
     @Test
-    fun localEditorHandoffFromFrozenAEditsBAndReturnsWithoutLosingOriginal() {
+    fun localEditorHandoffFromFrozenAEditsBAndReturnsWithoutLosingOriginal() =
+        captureCaseFailure("local-editor-handoff") {
         login("notes-qa-alice")
         val fixture = prepareFixture(versionCount = 1)
         val originalNote = fixture.model.notes.state.value.documents.getValue(fixture.noteId)
@@ -251,7 +254,8 @@ class NativeNoteAsrTest {
     }
 
     @Test
-    fun failureRecoverySelectsOnlyFailedSegmentAndKeepsSuccessfulTranscripts() {
+    fun failureRecoverySelectsOnlyFailedSegmentAndKeepsSuccessfulTranscripts() =
+        captureCaseFailure("failure-recovery") {
         login("notes-qa-alice")
         val fixture = prepareFixture(versionCount = 1)
         val task = submitFromUi(fixture.versionA)
@@ -315,7 +319,8 @@ class NativeNoteAsrTest {
     }
 
     @Test
-    fun lostCreateAcknowledgementKeepsOneServerTaskAndNeverAutoResendsOrCreatesAnother() {
+    fun lostCreateAcknowledgementKeepsOneServerTaskAndNeverAutoResendsOrCreatesAnother() =
+        captureCaseFailure("lost-create-acknowledgement") {
         login("notes-qa-alice")
         val fixture = prepareFixture(versionCount = 1)
         openAsrForVersion(fixture.versionA)
@@ -353,7 +358,8 @@ class NativeNoteAsrTest {
     }
 
     @Test
-    fun stopDuringSecondSyntheticCallKeepsCompletedTextAndDoesNotSendThirdSlice() {
+    fun stopDuringSecondSyntheticCallKeepsCompletedTextAndDoesNotSendThirdSlice() =
+        captureCaseFailure("stop-during-second-call") {
         login("notes-qa-alice")
         val fixture = prepareFixture(versionCount = 1)
         val task = submitFromUi(fixture.versionA)
@@ -391,7 +397,8 @@ class NativeNoteAsrTest {
     }
 
     @Test
-    fun syntheticUnknownSliceStaysNeedsAttentionAcrossRefreshAndRunUntilExplicitRecovery() {
+    fun syntheticUnknownSliceStaysNeedsAttentionAcrossRefreshAndRunUntilExplicitRecovery() =
+        captureCaseFailure("synthetic-unknown") {
         login("notes-qa-alice")
         val fixture = prepareFixture(versionCount = 1)
         val task = submitFromUi(fixture.versionA)
@@ -440,6 +447,7 @@ class NativeNoteAsrTest {
         })
 
         triggerJob(task.taskId)
+        waitForQaRunIdle(task.taskId)
         Thread.sleep(500)
         assertEquals("Re-running an inactive unknown checkpoint must not resend", beforeRefresh.sentCalls, qaSummary().sentCalls)
         assertEquals(taskCountBefore, runBlocking { reader().getNoteAsrTasks().data.orEmpty() }.count {
@@ -473,6 +481,7 @@ class NativeNoteAsrTest {
         assertEquals(1, afterRetryIntent.single { it.index == 0 }.attempts.size)
         assertEquals(beforeRefresh.sentCalls, qaSummary().sentCalls)
         triggerJob(task.taskId)
+        waitForQaRunIdle(task.taskId)
         awaitTask(task.taskId) { it.phase == "NeedsAttention" }
         val afterRecovery = awaitSegments(task.taskId) {
             it.single { segment -> segment.index == 1 }.status == "Succeeded" &&
@@ -790,9 +799,148 @@ class NativeNoteAsrTest {
         assertFalse("Bound-owner mismatch exposed prior-owner transcript text", found)
     }
 
+    private fun captureCaseFailure(caseName: String, body: () -> Unit) {
+        var failure: Throwable? = null
+        try {
+            body()
+        } catch (error: Throwable) {
+            failure = error
+            throw error
+        } finally {
+            captureCaseEvidence(caseName, failure)
+        }
+    }
+
+    private fun captureCaseEvidence(caseName: String, failure: Throwable?) {
+        val notes = mutableListOf<String>()
+        try {
+            val safeName = caseName.replace(Regex("[^A-Za-z0-9_.-]"), "_").take(80)
+            val status = if (failure == null) "pass" else "fail"
+            val root = File(
+                context.getExternalFilesDir(null) ?: context.filesDir,
+                "native-note-asr-qa/case-evidence",
+            ).apply { mkdirs() }
+            val dir = File(root, "$status-$safeName-${System.currentTimeMillis()}").apply { mkdirs() }
+
+            try {
+                val bitmap = instrumentation.uiAutomation.takeScreenshot()
+                if (bitmap != null) {
+                    File(dir, "screen.png").outputStream().use {
+                        bitmap.compress(Bitmap.CompressFormat.PNG, 100, it)
+                    }
+                    bitmap.recycle()
+                } else {
+                    notes += "screenshot unavailable"
+                }
+            } catch (error: Throwable) {
+                notes += "screenshot failed: ${error.message}"
+            }
+
+            try {
+                val roots = compose.onAllNodes(isRoot(), useUnmergedTree = true).fetchSemanticsNodes()
+                val tree = StringBuilder("rootCount=${roots.size}\n")
+                var visited = 0
+                fun appendNode(node: SemanticsNode, depth: Int) {
+                    if (visited++ >= 4_000 || tree.length >= 262_144) return
+                    val bounds = node.boundsInRoot
+                    tree.append("  ".repeat(depth))
+                        .append("node=${node.id} bounds=$bounds tag=")
+                        .append(node.config)
+                        .append('\n')
+                    node.children.forEach { child -> appendNode(child, depth + 1) }
+                }
+                roots.forEachIndexed { index, rootNode ->
+                    tree.append("root[$index]\n")
+                    appendNode(rootNode, 1)
+                }
+                File(dir, "compose-tree.txt").writeText(tree.toString())
+            } catch (error: Throwable) {
+                notes += "compose tree failed: ${error.message}"
+            }
+
+            try {
+                val taskRoot = File(context.noBackupFilesDir, "note-asr-tasks")
+                val tasks = taskRoot.listFiles()
+                    ?.filter { it.isFile && it.name.endsWith(".json") }
+                    ?.sortedBy { it.name }
+                    .orEmpty()
+                val contents = buildString {
+                    tasks.forEach { task ->
+                        append("=== ${task.name}\n")
+                        append(task.readText())
+                        append('\n')
+                    }
+                }
+                File(dir, "local-task-json.txt").writeText(contents)
+                notes += "localTaskFileCount=${tasks.size}"
+            } catch (error: Throwable) {
+                notes += "local task files failed: ${error.message}"
+            }
+
+            val summary = try {
+                val client = OkHttpClient.Builder()
+                    .connectTimeout(2, TimeUnit.SECONDS)
+                    .readTimeout(2, TimeUnit.SECONDS)
+                    .callTimeout(3, TimeUnit.SECONDS)
+                    .build()
+                val origin = PimServerEndpoints.from(base).trustedOrigin
+                client.newCall(Request.Builder().url("$origin/__qa/asr/summary").build()).execute().use {
+                    check(it.isSuccessful) { "QA summary returned ${it.code}" }
+                    it.body!!.string()
+                }
+            } catch (error: Throwable) {
+                notes += "qa summary failed: ${error.message}"
+                null
+            }
+            if (summary != null) File(dir, "qa-summary.json").writeText(summary)
+
+            val result = buildString {
+                append("case=$caseName\n")
+                append("status=${if (failure == null) "PASS" else "FAIL"}\n")
+                append("capturedAt=${java.time.OffsetDateTime.now()}\n")
+                append("failure=${failure?.let { "${it::class.qualifiedName}: ${it.message}" } ?: "none"}\n")
+                append("sentCalls=${summary?.let { parseSummary(it).sentCalls } ?: "unavailable"}\n")
+                append("runningTaskIds=${summary?.let { parseSummary(it).runningTaskIds } ?: "unavailable"}\n")
+                notes.forEach { append("captureNote=$it\n") }
+                failure?.let { append("\n").append(it.stackTraceToString()) }
+            }
+            File(dir, "case-result.txt").writeText(result)
+        } catch (error: Throwable) {
+            notes += "capture wrapper failed: ${error.message}"
+            try {
+                val fallbackRoot = File(
+                    context.getExternalFilesDir(null) ?: context.filesDir,
+                    "native-note-asr-qa/case-evidence",
+                ).apply { mkdirs() }
+                File(fallbackRoot, "capture-wrapper-error-${System.currentTimeMillis()}.txt").writeText(
+                    buildString {
+                        append("case=$caseName\n")
+                        append("originalFailure=$failure\n")
+                        append("captureFailure=$error\n")
+                        notes.forEach { append("captureNote=$it\n") }
+                    },
+                )
+            } catch (_: Throwable) {
+                // Capture must never replace the original test failure.
+            }
+        }
+    }
+
     private fun triggerJob(taskId: String) {
+        waitForQaRunIdle(taskId)
         val root = Json.parseToJsonElement(qa("run?taskId=$taskId")).jsonObject
         assertTrue(root.getValue("accepted").jsonPrimitive.boolean)
+    }
+
+    private fun waitForQaRunIdle(taskId: String) {
+        val deadline = System.nanoTime() + 30_000_000_000L
+        var last = emptyList<String>()
+        while (System.nanoTime() < deadline) {
+            last = qaSummary().runningTaskIds
+            if (taskId !in last) return
+            Thread.sleep(100)
+        }
+        throw AssertionError("QA provider run for $taskId remained active; runningTaskIds=$last")
     }
 
     private fun awaitTaskForVersion(versionId: String): NoteAsrTaskDto {
@@ -895,7 +1043,8 @@ class NativeNoteAsrTest {
         val sentCalls: Int,
         val successfulCalls: Int,
         val failedCalls: Int,
-        val calls: List<QaCall>
+        val calls: List<QaCall>,
+        val runningTaskIds: List<String>
     )
 
     private fun qaSummary() = parseSummary(qa("summary"))
@@ -922,7 +1071,10 @@ class NativeNoteAsrTest {
                     call.getValue("sha256").jsonPrimitive.content,
                     call.getValue("status").jsonPrimitive.content
                 )
-            }
+            },
+            runningTaskIds = root["runningTaskIds"]?.jsonArray
+                ?.map { it.jsonPrimitive.content }
+                .orEmpty(),
         )
     }
 

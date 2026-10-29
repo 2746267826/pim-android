@@ -166,6 +166,19 @@ class MobileSyncUsageQueueTest {
         assertEquals(4, remaining)
     }
 
+    @Test
+    fun `pendingUsageTimeRange includes all usage outbox types without deleting rows`() = runTest {
+        dao.insertUsageEvents(listOf(event(1000, MobileSyncStatus.PENDING)))
+        dao.insertUsageSummaries(listOf(summary(8000, 9000, MobileSyncStatus.PENDING)))
+        dao.upsertAppMetadata(listOf(appMeta("com.range", collectedAtUtc = 5000, MobileSyncStatus.PENDING)))
+
+        val range = dao.pendingUsageTimeRange()
+
+        assertEquals(1000L, range.earliestUtc)
+        assertEquals(9000L, range.latestUtc)
+        assertEquals(3, pendingUsageRemaining(dao))
+    }
+
     // --- sortedMergeOutcome ---
 
     @Test
@@ -188,6 +201,123 @@ class MobileSyncUsageQueueTest {
         assertEquals(10, MAX_USAGE_BATCHES_PER_RUN)
         assertEquals(120_000L, MAX_USAGE_BATCH_DURATION_MS)
         assertEquals(500, USAGE_BATCH_LIMIT)
+        assertEquals(500 * 3, 1_500)
+        assertEquals(2L * 60L * 60L * 1000L, USAGE_BATCH_TARGET_WINDOW_MS)
+        assertEquals(25L * 60L * 60L * 1000L, USAGE_BATCH_MAX_WINDOW_MS)
+    }
+
+    @Test
+    fun `40 hour mixed backlog partitions into bounded complete deterministic batches`() {
+        val start = 1_000_000L
+        val backlogMs = 40L * 60L * 60L * 1000L
+        val step = backlogMs / 499L
+        val events = (0 until 500).map { index ->
+            event(start + index * step, MobileSyncStatus.PENDING).copy(id = index + 1L)
+        }
+        val summaries = (0 until 500).map { index ->
+            val summaryStart = start + index * step
+            summary(
+                summaryStart,
+                summaryStart + 60L * 60L * 1000L,
+                MobileSyncStatus.PENDING
+            ).copy(id = 10_000L + index)
+        }
+        val apps = (0 until 500).map { index ->
+            appMeta(
+                pkg = "com.example.${index.toString().padStart(3, '0')}",
+                collectedAtUtc = start + index * step,
+                status = MobileSyncStatus.PENDING
+            )
+        }
+
+        val firstRun = partitionPendingUsageBatch(events, summaries, apps)
+        val secondRun = partitionPendingUsageBatch(events, summaries, apps)
+
+        assertEquals(1_500, firstRun.sumOf { it.totalCount })
+        assertTrue(firstRun.all { it.totalCount <= USAGE_BATCH_LIMIT })
+        assertTrue(firstRun.all { batch ->
+            batch.windowEndUtc!! - batch.windowStartUtc!! <= USAGE_BATCH_TARGET_WINDOW_MS
+        })
+        assertEquals(1_500, firstRun.flatMap { it.typedKeys() }.toSet().size)
+        assertEquals(firstRun.sumOf { it.totalCount }, firstRun.flatMap { it.typedKeys() }.toSet().size)
+
+        val firstIds = firstRun.map { batch ->
+            stableBatchId(
+                "device-test",
+                batch.windowStartUtc.toString(),
+                batch.windowEndUtc.toString(),
+                batch.typedKeys()
+            )
+        }
+        val secondIds = secondRun.map { batch ->
+            stableBatchId(
+                "device-test",
+                batch.windowStartUtc.toString(),
+                batch.windowEndUtc.toString(),
+                batch.typedKeys()
+            )
+        }
+        assertEquals(firstIds, secondIds)
+        assertEquals(firstRun.map { it.typedKeys() }, secondRun.map { it.typedKeys() })
+    }
+
+    @Test
+    fun `valid 25 hour daily summary stays atomic and is not clipped to 2 hours`() {
+        val start = 8_000_000L
+        val end = start + 25L * 60L * 60L * 1000L
+        val daily = summary(start, end, MobileSyncStatus.PENDING).copy(id = 77)
+        val events = listOf(
+            event(start + 60_000L, MobileSyncStatus.PENDING).copy(id = 91),
+            event(end - 60_000L, MobileSyncStatus.PENDING).copy(id = 92)
+        )
+
+        val batches = partitionPendingUsageBatch(events, listOf(daily), emptyList())
+
+        assertEquals(1, batches.size)
+        val batch = batches.single()
+        assertEquals(listOf(daily), batch.summaries)
+        assertEquals(setOf("91", "92"), batch.events.map { it.id.toString() }.toSet())
+        assertEquals(start, batch.windowStartUtc)
+        assertEquals(end, batch.windowEndUtc)
+        assertEquals(25L * 60L * 60L * 1000L, batch.windowEndUtc!! - batch.windowStartUtc!!)
+    }
+
+    @Test
+    fun `app metadata at the far end does not stretch an event batch across 40 hours`() {
+        val start = 10_000_000L
+        val eventRow = event(start, MobileSyncStatus.PENDING).copy(id = 1)
+        val appRow = appMeta(
+            pkg = "com.far.away",
+            collectedAtUtc = start + 40L * 60L * 60L * 1000L,
+            status = MobileSyncStatus.PENDING
+        )
+
+        val batches = partitionPendingUsageBatch(
+            events = listOf(eventRow),
+            summaries = emptyList(),
+            apps = listOf(appRow)
+        )
+
+        assertEquals(2, batches.size)
+        assertTrue(batches.all { it.windowEndUtc!! - it.windowStartUtc!! <= 1L })
+        assertEquals(setOf("1"), batches.first().events.map { it.id.toString() }.toSet())
+        assertEquals(listOf("com.far.away"), batches.last().apps.map { it.packageName })
+    }
+
+    @Test
+    fun `summary outside the 25 hour API contract is isolated for explicit local rejection`() {
+        val start = 12_000_000L
+        val supported = summary(start, start + USAGE_BATCH_MAX_WINDOW_MS, MobileSyncStatus.PENDING)
+        val tooLong = summary(
+            start,
+            start + USAGE_BATCH_MAX_WINDOW_MS + 1,
+            MobileSyncStatus.PENDING
+        )
+        val malformed = summary(start + 1000, start + 1000, MobileSyncStatus.PENDING)
+
+        assertTrue(supported.hasSupportedUsageBatchWindow())
+        assertFalse(tooLong.hasSupportedUsageBatchWindow())
+        assertFalse(malformed.hasSupportedUsageBatchWindow())
     }
 
     @Test

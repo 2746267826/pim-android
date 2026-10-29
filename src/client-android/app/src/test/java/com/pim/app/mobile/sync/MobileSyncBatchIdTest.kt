@@ -1,5 +1,6 @@
 package com.pim.app.mobile.sync
 
+import com.pim.app.data.MobileUsageEventEntity
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
@@ -90,5 +91,46 @@ class MobileSyncBatchIdTest {
         val id2 = stableBatchId("android-different-device", windowStart, windowEnd, items)
 
         assertNotEquals(id1, id2)
+    }
+
+    @Test
+    fun payloadContentChangesBatchIdEvenWhenTypedKeysStayTheSame() {
+        val event = MobileUsageEventEntity(
+            id = 1,
+            packageName = "com.example",
+            eventType = 1,
+            eventName = "ACTIVITY_RESUMED",
+            eventTimeUtc = 1000,
+            source = "test",
+            sourceWindowStartUtc = 1000,
+            sourceWindowEndUtc = 2000,
+            collectedAtUtc = 2000,
+            rawJson = "{\"value\":1}"
+        )
+        val items = listOf(MobileAcknowledgementItem("usage-event", "1"))
+        val fingerprint1 = usageBatchPayloadFingerprint(listOf(event), emptyList(), emptyList())
+        val fingerprint2 = usageBatchPayloadFingerprint(
+            listOf(event.copy(rawJson = "{\"value\":2}")),
+            emptyList(),
+            emptyList()
+        )
+
+        assertNotEquals(fingerprint1, fingerprint2)
+        assertNotEquals(
+            stableBatchId(
+                deviceId,
+                windowStart,
+                windowEnd,
+                items,
+                payloadFingerprint = fingerprint1
+            ),
+            stableBatchId(
+                deviceId,
+                windowStart,
+                windowEnd,
+                items,
+                payloadFingerprint = fingerprint2
+            )
+        )
     }
 }

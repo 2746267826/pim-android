@@ -9,17 +9,32 @@ import okhttp3.Interceptor
 import okhttp3.Response
 import okhttp3.ResponseBody.Companion.toResponseBody
 
-class AuthInterceptor(
+class AuthInterceptor private constructor(
     private val sessionStore: AuthSessionStore,
     private val refreshCoordinator: AuthRefreshCoordinator,
-    private val settingsStore: ServerSettingsStore? = null
+    private val commitBoundSession: BoundSessionCommitGate?
 ) : Interceptor {
+    constructor(
+        sessionStore: AuthSessionStore,
+        refreshCoordinator: AuthRefreshCoordinator,
+        settingsStore: ServerSettingsStore? = null
+    ) : this(
+        sessionStore,
+        refreshCoordinator,
+        settingsStore?.let { settings ->
+            BoundSessionCommitGate { expectedServerIdentity, buildRequest ->
+                settings.commitSessionIfCurrentServer(expectedServerIdentity, buildRequest)
+            }
+        }
+    )
+
     override fun intercept(chain: Interceptor.Chain): Response {
         val original = chain.request()
-        val binding = original.tag(BoundUploadSession::class.java)
-        if (binding != null) authorizedUploadRequest(original, binding, sessionStore, settingsStore)
+        val bound = original.tag(BoundUploadRequestTag::class.java)
+        if (bound != null) authorizeBoundUpload(original, bound)
         val authMode = original.tag(AuthMode::class.java) ?: AuthMode.Required
         if (authMode == AuthMode.Anonymous) {
+            if (bound != null) throw UploadSessionChangedException()
             return chain.proceed(
                 original.newBuilder()
                     .removeHeader(AUTHORIZATION)
@@ -27,9 +42,9 @@ class AuthInterceptor(
             )
         }
 
-        val serverIdentity = PimServerEndpoints.trustedOriginOf(original.url)
+        val serverIdentity = bound?.binding?.serverIdentity ?: PimServerEndpoints.trustedOriginOf(original.url)
         runBlocking { refreshCoordinator.refreshIfExpired(serverIdentity) }
-        val boundFirst = binding?.let { authorizedUploadRequest(original, it, sessionStore, settingsStore) }
+        val boundFirst = bound?.let { authorizeBoundUpload(original, it) }
         val firstAccessToken = boundFirst?.second ?: sessionStore
             .accessTokenForServerIdentity(serverIdentity)
             .nonblank()
@@ -46,11 +61,19 @@ class AuthInterceptor(
         if (!refreshed) return unauthorizedResponse
 
         unauthorizedResponse.close()
-        val boundRetry = binding?.let { authorizedUploadRequest(original, it, sessionStore, settingsStore) }
+        val boundRetry = bound?.let { authorizeBoundUpload(original, it) }
         val refreshedAccessToken = boundRetry?.second ?: sessionStore
             .accessTokenForServerIdentity(serverIdentity)
             .nonblank()
         return chain.proceed(boundRetry?.first ?: original.withAccessToken(refreshedAccessToken))
+    }
+
+    private fun authorizeBoundUpload(
+        request: okhttp3.Request,
+        bound: BoundUploadRequestTag
+    ): Pair<okhttp3.Request, String> {
+        val gate = commitBoundSession ?: throw UploadSessionChangedException()
+        return authorizedUploadRequest(request, bound, sessionStore, gate)
     }
 
     private fun okhttp3.Request.withAccessToken(accessToken: String?): okhttp3.Request {
@@ -64,7 +87,13 @@ class AuthInterceptor(
 
     private fun String?.nonblank(): String? = this?.takeIf(String::isNotBlank)
 
-    private companion object {
+    internal companion object {
         const val AUTHORIZATION = "Authorization"
+
+        fun withBoundSessionCommitGate(
+            sessionStore: AuthSessionStore,
+            refreshCoordinator: AuthRefreshCoordinator,
+            commitBoundSession: BoundSessionCommitGate
+        ): AuthInterceptor = AuthInterceptor(sessionStore, refreshCoordinator, commitBoundSession)
     }
 }

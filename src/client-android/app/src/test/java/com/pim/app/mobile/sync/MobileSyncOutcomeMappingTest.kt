@@ -79,6 +79,53 @@ class MobileSyncOutcomeMappingTest {
     }
 
     @Test
+    fun `HTTP 409 terminal batch conflict is BLOCKED pending explicit user recovery`() {
+        val httpEx = FakeHttpException(409)
+        assertEquals(MobileSyncOutcome.BLOCKED, MobileSyncErrorClassifier.classify(httpEx))
+    }
+
+    @Test
+    fun `40903 is the only conflict code eligible for manual generation`() {
+        val retryExhausted = FakeHttpException(
+            409,
+            """{"code":40903,"message":"retry exhausted","data":null}"""
+        )
+        val payloadConflict = FakeHttpException(
+            409,
+            """{"code":40902,"message":"payload conflict","data":null}"""
+        )
+        val leaseLost = FakeHttpException(
+            409,
+            """{"code":40904,"message":"lease lost","data":null}"""
+        )
+        val unknown = FakeHttpException(
+            409,
+            """{"code":40901,"message":"generic conflict","data":null}"""
+        )
+
+        assertEquals(
+            UsageBatchBlockReason.RETRY_EXHAUSTED,
+            classifyUsageBatchConflictCode(usageBatchHttpErrorCode(retryExhausted))
+        )
+        assertEquals(
+            UsageBatchBlockReason.PAYLOAD_CONFLICT,
+            classifyUsageBatchConflictCode(usageBatchHttpErrorCode(payloadConflict))
+        )
+        assertEquals(
+            UsageBatchBlockReason.LEASE_LOST,
+            classifyUsageBatchConflictCode(usageBatchHttpErrorCode(leaseLost))
+        )
+        assertEquals(
+            UsageBatchBlockReason.UNKNOWN_CONFLICT,
+            classifyUsageBatchConflictCode(usageBatchHttpErrorCode(unknown))
+        )
+        assertEquals(
+            UsageBatchBlockReason.UNKNOWN_CONFLICT,
+            classifyUsageBatchConflictCode(null)
+        )
+    }
+
+    @Test
     fun `HTTP 429 is RETRY`() {
         val httpEx = FakeHttpException(429)
         assertEquals(MobileSyncOutcome.RETRY, MobileSyncErrorClassifier.classify(httpEx))
@@ -286,12 +333,90 @@ class MobileSyncOutcomeMappingTest {
         val state = resp.toState("bId", "start", "end", 5, 3, 0)
         assertEquals(MobileSyncOutcome.SUCCESS, state.outcome)
     }
+
+    @Test
+    fun `toState empty ambiguous ack for sent items is RETRY not success`() {
+        val sent = MobileAcknowledgementItem("usage-event", "1")
+        val response = com.pim.core.contract.MobileUsageIngestResult(
+            batchId = "batch-empty-ack",
+            acceptedCount = 0,
+            skippedCount = 0,
+            rejectedCount = 0,
+            failedCount = 0,
+            itemResults = emptyList()
+        )
+        val plan = MobileTypedAcknowledgementPlan(
+            retryItems = setOf(sent),
+            failureCode = "server-ack-ambiguous",
+            itemErrors = mapOf(sent to "server-ack-ambiguous")
+        )
+
+        val state = response.toState(
+            batchId = "batch-empty-ack",
+            windowStartUtc = "start",
+            windowEndUtc = "end",
+            eventCount = 1,
+            summaryCount = 0,
+            appMetadataCount = 0,
+            acknowledgement = plan
+        )
+
+        assertEquals(MobileSyncOutcome.RETRY, state.outcome)
+        assertEquals(1, state.failedCount)
+        assertEquals("server-ack-ambiguous", state.lastError)
+        assertEquals("completed-with-errors", state.lastBatchStatus)
+    }
+
+    @Test
+    fun `toState partial ack keeps failed count and does not claim success`() {
+        val accepted = MobileAcknowledgementItem("usage-event", "1")
+        val missing = MobileAcknowledgementItem("usage-event", "2")
+        val response = com.pim.core.contract.MobileUsageIngestResult(
+            batchId = "batch-partial-ack",
+            acceptedCount = 1,
+            skippedCount = 0,
+            rejectedCount = 0,
+            failedCount = 0,
+            itemResults = listOf(
+                com.pim.core.contract.MobileIngestItemResult(
+                    clientItemKey = "1",
+                    entityType = "usage-event",
+                    outcome = "accepted",
+                    code = "accepted",
+                    message = "OK"
+                )
+            )
+        )
+        val plan = MobileTypedAcknowledgementPlan(
+            confirmedItems = setOf(accepted),
+            retryItems = setOf(missing),
+            failureCode = "server-ack-ambiguous",
+            itemErrors = mapOf(missing to "server-ack-ambiguous")
+        )
+
+        val state = response.toState(
+            batchId = "batch-partial-ack",
+            windowStartUtc = "start",
+            windowEndUtc = "end",
+            eventCount = 2,
+            summaryCount = 0,
+            appMetadataCount = 0,
+            acknowledgement = plan
+        )
+
+        assertEquals(MobileSyncOutcome.RETRY, state.outcome)
+        assertEquals(1, state.acceptedCount)
+        assertEquals(1, state.failedCount)
+    }
 }
 
-internal class FakeHttpException(code: Int) : HttpException(createFakeResponse(code)) {
+internal class FakeHttpException(
+    code: Int,
+    body: String = "{}"
+) : HttpException(createFakeResponse(code, body)) {
     companion object {
-        fun createFakeResponse(code: Int): retrofit2.Response<*> {
-            return retrofit2.Response.error<Any>(code, okhttp3.ResponseBody.create(null, "{}"))
+        fun createFakeResponse(code: Int, body: String): retrofit2.Response<*> {
+            return retrofit2.Response.error<Any>(code, okhttp3.ResponseBody.create(null, body))
         }
     }
 }

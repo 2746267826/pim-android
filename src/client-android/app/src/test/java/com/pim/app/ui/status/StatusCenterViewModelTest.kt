@@ -2,6 +2,8 @@ package com.pim.app.ui.status
 
 import com.pim.app.mobile.diagnostics.DiagnosticExportException
 import com.pim.app.mobile.diagnostics.DiagnosticExportResult
+import com.pim.app.mobile.sync.UsageOutboxRecoveryPreview
+import com.pim.app.status.LegacyOutboxClaimPromptController
 import com.pim.app.status.StatusAcceptedSignal
 import com.pim.app.status.StatusActionRoute
 import com.pim.app.status.StatusSyncActionRunner
@@ -346,4 +348,69 @@ class StatusCenterViewModelTest {
 
         assertEquals(1, submitCount)
     }
+
+    @Test
+    fun legacyClaimPromptConfirmSubmitsClaimInsteadOfNormalSync() = runTest {
+        val preview = legacyPreview()
+        var normalSubmissions = 0
+        var claimedPreview: UsageOutboxRecoveryPreview? = null
+        val controller = LegacyOutboxClaimPromptController(
+            preview = { preview },
+            submitNormal = { normalSubmissions++ },
+            submitClaim = { claimedPreview = it }
+        )
+
+        controller.requestSync()
+        assertEquals(preview, controller.prompt.value)
+        assertEquals(0, normalSubmissions)
+
+        controller.confirm()
+
+        assertEquals(preview, claimedPreview)
+        assertEquals(0, normalSubmissions)
+        assertEquals(null, controller.prompt.value)
+    }
+
+    @Test
+    fun legacyClaimPromptDismissPreservesQueueWithoutSubmitting() = runTest {
+        val preview = legacyPreview()
+        var submissions = 0
+        val controller = LegacyOutboxClaimPromptController(
+            preview = { preview },
+            submitNormal = { submissions++ },
+            submitClaim = { submissions++ }
+        )
+
+        controller.requestSync()
+        controller.dismiss()
+
+        assertEquals(0, submissions)
+        assertEquals(null, controller.prompt.value)
+    }
+
+    @Test
+    fun noLegacyClaimPromptFallsThroughToNormalSync() = runTest {
+        var normalSubmissions = 0
+        var claimSubmissions = 0
+        val controller = LegacyOutboxClaimPromptController(
+            preview = { null },
+            submitNormal = { normalSubmissions++ },
+            submitClaim = { claimSubmissions++ }
+        )
+
+        controller.requestSync()
+
+        assertEquals(1, normalSubmissions)
+        assertEquals(0, claimSubmissions)
+        assertEquals(null, controller.prompt.value)
+    }
+
+    private fun legacyPreview() = UsageOutboxRecoveryPreview(
+        serverIdentity = "https://pim.example",
+        ownerId = "11111111-1111-1111-1111-111111111111",
+        ownerName = "Owner A",
+        pendingCount = 42,
+        earliestUtc = 1_000L,
+        latestUtc = 9_000L
+    )
 }

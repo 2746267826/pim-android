@@ -667,7 +667,7 @@ class MobileStatusViewModel @Inject constructor(
     }
 
     fun syncNow() {
-        startSync("正在手动同步手机数据。")
+        startSync("正在手动同步手机数据。", manualRecoveryRetry = true)
     }
 
     fun login(username: String, password: String) {
@@ -743,7 +743,10 @@ class MobileStatusViewModel @Inject constructor(
         }
     }
 
-    private fun startSync(statusMessage: String) {
+    private fun startSync(
+        statusMessage: String,
+        manualRecoveryRetry: Boolean = false
+    ) {
         viewModelScope.launch {
             _state.update {
                 it.copy(
@@ -752,7 +755,7 @@ class MobileStatusViewModel @Inject constructor(
                     progressText = "同步请求已提交，等待系统执行。"
                 )
             }
-            mobileSyncScheduler.enqueueNow()
+            mobileSyncScheduler.enqueueNow(manualRecoveryRetry = manualRecoveryRetry)
         }
     }
 

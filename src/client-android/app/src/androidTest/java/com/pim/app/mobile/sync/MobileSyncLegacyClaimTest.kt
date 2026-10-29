@@ -1,17 +1,24 @@
 package com.pim.app.mobile.sync
 
+import android.graphics.Bitmap
+import android.util.Log
 import androidx.activity.ComponentActivity
 import androidx.compose.runtime.collectAsState
 import androidx.compose.runtime.getValue
+import androidx.compose.ui.semantics.SemanticsProperties
+import androidx.compose.ui.semantics.getOrNull
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
+import androidx.compose.ui.test.SemanticsMatcher
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.test.ext.junit.runners.AndroidJUnit4
+import androidx.test.platform.app.InstrumentationRegistry
 import com.pim.app.status.LegacyOutboxClaimPromptController
 import com.pim.app.ui.components.LegacyOutboxClaimDialog
 import com.pim.app.ui.theme.PimTheme
+import java.io.File
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -50,12 +57,16 @@ class MobileSyncLegacyClaimTest {
         }
 
         composeTestRule.onNodeWithTag("legacy-outbox-claim-dialog").assertIsDisplayed()
-        composeTestRule.onNodeWithText("当前账号：Owner A").assertIsDisplayed()
-        composeTestRule.onNodeWithText("当前服务器：${OWNER_A.serverIdentity}").assertIsDisplayed()
-        composeTestRule.onNodeWithText("待传记录：42 条").assertIsDisplayed()
-        composeTestRule.onNodeWithText(
-            "时间范围：${formatRange(FIXTURE_START_UTC, FIXTURE_END_UTC)}"
+        composeTestRule.onNode(
+            exactLegacyClaimBodyLines(
+                "当前账号：Owner A",
+                "当前服务器：${OWNER_A.serverIdentity}",
+                "待传记录：$PENDING_COUNT 条",
+                "时间范围：${formatRange(FIXTURE_START_UTC, FIXTURE_END_UTC)}"
+            ),
+            useUnmergedTree = true
         ).assertIsDisplayed()
+        saveLegacyClaimPreview()
     }
 
     @Test
@@ -133,6 +144,43 @@ class MobileSyncLegacyClaimTest {
         composeTestRule.onNodeWithTag("legacy-outbox-claim-dialog").assertIsDisplayed()
     }
 
+    private fun exactLegacyClaimBodyLines(vararg expectedLines: String) =
+        SemanticsMatcher("legacy claim body contains exact fields") { node ->
+            val actualLines = node.config.getOrNull(SemanticsProperties.Text)
+                .orEmpty()
+                .flatMap { text -> text.text.lineSequence().toList() }
+            expectedLines.all { expected -> actualLines.contains(expected) }
+        }
+
+    private fun saveLegacyClaimPreview() {
+        try {
+            composeTestRule.waitForIdle()
+            val instrumentation = InstrumentationRegistry.getInstrumentation()
+            val folder = File(
+                instrumentation.targetContext.getExternalFilesDir(null),
+                "native-note-asr-qa"
+            ).apply { mkdirs() }
+            val bitmap = instrumentation.uiAutomation.takeScreenshot()
+            if (bitmap == null) {
+                Log.w(LOG_TAG, "UI automation returned no legacy claim preview")
+                return
+            }
+            try {
+                val preview = File(folder, "legacy-claim-preview.png")
+                val encoded = preview.outputStream().use { stream ->
+                    bitmap.compress(Bitmap.CompressFormat.PNG, 100, stream)
+                }
+                if (!encoded) {
+                    Log.w(LOG_TAG, "Unable to encode legacy claim preview: ${preview.absolutePath}")
+                }
+            } finally {
+                bitmap.recycle()
+            }
+        } catch (error: Throwable) {
+            Log.w(LOG_TAG, "Unable to save legacy claim preview", error)
+        }
+    }
+
     private data class SyntheticSnapshot(
         val binding: UsageOutboxOwnerBinding?,
         val rows: List<Pair<Long, String>>
@@ -183,6 +231,7 @@ class MobileSyncLegacyClaimTest {
         LegacyOutboxClaimRequest(serverIdentity, ownerId)
 
     companion object {
+        private const val LOG_TAG = "MobileSyncLegacyClaimTest"
         private const val PENDING_COUNT = 42
         private val FIXTURE_START_UTC = Instant.parse("2026-10-01T03:04:00Z").toEpochMilli()
         private val FIXTURE_END_UTC = Instant.parse("2026-10-02T05:06:00Z").toEpochMilli()

@@ -107,6 +107,15 @@ Compose roots 概览；失败时额外保存 Compose 树、截图、`note-asr-ta
 和 3 秒上限的 QA summary。该捕获在 JUnit 进入下一 case 的 `@Before` reset 前执行，
 且不复制认证 prefs，也不覆盖原始失败。
 
+### Legacy 声明弹窗 R7 选择器守卫
+
+`MobileSyncLegacyClaimTest.legacyDialogShowsOwnerServerCountAndTimeRange` 读取 dialog 内唯一的
+多行 body，并将 owner、server、count、range 四行分别用 `equals` 比较；不使用宽泛 substring，
+避免 `Owner A` 命中 `Owner AB` 或 `42` 命中 `420`。首个展示场景通过 `assertIsDisplayed`
+后保存 UiAutomation 全屏预览到
+`<external-files>/native-note-asr-qa/legacy-claim-preview.png`，供 narrow 大字号人工核对遮挡；
+截图失败只记录 warning，不覆盖原断言。
+
 ## 证据分类
 
 - **设备层**：专用 AVD + 真实 Test API + 本机合成 ASR + 合成 PCM。

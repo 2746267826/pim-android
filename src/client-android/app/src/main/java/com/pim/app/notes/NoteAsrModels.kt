@@ -318,6 +318,26 @@ fun asrDuration(samples: Long, sampleRate: Int = NOTE_ASR_SAMPLE_RATE): String {
     return "%02d:%02d:%02d".format(java.util.Locale.ROOT, seconds / 3600, seconds / 60 % 60, seconds % 60)
 }
 
+/** User-visible labels only. Protocol and log values remain unchanged. */
+internal fun noteAsrWireStatusLabel(value: String): String = when (value.trim().lowercase(java.util.Locale.ROOT)) {
+    "succeeded" -> "成功"
+    "queued" -> "等待"
+    "running" -> "执行中"
+    "prepared" -> "待发送"
+    "submitting" -> "发送中"
+    "verificationpending" -> "待核对"
+    "unknown" -> "待核对"
+    "stopped" -> "已停止"
+    "needsattention" -> "需处理"
+    "failed" -> "失败"
+    "blocked" -> "已阻止"
+    "timedout" -> "超时"
+    "failedvalidation" -> "校验失败"
+    "cancelled", "canceled" -> "已取消"
+    "incomplete" -> "未完成"
+    else -> "未知状态(${value.trim().ifBlank { "空值" }.take(80)})"
+}
+
 private val RETRYABLE_SEGMENT_STATUSES = setOf(
     "Failed", "Blocked", "TimedOut", "FailedValidation", "Cancelled", "Incomplete", "Unknown",
 )

@@ -602,7 +602,8 @@ private fun SegmentCard(
                     modifier = Modifier.testTag("note-asr-segment-select-${segment.index}"),
                 )
                 Column(Modifier.weight(1f)) {
-                    Text("内部片 ${segment.index + 1} · ${segment.status}", style = MaterialTheme.typography.titleSmall)
+                    Text("内部片 ${segment.index + 1} · ${noteAsrWireStatusLabel(segment.status)}",
+                        style = MaterialTheme.typography.titleSmall)
                     Text("录音段 ${segment.recordingSegment} · 分块 ${segment.chunkIndex} · " +
                         "录音内 ${asrDuration(segment.recordingOffsetSamples)} · 全篇 ${asrDuration(segment.timelineOffsetSamples)}",
                         style = MaterialTheme.typography.bodySmall,
@@ -620,7 +621,7 @@ private fun SegmentCard(
                 color = if (segment.transcript.isNullOrBlank()) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurface,
             )
             segment.attempts.lastOrNull()?.let { attempt ->
-                Text("最近尝试 ${attempt.status} · ${attempt.requestId.take(8)}" +
+                Text("最近尝试 ${noteAsrWireStatusLabel(attempt.status)} · ${attempt.requestId.take(8)}" +
                     (attempt.errorMessage?.takeIf(String::isNotBlank)?.let { " · $it" } ?: ""),
                     style = MaterialTheme.typography.bodySmall,
                     color = if (attempt.errorMessage.isNullOrBlank()) MaterialTheme.colorScheme.onSurfaceVariant

@@ -142,31 +142,33 @@ private fun NoteAsrTaskList(
             contentPadding = PaddingValues(horizontal = d.spaceLarge, vertical = d.spaceMedium),
             verticalArrangement = Arrangement.spacedBy(d.spaceMedium),
         ) {
-            if (state.syncing) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
-            item {
+            if (state.syncing) item(key = "note-asr-loading") {
+                LinearProgressIndicator(Modifier.fillMaxWidth())
+            }
+            item(key = "note-asr-upload-consent-notice") {
                 PimStatusBanner(
                     "上传同意只表示保存材料，不代表同意发送给模型。ASR 是独立的有费用、第三方发送操作。",
                     PimStatusTone.Info,
                     Modifier.testTag("note-asr-after-upload-notice"),
                 )
             }
-            if (!state.newTaskAvailable) item {
+            if (!state.newTaskAvailable) item(key = "note-asr-destination-unavailable") {
                 PimStatusBanner(state.newTaskProblem, PimStatusTone.Warning,
                     Modifier.testTag("note-asr-destination-unavailable"))
             }
             state.sourceProblem?.let { problem ->
-                item { PimStatusBanner(problem, PimStatusTone.Warning) }
+                item(key = "note-asr-source-problem") { PimStatusBanner(problem, PimStatusTone.Warning) }
             }
             state.message?.let { problem ->
-                item { PimStatusBanner(problem, PimStatusTone.Warning) }
+                item(key = "note-asr-message") { PimStatusBanner(problem, PimStatusTone.Warning) }
             }
-            if (state.loadFailed) item {
+            if (state.loadFailed) item(key = "note-asr-load-failed") {
                 PimStatusBanner("部分本机转写任务无法读取；其余任务保留，损坏文件未被覆盖。", PimStatusTone.Error)
             }
             if (initialVersionId != null) item(key = "note-asr-fixed-source-$initialVersionId") {
                 FixedSourceCard(initialVersionId, source)
             }
-            if (state.tasks.isEmpty() && !state.syncing) item {
+            if (state.tasks.isEmpty() && !state.syncing) item(key = "note-asr-empty") {
                 OutlinedCard(Modifier.fillMaxWidth()) {
                     Column(Modifier.padding(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
                         Text("没有已保存的转写任务", style = MaterialTheme.typography.titleMedium)
@@ -198,7 +200,7 @@ private fun NoteAsrTaskList(
                     }
                 }
             }
-            item {
+            item(key = "note-asr-footer") {
                 Text("逐段转写结果按服务器持久任务保存；切换账号或服务器后旧任务仍保留，但当前登录不能访问。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)

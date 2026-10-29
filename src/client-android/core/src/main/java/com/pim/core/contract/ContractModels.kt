@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 7915843f576c64303307c5852be3f046ead948d4ca394eaacd8d21eab118ce8e)
+//   契约快照 : contract/openapi.json (sha256 eff87d962f5a935148c7f74ef1d73793d534719c4493397fd8a8247567d644c0)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -13,6 +13,17 @@ package com.pim.core.contract
 
 import kotlinx.serialization.SerialName
 import kotlinx.serialization.Serializable
+
+/** 契约 `components.schemas.AiAsrDestinationConsent`（request+response）。 */
+@Serializable
+data class AiAsrDestinationConsent(
+    val confirmed: Boolean,
+    val endpoint: String,
+    val modelId: String,
+    val modelRevision: String,
+    val presetId: String,
+    val presetVersion: String,
+)
 
 /** 契约 `components.schemas.AuthResponse`（response）。 */
 @Serializable
@@ -1031,6 +1042,154 @@ data class MobileUsageSummaryResponseApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.NoteAsrAttemptDto`（response）。 */
+@Serializable
+data class NoteAsrAttemptDto(
+    val errorMessage: String? = null,
+    val logId: String? = null,
+    val requestId: String,
+    val status: String,
+)
+
+/** 契约 `components.schemas.NoteAsrDestinationDto`（response）。 */
+@Serializable
+data class NoteAsrDestinationDto(
+    val backgroundProcessingAvailable: Boolean,
+    val displayName: String,
+    val endpoint: String,
+    val languages: List<String>,
+    val model: String,
+    val modelId: String,
+    val modelRevision: String,
+    val presetId: String,
+    val presetVersion: String,
+)
+
+/** 契约 `components.schemas.NoteAsrDestinationsDto`（response）。 */
+@Serializable
+data class NoteAsrDestinationsDto(
+    val items: List<NoteAsrDestinationDto>,
+    val total: Int,
+)
+
+/** 契约 `components.schemas.NoteAsrDestinationsDtoApiResponse`（response）。 */
+@Serializable
+data class NoteAsrDestinationsDtoApiResponse(
+    val code: Int,
+    val data: NoteAsrDestinationsDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteAsrSegmentDto`（response）。 */
+@Serializable
+data class NoteAsrSegmentDto(
+    val attempts: List<NoteAsrAttemptDto>,
+    val chunkIndex: Int,
+    val index: Int,
+    val recordingId: String,
+    val recordingOffsetSamples: Long,
+    val recordingSegment: Int,
+    val samples: Long,
+    val sourceFileIndex: Int,
+    val sourceOffsetSamples: Long,
+    val sourcePath: String,
+    val sourceSha256: String,
+    val status: String,
+    val timelineOffsetSamples: Long,
+    val transcript: String? = null,
+)
+
+/** 契约 `components.schemas.NoteAsrSegmentsDto`（response）。 */
+@Serializable
+data class NoteAsrSegmentsDto(
+    val items: List<NoteAsrSegmentDto>,
+    val offset: Int,
+    val total: Int,
+)
+
+/** 契约 `components.schemas.NoteAsrSegmentsDtoApiResponse`（response）。 */
+@Serializable
+data class NoteAsrSegmentsDtoApiResponse(
+    val code: Int,
+    val data: NoteAsrSegmentsDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteAsrSourceDto`（response）。 */
+@Serializable
+data class NoteAsrSourceDto(
+    val createdAt: String,
+    val hasConflict: Boolean,
+    val isCurrent: Boolean,
+    val noteId: String,
+    val recordings: Int,
+    val sampleRate: Int,
+    val title: String,
+    val totalSamples: Long,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteAsrSourcesDto`（response）。 */
+@Serializable
+data class NoteAsrSourcesDto(
+    val items: List<NoteAsrSourceDto>,
+    val offset: Int,
+    val total: Int,
+)
+
+/** 契约 `components.schemas.NoteAsrSourcesDtoApiResponse`（response）。 */
+@Serializable
+data class NoteAsrSourcesDtoApiResponse(
+    val code: Int,
+    val data: NoteAsrSourcesDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteAsrTaskDto`（response）。 */
+@Serializable
+data class NoteAsrTaskDto(
+    val backgroundProcessingAvailable: Boolean? = null,
+    val completedSamples: Long,
+    val completedSegments: Int,
+    val createdAt: String,
+    val destination: AiAsrDestinationConsent,
+    val failedSegments: Int,
+    val inputSha256: String,
+    val language: String,
+    val manifestSha256: String,
+    val noteId: String,
+    val phase: String,
+    val revision: String,
+    val sampleRate: Int,
+    val stopRequested: Boolean,
+    val taskId: String,
+    val totalSamples: Long,
+    val totalSegments: Int,
+    val updatedAt: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteAsrTaskDtoApiResponse`（response）。 */
+@Serializable
+data class NoteAsrTaskDtoApiResponse(
+    val code: Int,
+    val data: NoteAsrTaskDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteAsrTaskDtoIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class NoteAsrTaskDtoIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<NoteAsrTaskDto>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
 /** 契约 `components.schemas.NoteMaterialUploadDto`（response）。 */
 @Serializable
 data class NoteMaterialUploadDto(
@@ -1194,6 +1353,17 @@ data class RegisterRequest(
     val username: String,
 )
 
+/** 契约 `components.schemas.RetryNoteAsrRequest`（request）。 */
+@Serializable
+data class RetryNoteAsrRequest(
+    val acknowledgePossibleDuplicateCharge: Boolean,
+    val consent: AiAsrDestinationConsent,
+    val expectedRevision: String,
+    val expectedUserId: String,
+    val retryId: String,
+    val segmentIndexes: List<Int>,
+)
+
 /** 契约 `components.schemas.SearchResult`（response）。 */
 @Serializable
 data class SearchResult(
@@ -1222,6 +1392,16 @@ data class SearchResultPagedResultApiResponse(
     val data: SearchResultPagedResult? = null,
     val message: String,
     val timestamp: String,
+)
+
+/** 契约 `components.schemas.StartNoteAsrRequest`（request）。 */
+@Serializable
+data class StartNoteAsrRequest(
+    val consent: AiAsrDestinationConsent,
+    val expectedUserId: String,
+    val language: String? = null,
+    val taskId: String,
+    val versionId: String,
 )
 
 /** 契约 `components.schemas.StringApiResponse`（response）。 */

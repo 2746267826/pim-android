@@ -84,7 +84,7 @@ scripts/ci/test-contract-kotlin.sh
   （包 `com.pim.core.contract`）。文件头带「本文件由工具生成，请勿手工修改」，
   **手工改动会被 CI 的 `Contract codegen freshness` job 逐字节比对抓出来**。
 - **生成什么**：`scripts/contract/client-operations.json` 里声明的客户端 operation 的 schema 闭包
-  （当前 33 个 operation → 99 个类型）。规则是机械的：`required` 且不属于请求方向的 `readOnly`
+  （当前 51 个 operation → 131 个类型）。规则是机械的：`required` 且不属于请求方向的 `readOnly`
   → 非空、无默认值；其余 → 可空 `= null`；string enum → Kotlin enum（`@SerialName` 固定 wire 值）；
   整数 enum → `typealias` 到 `Int`（契约没给成员名，不臆造）。
   清单里写了契约中不存在的 METHOD/路径 → 生成器**直接报错**，不会产出半张契约。

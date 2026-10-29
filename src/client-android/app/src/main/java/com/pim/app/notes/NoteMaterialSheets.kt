@@ -23,7 +23,8 @@ internal fun NoteMaterialsSheet(
     note: NoteDocument, sessions: List<RecordingSession>, materials: NoteMaterialsState, busy: Boolean,
     onDismiss: () -> Unit, onRetry: (String) -> Unit, onExport: (String) -> Unit,
     onUpload: (String) -> Unit = {}, uploads: NoteUploadsState = NoteUploadsState(), target: NoteUploadTarget? = null,
-    onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {}
+    onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
+    onAsr: (String) -> Unit = {},
 ) {
     val d = PimTheme.dimensions
     val versions = materials.entries.filter { it.noteId == note.id }
@@ -61,6 +62,20 @@ internal fun NoteMaterialsSheet(
                             Button(onClick = { onUpload(version.id) }, enabled = !busy,
                                 modifier = Modifier.testTag("material-upload-${version.id}")) { Text("确认上传此版本") }
                             val jobs = uploads.jobs.filter { it.versionId == version.id }
+                            OutlinedButton(
+                                onClick = { onDismiss(); onAsr(version.id) },
+                                enabled = !busy,
+                                modifier = Modifier.testTag("material-asr-${version.id}"),
+                            ) {
+                                Icon(Icons.Default.GraphicEq, null)
+                                Spacer(Modifier.width(d.spaceSmall))
+                                Text("逐段转写")
+                            }
+                            Text(
+                                "转写是独立的收费与第三方发送操作，需另外核对目标并明确同意。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
                             if (jobs.isNotEmpty()) NoteUploadJobs(uploads.copy(jobs = jobs), target, onResumeUpload, onPauseUpload)
                         }
                         if (version.phase == NoteMaterialPhase.Preparing)
@@ -93,7 +108,8 @@ internal fun NoteRecordingsSheet(
             contentPadding = PaddingValues(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceLarge)) {
             item {
                 Text("本篇录音", style = MaterialTheme.typography.titleLarge)
-                Text("每段单独保留。正式转写尚未接入。", style = MaterialTheme.typography.bodyMedium,
+                Text("每段单独保留。逐段转写会先显示当前账号的实际 ASR 目标并单独征求同意；上传材料本身不会发送给模型。",
+                    style = MaterialTheme.typography.bodyMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (sessions.isEmpty()) Text("还没有录音，关闭面板后点击左下角开始。", Modifier.padding(top = d.spaceLarge))
             }

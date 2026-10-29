@@ -15,7 +15,21 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
     val notes by model.notes.state.collectAsStateWithLifecycle()
     val recordings by model.recordings.state.collectAsStateWithLifecycle()
     val uploads by model.uploads.state.collectAsStateWithLifecycle()
+    val asr by model.asr.state.collectAsStateWithLifecycle()
     val target = rememberUploadTarget(model.uploads)
+    var showAsr by remember { mutableStateOf(false) }
+    val asrActions = remember(model) {
+        NoteAsrActions(
+            refresh = model::refreshAsr,
+            refreshTask = model::refreshAsrTask,
+            loadSegments = model::loadAsrSegments,
+            stop = model::stopAsr,
+            retry = model::retryAsr,
+            start = model::startAsr,
+            replayStart = model::replayAsrStart,
+            replayRetry = model::replayAsrRetry,
+        )
+    }
     val message by model.message.collectAsStateWithLifecycle()
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it, withDismissAction = true); model.dismissMessage(it) } }
@@ -25,9 +39,17 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
             onCreate = { context.startActivity(NativeNotesActivity.intent(context, model.notes.create(), true)) },
             onOpen = { id -> if (id != null) context.startActivity(NativeNotesActivity.intent(context, id, true)) },
             onExit = null, uploads = uploads, currentTarget = target,
-            onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload)
+            onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload,
+            asrTaskCount = asr.tasks.size, onAsr = { showAsr = true })
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(com.pim.app.ui.theme.PimTheme.dimensions.spaceLarge)
             .padding(bottom = com.pim.app.ui.theme.PimTheme.dimensions.noteDockClearance))
+        if (showAsr) NoteAsrSurface(
+            state = asr,
+            currentTarget = target,
+            initialVersionId = null,
+            onDismiss = { showAsr = false },
+            actions = asrActions,
+        )
       }
     }
 }

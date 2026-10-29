@@ -44,11 +44,15 @@ fun NativeNotesScreen(
     onExit: () -> Unit = {}, onStopRecording: () -> Unit = {},
     completion: NoteCompletion? = null, onDismissCompletion: () -> Unit = {}, onDismissMessage: (String) -> Unit = {},
     uploads: NoteUploadsState = NoteUploadsState(), uploadTarget: NoteUploadTarget? = null,
-    onUpload: (String, NoteUploadTarget) -> Unit = { _, _ -> }, onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {}
+    onUpload: (String, NoteUploadTarget) -> Unit = { _, _ -> }, onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
+    asr: NoteAsrRepositoryState = NoteAsrRepositoryState(), asrActions: NoteAsrActions = NoteAsrActions(),
+    initialAsr: Boolean = false,
 ) {
     val d = PimTheme.dimensions
     val note = state.documents[selectedId]
     var uploadVersionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var asrVersionId by rememberSaveable { mutableStateOf<String?>(null) }
+    var showAsr by rememberSaveable { mutableStateOf(initialAsr) }
     BackHandler(busy && note == null) { onProblem("正在处理本地材料，请稍候") }
     val snackbar = remember { SnackbarHostState() }
     LaunchedEffect(message) {
@@ -61,7 +65,8 @@ fun NativeNotesScreen(
         Box(Modifier.fillMaxSize().imePadding()) {
             if (note == null) {
                 NoteLibraryScreen(state, selectedId, recording, busy, onCreate, onOpen, onExit,
-                    uploads = uploads, currentTarget = uploadTarget, onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload)
+                    uploads = uploads, currentTarget = uploadTarget, onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
+                    asrTaskCount = asr.tasks.size, onAsr = { showAsr = true })
             } else key(note.id) {
                 var preview by rememberSaveable { mutableStateOf(false) }
                 val scope = rememberCoroutineScope()
@@ -208,11 +213,12 @@ fun NativeNotesScreen(
                     confirmButton = { TextButton(onClick = { confirmFinish = false; afterInput { onFinish(it.id) } }, modifier = Modifier.testTag("note-confirm-finish")) { Text("结束并保存") } },
                     dismissButton = { TextButton(onClick = { confirmFinish = false }) { Text("继续记录") } })
                 if (showAbout) AlertDialog(onDismissRequest = { showAbout = false }, title = { Text("笔记与原始材料") },
-                    text = { Text("支持离线编辑 Markdown、拍照、手写和后台录音。材料版本中的服务器状态单独显示；本机保存成功不等于已上传。\n\n逐段转写、完整记录和独立分析尚未在安卓开放。") },
+                    text = { Text("支持离线编辑 Markdown、拍照、手写和后台录音。材料版本中的服务器状态单独显示；本机保存成功不等于已上传。\n\n逐段转写会先显示当前账号的真实 ASR 目标、固定材料范围和可能费用，再由你单独明确同意。完整记录与独立分析仍未开放。") },
                     confirmButton = { TextButton(onClick = { showAbout = false }) { Text("知道了") } })
                 if (showMaterials) NoteMaterialsSheet(note, sessions, materials, busy, { showMaterials = false }, onRetryMaterial, onExportMaterial,
                     onUpload = { uploadVersionId = it; showMaterials = false }, uploads = uploads, target = uploadTarget,
-                    onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload)
+                    onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
+                    onAsr = { asrVersionId = it; showAsr = true })
                 if (showRecordings) NoteRecordingsSheet(sessions, recording, playing, { showRecordings = false }, onPlay, onPauseResume, onStopRecording)
                 completion?.takeIf { it.noteId == note.id }?.let { finished ->
                     NoteCompletionSheet(materials.entries.firstOrNull { it.id == finished.versionId }, onDismissCompletion,
@@ -225,6 +231,13 @@ fun NativeNotesScreen(
             }
             SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(horizontal = d.spaceLarge)
                 .padding(bottom = if (note != null) d.noteDockClearance else d.spaceLarge).testTag("note-message"))
+            if (showAsr) NoteAsrSurface(
+                state = asr,
+                currentTarget = uploadTarget,
+                initialVersionId = asrVersionId,
+                onDismiss = { showAsr = false },
+                actions = asrActions,
+            )
         }
     }
 }

@@ -189,7 +189,7 @@ private fun NoteAsrTaskList(
                         }
                     }
                 }
-                if (record.pendingRetry?.phase == NoteAsrIntentPhase.VerificationPending) {
+                if (record.pendingRetry?.requiresExplicitReplay() == true) {
                     TextButton(onClick = { onOpen(record.taskId) },
                         modifier = Modifier.testTag("note-asr-replay-retry-${record.taskId}")) {
                         Text("查看并核对恢复")
@@ -208,8 +208,11 @@ private fun NoteAsrTaskList(
 @Composable
 private fun FixedSourceCard(versionId: String, source: NoteAsrSourceDto?) {
     val d = PimTheme.dimensions
-    OutlinedCard(Modifier.fillMaxWidth().testTag("note-asr-source-$versionId")) {
-        Column(Modifier.padding(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
+    OutlinedCard(Modifier.fillMaxWidth().testTag("note-asr-source-card-$versionId")) {
+        Column(
+            Modifier.padding(d.spaceLarge).testTag("note-asr-source-$versionId"),
+            verticalArrangement = Arrangement.spacedBy(d.spaceSmall),
+        ) {
             Row(verticalAlignment = Alignment.CenterVertically,
                 horizontalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
                 Icon(Icons.Default.LibraryMusic, null, tint = MaterialTheme.colorScheme.primary)
@@ -312,6 +315,13 @@ private fun NoteAsrTaskDetail(
     var replayRetry by rememberSaveable { mutableStateOf(false) }
     val task = record.task
     val groups = record.recordingGroups()
+    val pendingRetryNeedsReplay = record.pendingRetry?.requiresExplicitReplay() == true
+    LaunchedEffect(pendingRetryNeedsReplay) {
+        if (pendingRetryNeedsReplay) {
+            selectingRetry = false
+            selected = emptySet()
+        }
+    }
     Column(Modifier.fillMaxSize()) {
         Row(Modifier.fillMaxWidth().padding(horizontal = d.spaceSmall, vertical = d.spaceSmall),
             verticalAlignment = Alignment.CenterVertically) {
@@ -416,7 +426,7 @@ private fun NoteAsrTaskDetail(
                             TextButton(onClick = { confirmStop = true }, enabled = bound,
                                 modifier = Modifier.testTag("note-asr-stop-${record.taskId}")) { Text("停止后续发送") }
                         }
-                        if (record.segments.any(record::isRetryEligible)) {
+                        if (record.segments.any(record::isRetryEligible) && !pendingRetryNeedsReplay) {
                             TextButton(onClick = { selectingRetry = true }, enabled = bound,
                                 modifier = Modifier.testTag("note-asr-retry-${record.taskId}")) { Text("选择失败片恢复") }
                         }
@@ -426,7 +436,7 @@ private fun NoteAsrTaskDetail(
             if (state.segmentsLoadingTaskId == record.taskId) item {
                 LinearProgressIndicator(Modifier.fillMaxWidth())
             }
-            if (selectingRetry) item {
+            if (selectingRetry && !pendingRetryNeedsReplay) item {
                 Text("只选择失败、未知或已阻止的内部片；成功、排队与运行中的片不可选。",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
             }
@@ -447,7 +457,7 @@ private fun NoteAsrTaskDetail(
                     SegmentCard(
                         record = record,
                         segment = segment,
-                        selecting = selectingRetry,
+                        selecting = selectingRetry && !pendingRetryNeedsReplay,
                         selected = segment.index in selected,
                         enabled = bound,
                         onSelection = { checked ->
@@ -456,7 +466,7 @@ private fun NoteAsrTaskDetail(
                     )
                 }
             }
-            if (selectingRetry) item {
+            if (selectingRetry && !pendingRetryNeedsReplay) item {
                 Row(horizontalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
                     TextButton(onClick = { selectingRetry = false; selected = emptySet() }) { Text("取消选择") }
                     Button(onClick = { confirmRetry = true }, enabled = bound && selected.isNotEmpty(),
@@ -465,9 +475,9 @@ private fun NoteAsrTaskDetail(
                     }
                 }
             }
-            if (record.pendingRetry?.phase == NoteAsrIntentPhase.VerificationPending) item {
+            if (pendingRetryNeedsReplay) item {
                 PimStatusBanner(
-                    "恢复结果未确认。若服务器进度已变化，应先刷新；不会自动创建新的恢复标识。",
+                    "恢复回执未确认（包括发送中进程中断）。必须先按原 retryId 核对；不会自动重发或新选片段。",
                     PimStatusTone.Warning,
                 )
                 TextButton(onClick = { replayRetry = true }, enabled = bound,
@@ -678,17 +688,15 @@ internal fun NoteAsrConsentSheet(
 ) {
     val d = PimTheme.dimensions
     val pinnedTarget = remember(versionId, target?.binding) { target }
-    var selectedIndex by remember(destinations.map { "${it.modelId}:${it.modelRevision}" }) { mutableStateOf(0) }
+    var selectedIndex by remember(destinations.map { it.consentIdentity() }) { mutableStateOf(0) }
     val selected = destinations.getOrNull(selectedIndex) ?: destinations.firstOrNull()
     LaunchedEffect(destinations) {
         if (selectedIndex !in destinations.indices) selectedIndex = 0
     }
-    var language by remember(
-        versionId, selected?.modelId, selected?.modelRevision, selected?.presetVersion
-    ) {
+    var language by remember(versionId, selected?.consentIdentity()) {
         mutableStateOf(selected?.languages?.firstOrNull { it == "auto" } ?: selected?.languages?.firstOrNull().orEmpty())
     }
-    var consent by remember(versionId, pinnedTarget?.binding, selected?.modelId, selected?.modelRevision) {
+    var consent by remember(versionId, pinnedTarget?.binding, selected?.consentIdentity()) {
         mutableStateOf(false)
     }
     val same = pinnedTarget != null && pinnedTarget.binding == target?.binding

@@ -121,6 +121,76 @@ class NoteAsrTaskStoreTest {
         assertTrue(loaded.statusView(target()).detail.contains("空文字"))
     }
 
+    @Test fun revisionChangeInvalidatesPreviouslyCompleteSegmentPages() {
+        val store = store()
+        val intent = store.createIntent(source, null, binding, "alice", destination, "auto")
+        val revision1 = "88888888-8888-4888-8888-888888888888"
+        val revision2 = "99999999-9999-4999-8999-999999999999"
+        store.importRemote(
+            task(
+                intent.taskId,
+                phase = "Succeeded",
+                completedSegments = 2,
+                completedSamples = 192_000,
+                totalSegments = 2,
+                revision = revision1,
+            ),
+            binding,
+            "alice",
+            null,
+        )
+        store.mergeSegments(
+            intent.taskId,
+            listOf(
+                segment(0, "record-a", "Succeeded", "第一修订片 0"),
+                segment(1, "record-a", "Succeeded", "第一修订片 1"),
+            ),
+            expectedTotal = 2,
+        )
+        assertTrue(store.read(intent.taskId).canClaimWholeComplete())
+
+        store.importRemote(
+            task(
+                intent.taskId,
+                phase = "Succeeded",
+                completedSegments = 2,
+                completedSamples = 192_000,
+                totalSegments = 2,
+                revision = revision2,
+            ),
+            binding,
+            "alice",
+            null,
+        )
+        val after = store.read(intent.taskId)
+        assertEquals(revision2, after.task?.revision)
+        assertTrue(after.segments.isEmpty())
+        assertFalse(after.segmentsComplete)
+        assertFalse(after.canClaimWholeComplete())
+    }
+
+    @Test fun destinationConsentIdentityChangesForEndpointPresetAndVersionWithSameModelRevision() {
+        val base = NoteAsrDestinationDto(
+            backgroundProcessingAvailable = true,
+            displayName = "合成 ASR",
+            endpoint = destination.endpoint,
+            languages = listOf("auto", "zh"),
+            model = "mimo-asr",
+            modelId = destination.modelId,
+            modelRevision = destination.modelRevision,
+            presetId = destination.presetId,
+            presetVersion = destination.presetVersion,
+        )
+        val endpointChanged = base.copy(endpoint = "https://asr-alt.example/v1/transcriptions")
+        val presetChanged = base.copy(presetId = "mimo-v3")
+        val versionChanged = base.copy(presetVersion = "2026-10-02")
+        assertNotEquals(base.consentIdentity(), endpointChanged.consentIdentity())
+        assertNotEquals(base.consentIdentity(), presetChanged.consentIdentity())
+        assertNotEquals(base.consentIdentity(), versionChanged.consentIdentity())
+        assertEquals(base.modelId, endpointChanged.modelId)
+        assertEquals(base.modelRevision, endpointChanged.modelRevision)
+    }
+
     @Test fun userRecordingGroupsKeepInternalChunkIndexesAndSampleOffsetsVisible() {
         val store = store()
         val intent = store.createIntent(source, null, binding, "alice", destination, "auto")
@@ -230,6 +300,7 @@ class NoteAsrTaskStoreTest {
         completedSegments: Int = 0,
         completedSamples: Long = 0,
         totalSegments: Int = 3,
+        revision: String = "88888888-8888-4888-8888-888888888888",
     ) = NoteAsrTaskDto(
         backgroundProcessingAvailable = true,
         completedSamples = completedSamples,
@@ -242,7 +313,7 @@ class NoteAsrTaskStoreTest {
         manifestSha256 = "b".repeat(64),
         noteId = source.noteId,
         phase = phase,
-        revision = "88888888-8888-4888-8888-888888888888",
+        revision = revision,
         sampleRate = 16_000,
         stopRequested = phase == "Stopped",
         taskId = id,

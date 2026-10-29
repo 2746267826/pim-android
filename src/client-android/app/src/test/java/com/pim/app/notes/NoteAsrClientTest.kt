@@ -175,6 +175,50 @@ class NoteAsrClientTest {
         assertNotEquals(firstRetryId, server.retryRequests[1].retryId)
     }
 
+    @Test fun unconfirmedRetryBlocksNewSelectionUntilExplicitReplayOfTheSameRetryId() = runBlocking {
+        val record = intent()
+        val server = Server(record.taskId)
+        store().importRemote(
+            server.task("NeedsAttention", totalSegments = 3, completedSegments = 1),
+            binding, "alice", null,
+        )
+        client(server).segments(record.taskId)
+        server.loseRetry = true
+        try {
+            client(server).retry(record.taskId, listOf(1), true)
+            fail("Expected an unknown retry receipt")
+        } catch (_: IOException) { }
+        val pending = store().read(record.taskId)
+        assertTrue(checkNotNull(pending.pendingRetry).requiresExplicitReplay())
+        val retryId = checkNotNull(pending.pendingRetry).retryId
+        store().update(record.taskId) {
+            it.copy(
+                pendingRetry = it.pendingRetry?.copy(phase = NoteAsrIntentPhase.Submitting),
+                segments = it.segments.map { segment ->
+                    if (segment.index == 2) segment.copy(status = "Failed", transcript = null) else segment
+                },
+                segmentsComplete = false,
+            )
+        }
+        val ambiguous = store().read(record.taskId)
+        assertTrue(checkNotNull(ambiguous.pendingRetry).requiresExplicitReplay())
+
+        try {
+            client(server).retry(record.taskId, listOf(2), true)
+            fail("An unknown retry must block selecting a different slice")
+        } catch (_: IllegalArgumentException) { }
+        assertEquals(1, server.retryRequests.size)
+        val unchanged = store().read(record.taskId)
+        assertEquals(retryId, unchanged.pendingRetry?.retryId)
+        assertEquals(listOf(1), unchanged.pendingRetry?.segmentIndexes)
+
+        client(server).replayRetry(record.taskId, freshlyConfirmed = true)
+        assertEquals(2, server.retryRequests.size)
+        assertEquals(retryId, server.retryRequests[1].retryId)
+        assertEquals(listOf(1), server.retryRequests[1].segmentIndexes)
+        assertNull(store().read(record.taskId).pendingRetry)
+    }
+
     @Test fun stopKeepsSuccessfulSegmentText() = runBlocking {
         val record = intent()
         val server = Server(record.taskId)

@@ -172,6 +172,9 @@ class NoteAsrClient(
         require(duplicateChargeConfirmed) { "恢复前必须确认可能重复计费" }
         val record = tasks.read(id)
         require(record.binding == binding)
+        require(record.pendingRetry?.requiresExplicitReplay() != true) {
+            "已有待核对的恢复请求；必须使用原 retryId 明确核对，不能新选片段覆盖"
+        }
         val task = record.task ?: throw NoteAsrTaskMissingException("尚无已确认任务")
         require(segmentIndexes.isNotEmpty() && segmentIndexes.size <= 5_000 && segmentIndexes.distinct().size == segmentIndexes.size)
         val known = record.segments.associateBy { it.index }
@@ -248,7 +251,10 @@ class NoteAsrClient(
             if (response.code != 0) throw NoteAsrRequestRejectedException(response.message)
             val remote = response.data ?: throw IOException("服务器未返回恢复后的任务")
             require(remote.taskId == id && remote.destination == record.destination)
-            return tasks.importRemote(remote, binding, ownerName, localMaterial(remote.versionId))
+            val imported = tasks.importRemote(remote, binding, ownerName, localMaterial(remote.versionId))
+            return if (imported.pendingRetry == null) imported else tasks.update(id) {
+                it.copy(pendingRetry = null, lastProblem = null, updatedAtMillis = System.currentTimeMillis())
+            }
         } catch (error: Throwable) {
             tasks.update(id) {
                 it.copy(

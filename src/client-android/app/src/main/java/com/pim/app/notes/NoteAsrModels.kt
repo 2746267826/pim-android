@@ -37,6 +37,9 @@ data class NoteAsrRetryIntent(
     val createdAtMillis: Long,
 )
 
+internal fun NoteAsrRetryIntent.requiresExplicitReplay(): Boolean =
+    phase == NoteAsrIntentPhase.Submitting || phase == NoteAsrIntentPhase.VerificationPending
+
 /**
  * Private durable task state. It never contains an access token, refresh token, or Authorization header.
  * Generated ASR DTOs are used directly so local persistence cannot silently redefine the wire contract.
@@ -105,6 +108,30 @@ internal fun NoteAsrDestinationDto.asAsrConsent() = AiAsrDestinationConsent(
     modelRevision = modelRevision,
     presetId = presetId,
     presetVersion = presetVersion,
+)
+
+internal data class NoteAsrDestinationConsentIdentity(
+    val modelId: String,
+    val modelRevision: String,
+    val displayName: String,
+    val model: String,
+    val endpoint: String,
+    val presetId: String,
+    val presetVersion: String,
+    val languages: List<String>,
+    val backgroundProcessingAvailable: Boolean,
+)
+
+internal fun NoteAsrDestinationDto.consentIdentity() = NoteAsrDestinationConsentIdentity(
+    modelId = modelId,
+    modelRevision = modelRevision,
+    displayName = displayName,
+    model = model,
+    endpoint = endpoint,
+    presetId = presetId,
+    presetVersion = presetVersion,
+    languages = languages,
+    backgroundProcessingAvailable = backgroundProcessingAvailable,
 )
 
 internal fun NoteAsrDestinationDto.displayLabel(): String =
@@ -189,7 +216,7 @@ fun NoteAsrTaskRecord.statusView(currentTarget: NoteUploadTarget?): NoteAsrStatu
             lastProblem ?: "服务器未接受恢复请求；已成功片段保留，可重新选择失败片。",
         )
     }
-    pendingRetry?.takeIf { it.phase in setOf(NoteAsrIntentPhase.Submitting, NoteAsrIntentPhase.VerificationPending) }?.let {
+    pendingRetry?.takeIf { it.requiresExplicitReplay() }?.let {
         return NoteAsrStatusView(
             NoteAsrStatus.VerificationPending,
             "恢复回执待核对",

@@ -107,8 +107,13 @@ class NoteAsrTaskStore(private val root: File) {
             require(old.binding == binding && old.noteId == task.noteId && old.versionId == task.versionId &&
                 old.destination == task.destination) { "服务器任务与本地固定身份不一致" }
         } else require(tasks().size < MAX_TASKS) { "本机保留的转写任务已达 $MAX_TASKS 个" }
+        val segmentIdentityChanged = old?.task?.let {
+            it.revision != task.revision || it.totalSegments != task.totalSegments
+        } == true
         val record = old?.copy(
             task = task,
+            segments = if (segmentIdentityChanged) emptyList() else old.segments,
+            segmentsComplete = if (segmentIdentityChanged) false else old.segmentsComplete,
             localPhase = NoteAsrIntentPhase.Accepted,
             pendingRetry = old.pendingRetry?.takeIf { it.expectedRevision == task.revision },
             lastProblem = null,

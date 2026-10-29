@@ -116,6 +116,11 @@ Compose roots 概览；失败时额外保存 Compose 树、截图、`note-asr-ta
 `<external-files>/native-note-asr-qa/legacy-claim-preview.png`，供 narrow 大字号人工核对遮挡；
 截图失败只记录 warning，不覆盖原断言。
 
+窄屏大字号下，`notes-library`、`note-asr-tasks` 和 `material-version-sheet` 是真实可滚动的
+Lazy 父节点。测试必须先通过父节点 `performScrollToNode` 把精确目标 tag 滚入组合范围，再执行
+`assertIsDisplayed`/点击；不得先等待离屏 item 已存在，也不得用 `getFirst`、宽泛文本或增加
+timeout 绕过。目标仍使用完整 note/task/material ID。
+
 ## 证据分类
 
 - **设备层**：专用 AVD + 真实 Test API + 本机合成 ASR + 合成 PCM。

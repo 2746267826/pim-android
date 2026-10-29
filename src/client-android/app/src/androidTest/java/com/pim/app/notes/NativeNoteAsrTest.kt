@@ -203,10 +203,8 @@ class NativeNoteAsrTest {
             compose.onAllNodesWithTag("notes-library").fetchSemanticsNodes().isNotEmpty()
         }
         editor = null
-        compose.waitUntil(20_000) {
-            compose.onAllNodesWithTag("note-open-${fixture.noteId}").fetchSemanticsNodes().isNotEmpty()
-        }
-        compose.onNodeWithTag("note-open-${fixture.noteId}").performScrollTo().performClick()
+        scrollToNodeEventually("notes-library", hasTestTag("note-open-${fixture.noteId}"))
+        compose.onNodeWithTag("note-open-${fixture.noteId}").assertIsDisplayed().performClick()
         compose.waitUntil(20_000) {
             val current = resumedEditor()
             current != null && current !== oldEditor &&
@@ -329,12 +327,8 @@ class NativeNoteAsrTest {
         compose.onNodeWithTag("note-asr-submit-${fixture.versionA}").assertIsEnabled().performScrollTo().performClick()
 
         val task = awaitTaskForVersion(fixture.versionA)
-        compose.waitUntil(30_000) {
-            compose.onAllNodesWithTag("note-asr-task-open-${task.taskId}")
-                .fetchSemanticsNodes().isNotEmpty()
-        }
         scrollToNodeEventually("note-asr-tasks", hasTestTag("note-asr-task-open-${task.taskId}"))
-        compose.onNodeWithTag("note-asr-task-open-${task.taskId}").performClick()
+        compose.onNodeWithTag("note-asr-task-open-${task.taskId}").assertIsDisplayed().performClick()
         compose.waitUntil(20_000) {
             compose.onAllNodesWithTag("note-asr-verification-pending-${task.taskId}")
                 .fetchSemanticsNodes().isNotEmpty()
@@ -673,7 +667,8 @@ class NativeNoteAsrTest {
     private fun openAsrForVersion(versionId: String) {
         compose.onNodeWithContentDescription("更多文档操作").performClick()
         compose.onNodeWithTag("note-material-versions").performClick()
-        compose.onNodeWithTag("material-asr-$versionId").performScrollTo().performClick()
+        scrollToNodeEventually("material-version-sheet", hasTestTag("material-asr-$versionId"))
+        compose.onNodeWithTag("material-asr-$versionId").assertIsDisplayed().performClick()
         compose.waitUntil(20_000) {
             compose.onAllNodesWithTag("note-asr-consent-$versionId").fetchSemanticsNodes().isNotEmpty()
         }

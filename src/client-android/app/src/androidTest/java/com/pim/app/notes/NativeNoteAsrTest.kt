@@ -178,7 +178,7 @@ class NativeNoteAsrTest {
         compose.waitUntil(15_000) { editorWebOrNull(blockId) != null }
         val web = checkNotNull(editorWebOrNull(blockId))
         assertEquals(
-            "\"true\"",
+            "true",
             editorEval(
                 web,
                 "document.querySelector('.tiptap').focus();" +
@@ -425,10 +425,8 @@ class NativeNoteAsrTest {
         waitForEnabledTag("note-asr-refresh")
         compose.onNodeWithTag("note-asr-refresh").performClick()
         scrollToNodeEventually("note-asr-tasks", hasTestTag("note-asr-task-open-${task.taskId}"))
-        compose.waitUntil(30_000) {
-            compose.onAllNodes(hasTestTag("note-asr-phase-${task.taskId}") and hasText("失败", substring = true))
-                .fetchSemanticsNodes().isNotEmpty()
-        }
+        assertTaskPhase(task.taskId, "NeedsAttention", "存在失败或未确认片段")
+        shot("unknown-list-needs-attention")
         compose.onNodeWithTag("note-asr-task-open-${task.taskId}").performClick()
         compose.waitUntil(20_000) {
             compose.onAllNodesWithTag("note-asr-detail-${task.taskId}").fetchSemanticsNodes().isNotEmpty()
@@ -451,12 +449,15 @@ class NativeNoteAsrTest {
         scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-retry-${task.taskId}"))
         compose.onNodeWithTag("note-asr-retry-${task.taskId}").performClick()
         scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-$task-0"))
-        compose.onNodeWithTag("note-asr-segment-select-0").assertIsNotEnabled()
+        assertSegmentStatus(task.taskId, 0, "Succeeded", "内部片 1 · 成功")
+        compose.onNodeWithTag("note-asr-segment-select-0").assertIsOff().assertIsNotEnabled()
         scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-$task-1"))
-        compose.onNodeWithText("Unknown", substring = true).assertExists()
-        compose.onNodeWithTag("note-asr-segment-select-1").assertIsEnabled().performClick()
+        assertSegmentStatus(task.taskId, 1, "Unknown", "内部片 2 · 待核对")
+        compose.onNodeWithTag("note-asr-segment-select-1")
+            .assertIsEnabled().assertIsOff().performClick().assertIsOn()
         scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-$task-2"))
-        compose.onNodeWithTag("note-asr-segment-select-2").assertExists()
+        assertSegmentStatus(task.taskId, 2, "Blocked", "内部片 3 · 已阻止")
+        compose.onNodeWithTag("note-asr-segment-select-2").assertIsOff()
         scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-retry-continue-${task.taskId}"))
         compose.onNodeWithTag("note-asr-retry-continue-${task.taskId}").performClick()
         compose.waitUntil(10_000) {
@@ -488,7 +489,7 @@ class NativeNoteAsrTest {
         waitForEnabledTag("note-asr-refresh-task-${task.taskId}")
         compose.onNodeWithTag("note-asr-refresh-task-${task.taskId}").performClick()
         scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-$task-1"))
-        compose.onNodeWithText("Succeeded", substring = true).assertExists()
+        assertSegmentStatus(task.taskId, 1, "Succeeded", "内部片 2 · 成功")
         shot("unknown-synthetic-explicit-recovery")
     }
 
@@ -735,6 +736,28 @@ class NativeNoteAsrTest {
         compose.onNodeWithTag("note-asr-refresh-task-$taskId").performClick()
         scrollToNodeEventually("note-asr-detail-$taskId", hasTestTag("note-asr-segment-$taskId-${segment.index}"))
         compose.onNodeWithText(transcript, substring = true).assertExists()
+    }
+
+    private fun assertTaskPhase(taskId: String, wirePhase: String, exactLabel: String) {
+        scrollToNodeEventually("note-asr-tasks", hasTestTag("note-asr-phase-$taskId"))
+        val matcher = hasTestTag("note-asr-phase-$taskId") and
+            hasStateDescription(wirePhase) and hasText(exactLabel)
+        compose.waitUntil(30_000) {
+            compose.onAllNodes(matcher).fetchSemanticsNodes().size == 1
+        }
+        compose.onAllNodes(matcher).assertCountEquals(1)
+    }
+
+    private fun assertSegmentStatus(
+        taskId: String,
+        index: Int,
+        wireStatus: String,
+        exactLabel: String,
+    ) {
+        scrollToNodeEventually("note-asr-detail-$taskId", hasTestTag("note-asr-segment-$taskId-$index"))
+        val matcher = hasTestTag("note-asr-segment-status-$taskId-$index") and
+            hasStateDescription(wireStatus) and hasText(exactLabel)
+        compose.onAllNodes(matcher).assertCountEquals(1)
     }
 
     private fun scrollToNodeEventually(parentTag: String, matcher: SemanticsMatcher) {

@@ -55,6 +55,7 @@ host ready 文件中的安全事实包括 API base、合成账号、模型显示
 | 未知片 | checkpoint/回执状态为 `Unknown`；刷新和再次执行真实 job 均不产生新发送或 TaskId；明确选中未知片并重新确认后才增加一次尝试 |
 | 停止保留成功片 | 第 2 片调用中停止；最终不发送第 3 片，已成功文字仍可读 |
 | 页面重建/换账号 | Bob 看不到 Alice 卡片且直连 API 为 404/空；回到 Alice 后原任务与文字保留 |
+| 本机编辑交接 | 从固定版本 A 打开编辑器，修改出新的本机稿 B，再返回并恢复编辑器；A 的原文与 B 的修改均不丢 |
 | HTTP 次数独立佐证 | `/__qa/asr/summary` 统计的是合成 ASR 实际收到的请求，不读取客户端自报状态 |
 
 UI 标签以实现方
@@ -63,7 +64,7 @@ UI 标签以实现方
 `note-asr-consent-check`、`note-asr-submit-${versionId}`、`note-asr-task-${taskId}`、
 `note-asr-task-open-${taskId}`、`note-asr-segment-${taskId}-${index}` 和失败片恢复标签。
 
-第五个设备场景专用的“未知片”是本机合成 QA 故障：先用真实 job 产生成功片并停止
+“未知片”设备场景使用本机合成 QA 故障：先用真实 job 产生成功片并停止
 第二片调用，再把 checkpoint 改成与真实持久字段一致的 `Unknown` attempt +
 未过期 running receipt，并把剩余片标为 `Blocked`。它验证列表/详情刷新、再次执行
 真实 job、无新 TaskId/发送，以及明确恢复只增加一次尝试；它**不代表**实际进程杀死、
@@ -71,7 +72,8 @@ UI 标签以实现方
 
 ## 运行顺序
 
-当前只完成了模板与夹具，**尚未编译或运行**。取得统筹批准后：
+`5da8` / `6a84` 冻结输入已在 phone 上执行过 6 个 ASR 场景和 3 个 focused
+回归；准确结果与失败保留在 QA report。取得新的统筹批准后：
 
 1. 等 API `destinations` 真实导出、Android 契约快照/生成物和产品实现可编译；
 2. 申请编译时隙，构建 app 与 androidTest APK；本 QA 驱动不自行占用 Gradle；

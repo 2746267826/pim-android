@@ -106,7 +106,7 @@ internal fun NoteAsrSurface(
 }
 
 @Composable
-private fun NoteAsrTaskList(
+internal fun NoteAsrTaskList(
     state: NoteAsrRepositoryState,
     currentTarget: NoteUploadTarget?,
     initialVersionId: String?,

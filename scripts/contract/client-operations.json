@@ -50,6 +50,14 @@
     {"apiService": "beginNoteMaterialUpload", "method": "POST", "path": "/api/v1/native-notes/versions"},
     {"apiService": "getNoteMaterialVersion", "method": "GET", "path": "/api/v1/native-notes/versions/{versionId}"},
     {"apiService": "uploadNoteMaterialPart", "method": "PUT", "path": "/api/v1/native-notes/versions/{versionId}/files/{fileIndex}/parts/{partIndex}"},
-    {"apiService": "completeNoteMaterialUpload", "method": "POST", "path": "/api/v1/native-notes/versions/{versionId}/complete"}
+    {"apiService": "completeNoteMaterialUpload", "method": "POST", "path": "/api/v1/native-notes/versions/{versionId}/complete"},
+    {"apiService": "getNoteAsrSources", "method": "GET", "path": "/api/v1/native-notes/asr-tasks/sources"},
+    {"apiService": "getNoteAsrDestinations", "method": "GET", "path": "/api/v1/native-notes/asr-tasks/destinations"},
+    {"apiService": "getNoteAsrTasks", "method": "GET", "path": "/api/v1/native-notes/asr-tasks"},
+    {"apiService": "startNoteAsrTask", "method": "POST", "path": "/api/v1/native-notes/asr-tasks"},
+    {"apiService": "getNoteAsrTask", "method": "GET", "path": "/api/v1/native-notes/asr-tasks/{taskId}"},
+    {"apiService": "getNoteAsrSegments", "method": "GET", "path": "/api/v1/native-notes/asr-tasks/{taskId}/segments"},
+    {"apiService": "stopNoteAsrTask", "method": "POST", "path": "/api/v1/native-notes/asr-tasks/{taskId}/stop"},
+    {"apiService": "retryNoteAsrTask", "method": "POST", "path": "/api/v1/native-notes/asr-tasks/{taskId}/retry"}
   ]
 }

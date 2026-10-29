@@ -4,6 +4,7 @@ import androidx.lifecycle.SavedStateHandle
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pim.app.recording.RecordingRepository
+import com.pim.core.contract.NoteAsrDestinationDto
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -23,7 +24,8 @@ class NotesViewModel @Inject constructor(
     val recordings: RecordingRepository,
     val materials: NoteMaterialRepository,
     private val saved: SavedStateHandle,
-    val uploads: NoteUploadRepository
+    val uploads: NoteUploadRepository,
+    val asr: NoteAsrRepository,
 ) : ViewModel() {
     val selectedId = saved.getStateFlow<String?>("noteId", null)
     private val mutableMessage = MutableStateFlow<String?>(null)
@@ -40,6 +42,7 @@ class NotesViewModel @Inject constructor(
             catch (_: Exception) { tell("录音材料暂时无法读取，原始文件保留") }
             materials.initialize()
             uploads.initialize()
+            asr.initialize()
         }
     }
 
@@ -75,6 +78,24 @@ class NotesViewModel @Inject constructor(
         catch (error: CancellationException) { throw error }
         catch (_: Exception) { tell("未确认暂停成功，请重新核对上传状态") }
     } }
+
+    fun refreshAsr() { viewModelScope.launch { asr.refresh() } }
+    fun refreshAsrTask(id: String) { viewModelScope.launch { asr.refreshTask(id) } }
+    fun loadAsrSegments(id: String) { viewModelScope.launch { asr.loadSegments(id) } }
+    fun stopAsr(id: String) { viewModelScope.launch { asr.stop(id) } }
+    fun retryAsr(id: String, indexes: List<Int>) { viewModelScope.launch { asr.retry(id, indexes, true) } }
+    fun startAsr(versionId: String, destination: NoteAsrDestinationDto, language: String) {
+        viewModelScope.launch {
+            try {
+                asr.start(versionId, destination, freshlyConfirmed = true, language = language)
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) {
+                tell(error.message ?: "未能确认 ASR 目标或任务；固定材料保留")
+            }
+        }
+    }
+    fun replayAsrStart(id: String) { viewModelScope.launch { asr.replayStart(id, true) } }
+    fun replayAsrRetry(id: String) { viewModelScope.launch { asr.replayRetry(id, true) } }
 
     fun prepareMaterial(noteId: String, anchor: NoteInsertion, cameraToken: String? = null) {
         cancelMaterial()

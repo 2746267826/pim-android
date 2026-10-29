@@ -1,8 +1,15 @@
 package com.pim.core.network
 
 import com.pim.core.contract.BeginNoteMaterialUploadRequest
+import com.pim.core.contract.NoteAsrDestinationsDtoApiResponse
 import com.pim.core.contract.NoteMaterialUploadDtoApiResponse
 import com.pim.core.contract.NoteMaterialVersionDtoApiResponse
+import com.pim.core.contract.NoteAsrSegmentsDtoApiResponse
+import com.pim.core.contract.NoteAsrSourcesDtoApiResponse
+import com.pim.core.contract.NoteAsrTaskDtoApiResponse
+import com.pim.core.contract.NoteAsrTaskDtoIReadOnlyListApiResponse
+import com.pim.core.contract.RetryNoteAsrRequest
+import com.pim.core.contract.StartNoteAsrRequest
 
 import com.pim.core.contract.AuthResponseApiResponse
 import com.pim.core.contract.CalendarOperationResultApiResponse
@@ -89,6 +96,41 @@ interface ApiService {
 
     @POST("native-notes/versions/{versionId}/complete")
     suspend fun completeNoteMaterialUpload(@Path("versionId") versionId: String): NoteMaterialUploadDtoApiResponse
+
+    // Fixed native-note segmented ASR. The bound client checks owner/server for every physical attempt.
+    @GET("native-notes/asr-tasks/sources")
+    suspend fun getNoteAsrSources(
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 20
+    ): NoteAsrSourcesDtoApiResponse
+
+    @GET("native-notes/asr-tasks/destinations")
+    suspend fun getNoteAsrDestinations(): NoteAsrDestinationsDtoApiResponse
+
+    @GET("native-notes/asr-tasks")
+    suspend fun getNoteAsrTasks(): NoteAsrTaskDtoIReadOnlyListApiResponse
+
+    @POST("native-notes/asr-tasks")
+    suspend fun startNoteAsrTask(@Body request: StartNoteAsrRequest): NoteAsrTaskDtoApiResponse
+
+    @GET("native-notes/asr-tasks/{taskId}")
+    suspend fun getNoteAsrTask(@Path("taskId") taskId: String): NoteAsrTaskDtoApiResponse
+
+    @GET("native-notes/asr-tasks/{taskId}/segments")
+    suspend fun getNoteAsrSegments(
+        @Path("taskId") taskId: String,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 10
+    ): NoteAsrSegmentsDtoApiResponse
+
+    @POST("native-notes/asr-tasks/{taskId}/stop")
+    suspend fun stopNoteAsrTask(@Path("taskId") taskId: String): NoteAsrTaskDtoApiResponse
+
+    @POST("native-notes/asr-tasks/{taskId}/retry")
+    suspend fun retryNoteAsrTask(
+        @Path("taskId") taskId: String,
+        @Body request: RetryNoteAsrRequest
+    ): NoteAsrTaskDtoApiResponse
 
     // Auth
     @POST("auth/login")

@@ -17,6 +17,7 @@ import androidx.activity.viewModels
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.SideEffect
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.toArgb
@@ -87,7 +88,20 @@ class NativeNotesActivity : ComponentActivity() {
             val materials by model.materials.state.collectAsStateWithLifecycle()
             val completion by model.completion.collectAsStateWithLifecycle()
             val uploads by model.uploads.state.collectAsStateWithLifecycle()
+            val asr by model.asr.state.collectAsStateWithLifecycle()
             val uploadTarget = rememberUploadTarget(model.uploads)
+            val asrActions = remember(model) {
+                NoteAsrActions(
+                    refresh = model::refreshAsr,
+                    refreshTask = model::refreshAsrTask,
+                    loadSegments = model::loadAsrSegments,
+                    stop = model::stopAsr,
+                    retry = model::retryAsr,
+                    start = model::startAsr,
+                    replayStart = model::replayAsrStart,
+                    replayRetry = model::replayAsrRetry,
+                )
+            }
             PimTheme {
                 val barColor = (if (selected == null) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface).toArgb()
                 SideEffect {
@@ -146,7 +160,8 @@ class NativeNotesActivity : ComponentActivity() {
                         }
                     }, completion = completion, onDismissCompletion = model::dismissCompletion, onDismissMessage = model::dismissMessage,
                     uploads = uploads, uploadTarget = uploadTarget, onUpload = model::submitUpload,
-                    onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload)
+                    onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload,
+                    asr = asr, asrActions = asrActions)
             }
         }
     }

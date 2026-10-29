@@ -34,7 +34,8 @@ internal fun NoteLibraryScreen(
     modifier: Modifier = Modifier,
     uploads: NoteUploadsState = NoteUploadsState(),
     currentTarget: NoteUploadTarget? = null,
-    onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {}
+    onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
+    asrTaskCount: Int = 0, onAsr: () -> Unit = {},
 ) {
     val d = PimTheme.dimensions
     var search by rememberSaveable { mutableStateOf("") }
@@ -59,7 +60,16 @@ internal fun NoteLibraryScreen(
                     Text(if (state.entries.isEmpty()) "留住课堂、会议与每一个想法" else "${state.entries.size} 篇记录，保存在这台设备",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
-                PimStatusBanner("笔记和原始材料保存在本机。结束后可确认上传固定版本；转写与分析暂未开放。", PimStatusTone.Info)
+                PimStatusBanner("笔记和原始材料保存在本机。上传只保存固定材料；逐段转写需单独核对 ASR 目标并明确同意。",
+                    PimStatusTone.Info)
+                OutlinedButton(
+                    onClick = onAsr,
+                    modifier = Modifier.fillMaxWidth().testTag("note-asr-open"),
+                ) {
+                    Icon(Icons.Default.GraphicEq, null)
+                    Spacer(Modifier.width(d.spaceSmall))
+                    Text(if (asrTaskCount > 0) "逐段转写任务 · $asrTaskCount 个" else "逐段转写任务")
+                }
                 Spacer(Modifier.height(d.spaceMedium))
                 OutlinedTextField(search, { search = it }, label = { Text("搜索本机笔记") }, singleLine = true,
                     leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth().testTag("notes-search"))

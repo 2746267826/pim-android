@@ -125,9 +125,31 @@ class MobileSyncCoordinator @Inject constructor(
     private val _state = MutableStateFlow(readPersistedState())
     val currentState: StateFlow<MobileSyncState> = _state.asStateFlow()
 
+    suspend fun legacyOutboxRecoveryPreview(): UsageOutboxRecoveryPreview? {
+        val pendingCount = pendingUsageRemaining(mobileDataDao)
+        if (pendingCount == 0) return null
+        val current = currentUsageOutboxOwnerBinding()
+        val action = evaluateUsageOutboxBinding(
+            stored = storedUsageOutboxOwnerBinding(),
+            current = current,
+            pendingCount = pendingCount
+        )
+        if (action != UsageOutboxBindingAction.UNBOUND_LEGACY_QUEUE) return null
+        val range = mobileDataDao.pendingUsageTimeRange()
+        return UsageOutboxRecoveryPreview(
+            serverIdentity = current.serverIdentity,
+            ownerId = current.ownerId,
+            ownerName = tokenManager.snapshot().ownerName,
+            pendingCount = pendingCount,
+            earliestUtc = range.earliestUtc,
+            latestUtc = range.latestUtc
+        )
+    }
+
     suspend fun syncOnOpen(
         continuationDepth: Int = 0,
-        manualRecoveryRetry: Boolean = false
+        manualRecoveryRetry: Boolean = false,
+        legacyOutboxClaim: LegacyOutboxClaimRequest? = null
     ): MobileSyncState {
         // REQ-3 / 缺陷 #345：周期同步也是一次唤醒，必须写一条心搏。
         // 放在乐观锁**之前**，是因为"唤醒发生了"与"本次同步是否真的跑起来"是两件事：
@@ -147,7 +169,7 @@ class MobileSyncCoordinator @Inject constructor(
         }
 
         val resultState = try {
-            runSyncOnOpen(manualRecoveryRetry)
+            runSyncOnOpen(manualRecoveryRetry, legacyOutboxClaim)
         } finally {
             syncMutex.unlock()
         }
@@ -178,7 +200,10 @@ class MobileSyncCoordinator @Inject constructor(
         _state.value = readPersistedState()
     }
 
-    private suspend fun runSyncOnOpen(manualRecoveryRetry: Boolean): MobileSyncState {
+    private suspend fun runSyncOnOpen(
+        manualRecoveryRetry: Boolean,
+        legacyOutboxClaim: LegacyOutboxClaimRequest?
+    ): MobileSyncState {
         val attemptedAt = nowIso()
         val serverUrl = configuredServerUrl()
         val deviceIdentity = deviceIdentity()
@@ -251,7 +276,7 @@ class MobileSyncCoordinator @Inject constructor(
             mobileDataDao.updateDeviceProfileSyncStatus(syncStatus = MobileSyncStatus.SYNCED)
 
             var current = preparing
-            val outboxBindingAction = ensureUsageOutboxBinding()
+            val outboxBindingAction = ensureUsageOutboxBinding(legacyOutboxClaim)
             if (outboxBindingAction != UsageOutboxBindingAction.ALLOWED) {
                 val bindingMessage = usageOutboxBindingMessage(outboxBindingAction)
                 val blocked = current.copy(
@@ -1317,23 +1342,26 @@ class MobileSyncCoordinator @Inject constructor(
         return UsageOutboxOwnerBinding(serverIdentity = server, ownerId = owner)
     }
 
-    private suspend fun ensureUsageOutboxBinding(): UsageOutboxBindingAction {
+    private suspend fun ensureUsageOutboxBinding(
+        claim: LegacyOutboxClaimRequest?
+    ): UsageOutboxBindingAction {
         val current = currentUsageOutboxOwnerBinding()
-        val action = evaluateUsageOutboxBinding(
+        val decision = resolveUsageOutboxBinding(
             stored = storedUsageOutboxOwnerBinding(),
             current = current,
-            pendingCount = pendingUsageRemaining(mobileDataDao)
+            pendingCount = pendingUsageRemaining(mobileDataDao),
+            claim = claim
         )
-        if (action == UsageOutboxBindingAction.BIND_CURRENT) {
+        if (decision.shouldBind) {
             prefs.edit()
                 .putString(USAGE_OUTBOX_SERVER_KEY, current.serverIdentity)
                 .putString(USAGE_OUTBOX_OWNER_KEY, current.ownerId)
                 .apply()
         }
-        return if (action == UsageOutboxBindingAction.BIND_CURRENT) {
+        return if (decision.shouldBind) {
             UsageOutboxBindingAction.ALLOWED
         } else {
-            action
+            decision.action
         }
     }
 
@@ -1704,6 +1732,25 @@ internal data class UsageOutboxOwnerBinding(
     val ownerId: String
 )
 
+data class UsageOutboxRecoveryPreview(
+    val serverIdentity: String,
+    val ownerId: String,
+    val ownerName: String?,
+    val pendingCount: Int,
+    val earliestUtc: Long?,
+    val latestUtc: Long?
+)
+
+data class LegacyOutboxClaimRequest(
+    val serverIdentity: String,
+    val ownerId: String
+) {
+    init {
+        require(serverIdentity.isNotBlank())
+        require(ownerId.isNotBlank())
+    }
+}
+
 internal enum class UsageOutboxBindingAction {
     BIND_CURRENT,
     ALLOWED,
@@ -1711,6 +1758,11 @@ internal enum class UsageOutboxBindingAction {
     UNBOUND_LEGACY_QUEUE,
     BINDING_MISMATCH
 }
+
+internal data class UsageOutboxBindingDecision(
+    val action: UsageOutboxBindingAction,
+    val shouldBind: Boolean
+)
 
 internal fun evaluateUsageOutboxBinding(
     stored: UsageOutboxOwnerBinding?,
@@ -1726,6 +1778,35 @@ internal fun evaluateUsageOutboxBinding(
         UsageOutboxBindingAction.ALLOWED
     } else {
         UsageOutboxBindingAction.BINDING_MISMATCH
+    }
+}
+
+internal fun resolveUsageOutboxBinding(
+    stored: UsageOutboxOwnerBinding?,
+    current: UsageOutboxOwnerBinding?,
+    pendingCount: Int,
+    claim: LegacyOutboxClaimRequest?
+): UsageOutboxBindingDecision {
+    if (current == null || current.serverIdentity.isBlank() || current.ownerId.isBlank()) {
+        return UsageOutboxBindingDecision(UsageOutboxBindingAction.OWNER_MISSING, false)
+    }
+    if (pendingCount == 0) {
+        return UsageOutboxBindingDecision(UsageOutboxBindingAction.BIND_CURRENT, true)
+    }
+    if (stored == current) {
+        return UsageOutboxBindingDecision(UsageOutboxBindingAction.ALLOWED, false)
+    }
+    if (stored != null) {
+        return UsageOutboxBindingDecision(UsageOutboxBindingAction.BINDING_MISMATCH, false)
+    }
+    if (claim == null) {
+        return UsageOutboxBindingDecision(UsageOutboxBindingAction.UNBOUND_LEGACY_QUEUE, false)
+    }
+    val claimMatches = claim.serverIdentity == current.serverIdentity && claim.ownerId == current.ownerId
+    return if (claimMatches) {
+        UsageOutboxBindingDecision(UsageOutboxBindingAction.ALLOWED, true)
+    } else {
+        UsageOutboxBindingDecision(UsageOutboxBindingAction.BINDING_MISMATCH, false)
     }
 }
 

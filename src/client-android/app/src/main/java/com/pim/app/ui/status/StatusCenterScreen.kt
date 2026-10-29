@@ -80,6 +80,7 @@ import com.pim.app.status.StatusSeverity
 import com.pim.app.status.SyncPhase
 import com.pim.app.status.actionableStatusIssues
 import com.pim.app.status.informationalStatusIssues
+import com.pim.app.ui.components.LegacyOutboxClaimDialog
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -112,6 +113,7 @@ fun StatusCenterScreen(
     val feedback by viewModel.feedback.collectAsStateWithLifecycle()
     val exportState by viewModel.exportState.collectAsStateWithLifecycle()
     val showMeteredSyncConfirmation by viewModel.showMeteredSyncConfirmation.collectAsStateWithLifecycle()
+    val legacyOutboxClaimPrompt by viewModel.legacyOutboxClaimPrompt.collectAsStateWithLifecycle()
     var showGuidance by rememberSaveable { mutableStateOf(false) }
     // REQ-21：红点状态取自持久化设置（进程重启后仍在），进入状态页时刷新一次。
     val keepAliveAlert by keepAliveViewModel.healthAlert.collectAsStateWithLifecycle()
@@ -185,6 +187,14 @@ fun StatusCenterScreen(
         onConfirmMeteredSync = { viewModel.confirmMeteredSync() },
         onDismissMeteredSyncConfirmation = { viewModel.dismissMeteredSyncConfirmation() }
     )
+
+    legacyOutboxClaimPrompt?.let { preview ->
+        LegacyOutboxClaimDialog(
+            preview = preview,
+            onConfirm = viewModel::confirmLegacyOutboxClaim,
+            onDismiss = viewModel::dismissLegacyOutboxClaim
+        )
+    }
 }
 
 @Composable
@@ -585,15 +595,16 @@ internal fun syncButtonLabel(phase: SyncPhase): String = when (phase) {
     SyncPhase.Waiting -> "立即同步"
     SyncPhase.Running -> "同步中"
     SyncPhase.CatchingUp -> "补传中"
-    SyncPhase.Blocked -> "暂不可同步"
+    SyncPhase.Blocked -> "重新同步"
     SyncPhase.Completed -> "再次同步"
     SyncPhase.Failed -> "重新同步"
     SyncPhase.Cancelled -> "再次同步"
 }
 
 private fun syncButtonEnabled(phase: SyncPhase): Boolean = when (phase) {
-    SyncPhase.Idle, SyncPhase.Waiting, SyncPhase.Completed, SyncPhase.Failed, SyncPhase.Cancelled -> true
-    SyncPhase.Accepted, SyncPhase.Running, SyncPhase.CatchingUp, SyncPhase.Blocked -> false
+    SyncPhase.Idle, SyncPhase.Waiting, SyncPhase.Completed, SyncPhase.Failed, SyncPhase.Cancelled,
+    SyncPhase.Blocked -> true
+    SyncPhase.Accepted, SyncPhase.Running, SyncPhase.CatchingUp -> false
 }
 
 internal fun syncButtonEnabled(state: StatusCenterState): Boolean {

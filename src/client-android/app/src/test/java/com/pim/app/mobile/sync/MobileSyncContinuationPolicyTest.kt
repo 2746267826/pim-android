@@ -138,6 +138,43 @@ class MobileSyncContinuationPolicyTest {
     }
 
     @Test
+    fun `legacy claim binds only matching current identity and never rewrites bound owner`() {
+        val ownerA = UsageOutboxOwnerBinding(
+            serverIdentity = "https://pim.example",
+            ownerId = "11111111-1111-1111-1111-111111111111"
+        )
+        val ownerB = ownerA.copy(ownerId = "22222222-2222-2222-2222-222222222222")
+        val otherServer = ownerA.copy(serverIdentity = "https://other.example")
+        val claimA = LegacyOutboxClaimRequest(ownerA.serverIdentity, ownerA.ownerId)
+
+        assertEquals(
+            UsageOutboxBindingDecision(UsageOutboxBindingAction.UNBOUND_LEGACY_QUEUE, false),
+            resolveUsageOutboxBinding(null, ownerA, pendingCount = 10, claim = null)
+        )
+        assertEquals(
+            UsageOutboxBindingDecision(UsageOutboxBindingAction.ALLOWED, true),
+            resolveUsageOutboxBinding(null, ownerA, pendingCount = 10, claim = claimA)
+        )
+        assertEquals(
+            UsageOutboxBindingDecision(UsageOutboxBindingAction.BINDING_MISMATCH, false),
+            resolveUsageOutboxBinding(null, ownerB, pendingCount = 10, claim = claimA)
+        )
+        assertEquals(
+            UsageOutboxBindingDecision(UsageOutboxBindingAction.BINDING_MISMATCH, false),
+            resolveUsageOutboxBinding(null, otherServer, pendingCount = 10, claim = claimA)
+        )
+        assertEquals(
+            UsageOutboxBindingDecision(UsageOutboxBindingAction.BINDING_MISMATCH, false),
+            resolveUsageOutboxBinding(
+                stored = ownerA,
+                current = ownerB,
+                pendingCount = 10,
+                claim = LegacyOutboxClaimRequest(ownerB.serverIdentity, ownerB.ownerId)
+            )
+        )
+    }
+
+    @Test
     fun `manual retry starts one new generation only for explicit retry exhausted code`() {
         val binding = UsageBatchRecoveryBinding(
             serverIdentity = "https://pim.example",

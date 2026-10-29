@@ -166,6 +166,19 @@ class MobileSyncUsageQueueTest {
         assertEquals(4, remaining)
     }
 
+    @Test
+    fun `pendingUsageTimeRange includes all usage outbox types without deleting rows`() = runTest {
+        dao.insertUsageEvents(listOf(event(1000, MobileSyncStatus.PENDING)))
+        dao.insertUsageSummaries(listOf(summary(8000, 9000, MobileSyncStatus.PENDING)))
+        dao.upsertAppMetadata(listOf(appMeta("com.range", collectedAtUtc = 5000, MobileSyncStatus.PENDING)))
+
+        val range = dao.pendingUsageTimeRange()
+
+        assertEquals(1000L, range.earliestUtc)
+        assertEquals(9000L, range.latestUtc)
+        assertEquals(3, pendingUsageRemaining(dao))
+    }
+
     // --- sortedMergeOutcome ---
 
     @Test

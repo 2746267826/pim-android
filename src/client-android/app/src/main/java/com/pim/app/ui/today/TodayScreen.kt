@@ -33,6 +33,7 @@ import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import com.pim.app.ui.components.PimButton
 import com.pim.app.ui.components.PimFactChip
+import com.pim.app.ui.components.LegacyOutboxClaimDialog
 import com.pim.app.ui.shell.PimWebViewScreen
 import com.pim.app.ui.theme.PimTheme
 
@@ -44,6 +45,7 @@ fun TodayScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val syncFeedback by viewModel.syncFeedback.collectAsStateWithLifecycle()
+    val legacyOutboxClaimPrompt by viewModel.legacyOutboxClaimPrompt.collectAsStateWithLifecycle()
     val refreshVersion by viewModel.refreshVersion.collectAsStateWithLifecycle()
     val context = LocalContext.current
 
@@ -73,6 +75,14 @@ fun TodayScreen(
                 )
             }
         }
+    }
+
+    legacyOutboxClaimPrompt?.let { preview ->
+        LegacyOutboxClaimDialog(
+            preview = preview,
+            onConfirm = viewModel::confirmLegacyOutboxClaim,
+            onDismiss = viewModel::dismissLegacyOutboxClaim
+        )
     }
 }
 

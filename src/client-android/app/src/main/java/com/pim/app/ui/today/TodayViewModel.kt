@@ -2,11 +2,14 @@ package com.pim.app.ui.today
 
 import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
+import com.pim.app.mobile.sync.LegacyOutboxClaimRequest
 import com.pim.app.mobile.sync.MobileSyncScheduler
+import com.pim.app.mobile.sync.UsageOutboxRecoveryPreview
 import com.pim.app.status.StatusAcceptedSignal
 import com.pim.app.status.StatusActionRoute
 import com.pim.app.status.StatusCenterRepository
 import com.pim.app.status.StatusCenterState
+import com.pim.app.status.LegacyOutboxClaimPromptController
 import com.pim.app.status.StatusSyncActionRunner
 import com.pim.app.status.SyncPhase
 import com.pim.app.ui.shell.AndroidWebMessageBridge
@@ -418,6 +421,14 @@ class TodayViewModel @Inject constructor(
         acceptedSignal = acceptedSignal
     )
 
+    private val legacyOutboxClaimController = LegacyOutboxClaimPromptController(
+        preview = { statusCenterRepository.legacyOutboxRecoveryPreview() },
+        submitNormal = ::submitNormalSync,
+        submitClaim = ::submitLegacyOutboxClaim
+    )
+    val legacyOutboxClaimPrompt: StateFlow<UsageOutboxRecoveryPreview?> =
+        legacyOutboxClaimController.prompt
+
     val bridge: AndroidWebMessageBridge = AndroidWebMessageBridge(
         serverSettingsStore = serverSettingsStore,
         scope = viewModelScope,
@@ -465,6 +476,20 @@ class TodayViewModel @Inject constructor(
     val syncFeedback: StateFlow<String?> = syncFeedbackFlow.asStateFlow()
 
     fun syncNow() {
+        if (latestStatusState.value.syncPhase in setOf(
+                SyncPhase.Accepted,
+                SyncPhase.Running,
+                SyncPhase.CatchingUp
+            )
+        ) {
+            return
+        }
+        viewModelScope.launch {
+            legacyOutboxClaimController.requestSync()
+        }
+    }
+
+    private fun submitNormalSync() {
         syncNowWithGate(
             gate = syncSubmissionGate,
             currentPhase = { latestStatusState.value.syncPhase },
@@ -472,6 +497,35 @@ class TodayViewModel @Inject constructor(
             feedback = syncFeedbackFlow,
             doSubmit = { syncRunner.run(StatusActionRoute.TriggerSync) },
             scope = viewModelScope,
+        )
+    }
+
+    fun confirmLegacyOutboxClaim() {
+        legacyOutboxClaimController.confirm()
+    }
+
+    fun dismissLegacyOutboxClaim() {
+        legacyOutboxClaimController.dismiss()
+    }
+
+    private fun submitLegacyOutboxClaim(preview: UsageOutboxRecoveryPreview) {
+        syncNowWithGate(
+            gate = syncSubmissionGate,
+            currentPhase = { latestStatusState.value.syncPhase },
+            isInProgress = isSyncActionInProgressFlow,
+            feedback = syncFeedbackFlow,
+            doSubmit = {
+                mobileSyncScheduler.enqueueNow(
+                    manualRecoveryRetry = true,
+                    legacyOutboxClaim = LegacyOutboxClaimRequest(
+                        serverIdentity = preview.serverIdentity,
+                        ownerId = preview.ownerId
+                    )
+                )
+                acceptedSignal.trigger()
+                statusCenterRepository.requestRefresh()
+            },
+            scope = viewModelScope
         )
     }
 }

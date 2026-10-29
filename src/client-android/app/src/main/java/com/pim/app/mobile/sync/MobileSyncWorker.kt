@@ -35,9 +35,23 @@ class MobileSyncWorker @AssistedInject constructor(
                 MobileSyncScheduler.MANUAL_RECOVERY_RETRY_KEY,
                 false
             )
+            val legacyClaimServer = inputData.getString(
+                MobileSyncScheduler.LEGACY_CLAIM_SERVER_KEY
+            ).orEmpty()
+            val legacyClaimOwner = inputData.getString(
+                MobileSyncScheduler.LEGACY_CLAIM_OWNER_KEY
+            ).orEmpty()
+            val legacyOutboxClaim = if (
+                legacyClaimServer.isNotBlank() && legacyClaimOwner.isNotBlank()
+            ) {
+                LegacyOutboxClaimRequest(legacyClaimServer, legacyClaimOwner)
+            } else {
+                null
+            }
             val state = syncCoordinator.syncOnOpen(
                 continuationDepth = continuationDepth,
-                manualRecoveryRetry = manualRecoveryRetry
+                manualRecoveryRetry = manualRecoveryRetry,
+                legacyOutboxClaim = legacyOutboxClaim
             )
             mapOutcomeToWorkerResult(state.outcome)
         } catch (ex: CancellationException) {

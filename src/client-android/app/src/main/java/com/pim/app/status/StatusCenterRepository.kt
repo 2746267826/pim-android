@@ -10,6 +10,7 @@ import com.pim.app.location.service.ForegroundLocationRuntimeState
 import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.mobile.sync.MobileSyncCoordinator
 import com.pim.app.mobile.sync.MobileSyncState
+import com.pim.app.mobile.sync.UsageOutboxRecoveryPreview
 import com.pim.app.permissions.PermissionStatusRepository
 import com.pim.app.schedule.ScheduleCacheSnapshot
 import com.pim.app.schedule.ScheduleWindowRepository
@@ -194,6 +195,10 @@ class StatusCenterRepository internal constructor(
 
     fun requestRefresh() {
         refreshSignal.requestRefresh()
+    }
+
+    suspend fun legacyOutboxRecoveryPreview(): UsageOutboxRecoveryPreview? {
+        return syncCoordinator.legacyOutboxRecoveryPreview()
     }
 
     private fun buildSnapshot(

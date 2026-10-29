@@ -35,14 +35,16 @@ class MobileSyncScheduler @Inject constructor(
 
     fun enqueueNow(
         allowMeteredOnce: Boolean = false,
-        manualRecoveryRetry: Boolean = false
+        manualRecoveryRetry: Boolean = false,
+        legacyOutboxClaim: LegacyOutboxClaimRequest? = null
     ) {
         val settings = trackingSettingsStore.read()
         val networkType = resolveImmediateNetworkType(settings, allowMeteredOnce)
         val request = buildImmediateRequest(
             networkType = networkType,
             allowMeteredOnce = allowMeteredOnce,
-            manualRecoveryRetry = manualRecoveryRetry
+            manualRecoveryRetry = manualRecoveryRetry,
+            legacyOutboxClaim = legacyOutboxClaim
         )
         val policy = resolveExistingWorkPolicy(allowMeteredOnce)
         WorkManager.getInstance(context)
@@ -80,12 +82,15 @@ class MobileSyncScheduler @Inject constructor(
         fun buildImmediateInputData(
             allowMeteredOnce: Boolean,
             continuationDepth: Int = 0,
-            manualRecoveryRetry: Boolean = false
+            manualRecoveryRetry: Boolean = false,
+            legacyOutboxClaim: LegacyOutboxClaimRequest? = null
         ): Data {
             return workDataOf(
                 "allow_metered_once" to allowMeteredOnce,
                 CONTINUATION_DEPTH_KEY to continuationDepth.coerceAtLeast(0),
-                MANUAL_RECOVERY_RETRY_KEY to manualRecoveryRetry
+                MANUAL_RECOVERY_RETRY_KEY to manualRecoveryRetry,
+                LEGACY_CLAIM_SERVER_KEY to legacyOutboxClaim?.serverIdentity.orEmpty(),
+                LEGACY_CLAIM_OWNER_KEY to legacyOutboxClaim?.ownerId.orEmpty()
             )
         }
 
@@ -104,7 +109,8 @@ class MobileSyncScheduler @Inject constructor(
             allowMeteredOnce: Boolean,
             continuationDepth: Int = 0,
             initialDelaySeconds: Long = 0,
-            manualRecoveryRetry: Boolean = false
+            manualRecoveryRetry: Boolean = false,
+            legacyOutboxClaim: LegacyOutboxClaimRequest? = null
         ): OneTimeWorkRequest {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(networkType)
@@ -112,7 +118,8 @@ class MobileSyncScheduler @Inject constructor(
             val inputData = buildImmediateInputData(
                 allowMeteredOnce = allowMeteredOnce,
                 continuationDepth = continuationDepth,
-                manualRecoveryRetry = manualRecoveryRetry
+                manualRecoveryRetry = manualRecoveryRetry,
+                legacyOutboxClaim = legacyOutboxClaim
             )
             val builder = OneTimeWorkRequestBuilder<MobileSyncWorker>()
                 .setConstraints(constraints)
@@ -133,7 +140,8 @@ class MobileSyncScheduler @Inject constructor(
                 allowMeteredOnce = false,
                 continuationDepth = continuationDepth,
                 initialDelaySeconds = USAGE_CONTINUATION_DELAY_SECONDS,
-                manualRecoveryRetry = false
+                manualRecoveryRetry = false,
+                legacyOutboxClaim = null
             )
         }
 
@@ -143,5 +151,7 @@ class MobileSyncScheduler @Inject constructor(
 
         const val CONTINUATION_DEPTH_KEY = "continuation_depth"
         const val MANUAL_RECOVERY_RETRY_KEY = "manual_recovery_retry"
+        const val LEGACY_CLAIM_SERVER_KEY = "legacy_claim_server"
+        const val LEGACY_CLAIM_OWNER_KEY = "legacy_claim_owner"
     }
 }

@@ -200,6 +200,28 @@ class MobileSyncSchedulerTest {
         assertEquals(0L, request.workSpec.initialDelay)
     }
 
+    @Test
+    fun legacyClaimRequestCarriesExpectedOwnerAndServerBinding() {
+        val claim = LegacyOutboxClaimRequest(
+            serverIdentity = "https://pim.example",
+            ownerId = "11111111-1111-1111-1111-111111111111"
+        )
+        val request = MobileSyncScheduler.buildImmediateRequest(
+            networkType = NetworkType.CONNECTED,
+            allowMeteredOnce = false,
+            legacyOutboxClaim = claim
+        )
+
+        assertEquals(
+            claim.serverIdentity,
+            request.workSpec.input.getString(MobileSyncScheduler.LEGACY_CLAIM_SERVER_KEY)
+        )
+        assertEquals(
+            claim.ownerId,
+            request.workSpec.input.getString(MobileSyncScheduler.LEGACY_CLAIM_OWNER_KEY)
+        )
+    }
+
     // --- resolveExistingWorkPolicy ---
 
     @Test

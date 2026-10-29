@@ -1,5 +1,6 @@
 package com.pim.app.ui.today
 
+import com.pim.app.mobile.sync.UsageOutboxRecoveryPreview
 import com.pim.app.status.ApiConnectionSnapshot
 import com.pim.app.status.ConnectionProbeOutcome
 import com.pim.app.status.ConnectionProbeResult
@@ -10,6 +11,7 @@ import com.pim.app.status.StatusCenterSnapshot
 import com.pim.app.status.StatusCenterState
 import com.pim.app.status.SyncPhase
 import com.pim.app.status.TrackingPolicySnapshot
+import com.pim.app.status.LegacyOutboxClaimPromptController
 import com.pim.core.auth.AuthTokens
 import java.util.concurrent.atomic.AtomicBoolean
 import kotlinx.coroutines.CancellationException
@@ -868,6 +870,39 @@ class TodayViewModelTest {
         advanceUntilIdle()
         assertFalse(isInProgress.value)
         assertFalse(gate.get())
+    }
+
+    @Test
+    fun `today legacy claim requires explicit confirm and dismissal never submits`() = runTest {
+        val preview = UsageOutboxRecoveryPreview(
+            serverIdentity = "https://pim.example",
+            ownerId = "11111111-1111-1111-1111-111111111111",
+            ownerName = "Owner A",
+            pendingCount = 42,
+            earliestUtc = 1_000L,
+            latestUtc = 9_000L
+        )
+        var normalSubmissions = 0
+        var claimSubmissions = 0
+        val controller = LegacyOutboxClaimPromptController(
+            preview = { preview },
+            submitNormal = { normalSubmissions++ },
+            submitClaim = { claimSubmissions++ }
+        )
+
+        controller.requestSync()
+        assertEquals(preview, controller.prompt.value)
+        assertEquals(0, normalSubmissions)
+        assertEquals(0, claimSubmissions)
+
+        controller.dismiss()
+        assertEquals(0, normalSubmissions)
+        assertEquals(0, claimSubmissions)
+
+        controller.requestSync()
+        controller.confirm()
+        assertEquals(1, claimSubmissions)
+        assertEquals(0, normalSubmissions)
     }
 
     // ────────────────────────────────────────────────────────────────

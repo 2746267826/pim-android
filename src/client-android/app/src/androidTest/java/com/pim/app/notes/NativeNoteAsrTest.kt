@@ -456,14 +456,14 @@ class NativeNoteAsrTest {
 
         scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-retry-${task.taskId}"))
         compose.onNodeWithTag("note-asr-retry-${task.taskId}").performClick()
-        scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-$task-0"))
+        scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-${task.taskId}-0"))
         assertSegmentStatus(task.taskId, 0, "Succeeded", "内部片 1 · 成功")
         compose.onNodeWithTag("note-asr-segment-select-0").assertIsOff().assertIsNotEnabled()
-        scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-$task-1"))
+        scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-${task.taskId}-1"))
         assertSegmentStatus(task.taskId, 1, "Unknown", "内部片 2 · 待核对")
         compose.onNodeWithTag("note-asr-segment-select-1")
             .assertIsEnabled().assertIsOff().performClick().assertIsOn()
-        scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-$task-2"))
+        scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-${task.taskId}-2"))
         assertSegmentStatus(task.taskId, 2, "Blocked", "内部片 3 · 已阻止")
         compose.onNodeWithTag("note-asr-segment-select-2").assertIsOff()
         scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-retry-continue-${task.taskId}"))
@@ -497,7 +497,7 @@ class NativeNoteAsrTest {
 
         waitForEnabledTag("note-asr-refresh-task-${task.taskId}")
         compose.onNodeWithTag("note-asr-refresh-task-${task.taskId}").performClick()
-        scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-$task-1"))
+        scrollToNodeEventually("note-asr-detail-${task.taskId}", hasTestTag("note-asr-segment-${task.taskId}-1"))
         assertSegmentStatus(task.taskId, 1, "Succeeded", "内部片 2 · 成功")
         shot("unknown-synthetic-explicit-recovery")
     }

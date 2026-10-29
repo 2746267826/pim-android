@@ -1,5 +1,9 @@
 package com.pim.core.network
 
+import com.pim.core.contract.BeginNoteMaterialUploadRequest
+import com.pim.core.contract.NoteMaterialUploadDtoApiResponse
+import com.pim.core.contract.NoteMaterialVersionDtoApiResponse
+
 import com.pim.core.contract.AuthResponseApiResponse
 import com.pim.core.contract.CalendarOperationResultApiResponse
 import com.pim.core.contract.CalendarResponseApiResponse
@@ -72,6 +76,20 @@ import okhttp3.RequestBody
  * 需要契约里没有的端点时：不要在这里加方法，按 `AGENTS.md` 的「接口契约与门禁」把需求交给后端。
  */
 interface ApiService {
+    // Fixed native-note versions. These signatures are checked against the generated contract before compilation.
+    @POST("native-notes/versions")
+    suspend fun beginNoteMaterialUpload(@Body request: BeginNoteMaterialUploadRequest): NoteMaterialUploadDtoApiResponse
+
+    @GET("native-notes/versions/{versionId}")
+    suspend fun getNoteMaterialVersion(@Path("versionId") versionId: String): NoteMaterialVersionDtoApiResponse
+
+    @PUT("native-notes/versions/{versionId}/files/{fileIndex}/parts/{partIndex}")
+    suspend fun uploadNoteMaterialPart(@Path("versionId") versionId: String, @Path("fileIndex") fileIndex: Int,
+        @Path("partIndex") partIndex: Int, @Query("sha256") sha256: String, @Body body: RequestBody): StringApiResponse
+
+    @POST("native-notes/versions/{versionId}/complete")
+    suspend fun completeNoteMaterialUpload(@Path("versionId") versionId: String): NoteMaterialUploadDtoApiResponse
+
     // Auth
     @POST("auth/login")
     suspend fun login(@Body request: LoginRequest): AuthResponseApiResponse

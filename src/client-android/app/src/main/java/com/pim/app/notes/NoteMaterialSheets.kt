@@ -21,7 +21,9 @@ import com.pim.app.ui.theme.PimTheme
 @Composable
 internal fun NoteMaterialsSheet(
     note: NoteDocument, sessions: List<RecordingSession>, materials: NoteMaterialsState, busy: Boolean,
-    onDismiss: () -> Unit, onRetry: (String) -> Unit, onExport: (String) -> Unit
+    onDismiss: () -> Unit, onRetry: (String) -> Unit, onExport: (String) -> Unit,
+    onUpload: (String) -> Unit = {}, uploads: NoteUploadsState = NoteUploadsState(), target: NoteUploadTarget? = null,
+    onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {}
 ) {
     val d = PimTheme.dimensions
     val versions = materials.entries.filter { it.noteId == note.id }
@@ -32,7 +34,7 @@ internal fun NoteMaterialsSheet(
             item {
                 Text("材料版本", style = MaterialTheme.typography.titleLarge)
                 Spacer(Modifier.height(d.spaceSmall))
-                Text("仅保存在本机，未上传。每版包含当时的笔记、照片、可编辑笔迹和全部录音；后续修改不会改变旧版。",
+                Text("每版包含当时的笔记、照片、可编辑笔迹和全部录音；后续修改不会改变旧版。服务器接收状态单独显示，上传前需明确核对目标。",
                     style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 if (versions.isEmpty()) Text("还没有固定版本，点击右上角“结束”后准备。", Modifier.padding(top = d.spaceMedium))
                 if (materials.loadFailed || materials.entries.any { it.noteId == null })
@@ -56,6 +58,10 @@ internal fun NoteMaterialsSheet(
                                 style = MaterialTheme.typography.bodySmall)
                             TextButton(onClick = { onDismiss(); onExport(version.id) }, enabled = !busy,
                                 modifier = Modifier.testTag("material-export-${version.id}")) { Text("导出完整材料包（含录音）") }
+                            Button(onClick = { onUpload(version.id) }, enabled = !busy,
+                                modifier = Modifier.testTag("material-upload-${version.id}")) { Text("确认上传此版本") }
+                            val jobs = uploads.jobs.filter { it.versionId == version.id }
+                            if (jobs.isNotEmpty()) NoteUploadJobs(uploads.copy(jobs = jobs), target, onResumeUpload, onPauseUpload)
                         }
                         if (version.phase == NoteMaterialPhase.Preparing)
                             Text("可继续编辑。系统中断后续作同一版本，不会自动开麦。", style = MaterialTheme.typography.bodySmall)
@@ -146,7 +152,7 @@ internal fun NoteCompletionSheet(
                 NoteMaterialPhase.Failed -> "原始记录已保存，但完整材料准备失败。请在材料版本中查看并重试。"
                 else -> "完整材料正在本机后台准备，你可以离开页面，也可以继续编辑或补录。"
             }, style = MaterialTheme.typography.bodyMedium)
-            Text("当前预览版尚不能上传、转写或生成 AI 分析。", style = MaterialTheme.typography.bodySmall,
+            Text("可在材料版本中核对目标并上传。上传只保存原材料，不自动发起转写或 AI 分析。", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
             PimButton(onDismiss, Modifier.fillMaxWidth().testTag("note-continue-editing")) { Text("继续编辑") }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {

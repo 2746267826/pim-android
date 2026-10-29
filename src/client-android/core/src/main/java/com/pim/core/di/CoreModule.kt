@@ -79,11 +79,12 @@ object CoreModule {
     @Singleton
     fun provideOkHttpClient(
         sessionStore: AuthSessionStore,
-        refreshCoordinator: AuthRefreshCoordinator
+        refreshCoordinator: AuthRefreshCoordinator,
+        settingsStore: com.pim.core.settings.ServerSettingsStore
     ): OkHttpClient {
         return OkHttpClient.Builder()
             .applyPimApiTimeouts()
-            .addInterceptor(AuthInterceptor(sessionStore, refreshCoordinator))
+            .addInterceptor(AuthInterceptor(sessionStore, refreshCoordinator, settingsStore))
             .build()
     }
 

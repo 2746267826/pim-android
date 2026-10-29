@@ -86,6 +86,8 @@ class NativeNotesActivity : ComponentActivity() {
             val busy by model.busy.collectAsStateWithLifecycle()
             val materials by model.materials.state.collectAsStateWithLifecycle()
             val completion by model.completion.collectAsStateWithLifecycle()
+            val uploads by model.uploads.state.collectAsStateWithLifecycle()
+            val uploadTarget = rememberUploadTarget(model.uploads)
             PimTheme {
                 val barColor = (if (selected == null) MaterialTheme.colorScheme.background else MaterialTheme.colorScheme.surface).toArgb()
                 SideEffect {
@@ -97,7 +99,9 @@ class NativeNotesActivity : ComponentActivity() {
                     }
                 }
                 NativeNotesScreen(notes, selected, recording, busy, message, playing, notificationsVisible, materials,
-                    onCreate = model::create, onOpen = model::open,
+                    onCreate = model::create, onOpen = { id ->
+                        if (id == null && intent.getBooleanExtra(FROM_LIBRARY, false)) finish() else model.open(id)
+                    },
                     readDocument = { model.notes.state.value.documents[it] }, onProblem = model::tell,
                     onChange = { id, change -> model.notes.update(id, change) },
                     onRetry = model.notes::retry, photoFile = model.notes::photoFile,
@@ -140,7 +144,9 @@ class NativeNotesActivity : ComponentActivity() {
                         recording.session?.takeIf { it.active && it.noteId == selected }?.let { session ->
                             RecordingController.finish(this, session.id)?.let { model.tell(it.message) }
                         }
-                    }, completion = completion, onDismissCompletion = model::dismissCompletion, onDismissMessage = model::dismissMessage)
+                    }, completion = completion, onDismissCompletion = model::dismissCompletion, onDismissMessage = model::dismissMessage,
+                    uploads = uploads, uploadTarget = uploadTarget, onUpload = model::submitUpload,
+                    onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload)
             }
         }
     }
@@ -202,7 +208,9 @@ class NativeNotesActivity : ComponentActivity() {
 
     companion object {
         private const val NOTE_ID = "native_note_id"
-        fun intent(context: Context, id: String? = null) = Intent(context, NativeNotesActivity::class.java).putExtra(NOTE_ID, id).apply {
+        private const val FROM_LIBRARY = "native_note_from_library"
+        fun intent(context: Context, id: String? = null, fromLibrary: Boolean = false) = Intent(context, NativeNotesActivity::class.java)
+            .putExtra(NOTE_ID, id).putExtra(FROM_LIBRARY, fromLibrary).apply {
             if (id != null) data = Uri.Builder().scheme("pim-note").authority("local").appendPath(id).build()
         }
     }

@@ -54,12 +54,12 @@ class AuthRefreshCoordinator(
     ): Boolean {
         val refreshToken = beforeRefresh.tokens?.refreshToken.nonblank()
         if (refreshToken == null) {
-            sessionStore.clear()
+            sessionStore.clearIfCurrent(beforeRefresh)
             return isValidCompletedRefresh(sessionStore.snapshot(), requirement, serverIdentity)
         }
 
         val refreshServerIdentity = beforeRefresh.serverIdentity
-            ?: return clearAndReject(requirement, serverIdentity)
+            ?: return clearAndReject(requirement, serverIdentity, beforeRefresh)
 
         val reRead = sessionStore.snapshot()
         if (reRead.tokens?.refreshToken != refreshToken || reRead.serverIdentity != refreshServerIdentity) {
@@ -76,7 +76,7 @@ class AuthRefreshCoordinator(
                 ) {
                     return isValidCompletedRefresh(afterRefresh, requirement, serverIdentity)
                 }
-                clearAndReject(requirement, serverIdentity)
+                clearAndReject(requirement, serverIdentity, beforeRefresh)
             }
             is AuthRefreshResult.Success -> {
                 val afterRefresh = sessionStore.snapshot()
@@ -86,23 +86,22 @@ class AuthRefreshCoordinator(
                     return isValidCompletedRefresh(afterRefresh, requirement, serverIdentity)
                 }
                 if (!isValidRefreshTokens(result.tokens, requirement)) {
-                    return clearAndReject(requirement, serverIdentity)
+                    return clearAndReject(requirement, serverIdentity, beforeRefresh)
                 }
-                sessionStore.save(
-                    result.tokens.accessToken,
-                    result.tokens.refreshToken,
-                    result.tokens.expiresAtUtcMillis,
-                    refreshServerIdentity
-                )
+                if (beforeRefresh.ownerId != null && result.ownerId != beforeRefresh.ownerId) {
+                    sessionStore.clearIfCurrent(beforeRefresh)
+                    false
+                } else sessionStore.saveRefreshed(beforeRefresh, result.tokens, result.ownerId, result.ownerName)
             }
         }
     }
 
     private fun clearAndReject(
         requirement: RefreshRequirement,
-        serverIdentity: String?
+        serverIdentity: String?,
+        expected: AuthSessionSnapshot
     ): Boolean {
-        sessionStore.clear()
+        sessionStore.clearIfCurrent(expected)
         return isValidCompletedRefresh(sessionStore.snapshot(), requirement, serverIdentity)
     }
 

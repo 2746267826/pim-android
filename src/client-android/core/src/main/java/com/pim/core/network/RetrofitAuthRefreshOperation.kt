@@ -39,7 +39,9 @@ class RetrofitAuthRefreshOperation(
         }
 
         return AuthRefreshResult.Success(
-            AuthTokens(auth.accessToken, auth.refreshToken, expiresAtUtcMillis)
+            AuthTokens(auth.accessToken, auth.refreshToken, expiresAtUtcMillis),
+            auth.user.id,
+            auth.user.username
         )
     }
 }

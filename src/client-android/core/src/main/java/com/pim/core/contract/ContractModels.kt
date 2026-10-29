@@ -32,6 +32,17 @@ data class AuthResponseApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.BeginNoteMaterialUploadRequest`（request）。 */
+@Serializable
+data class BeginNoteMaterialUploadRequest(
+    val baseVersionId: String? = null,
+    val inputJson: String,
+    val manifestJson: String,
+    val noteId: String,
+    val storageConsent: Boolean,
+    val versionId: String,
+)
+
 /** 契约 `components.schemas.CalendarOperationResult`（response）。 */
 @Serializable
 data class CalendarOperationResult(
@@ -1016,6 +1027,73 @@ data class MobileUsageSummaryResponse(
 data class MobileUsageSummaryResponseApiResponse(
     val code: Int,
     val data: MobileUsageSummaryResponse? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteMaterialUploadDto`（response）。 */
+@Serializable
+data class NoteMaterialUploadDto(
+    val baseVersionId: String? = null,
+    val createdAt: String,
+    val currentVersionId: String? = null,
+    val expiresAt: String,
+    val files: List<NoteMaterialUploadFileDto>,
+    val hasConflict: Boolean,
+    val isCurrent: Boolean,
+    val limits: NoteMaterialUploadLimitsDto,
+    val noteId: String,
+    val phase: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteMaterialUploadDtoApiResponse`（response）。 */
+@Serializable
+data class NoteMaterialUploadDtoApiResponse(
+    val code: Int,
+    val data: NoteMaterialUploadDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteMaterialUploadFileDto`（response）。 */
+@Serializable
+data class NoteMaterialUploadFileDto(
+    val index: Int,
+    val kind: String,
+    val partCount: Int,
+    val path: String,
+    val sha256: String,
+    val sizeBytes: Long,
+    val uploadedParts: List<Int>,
+)
+
+/** 契约 `components.schemas.NoteMaterialUploadLimitsDto`（response）。 */
+@Serializable
+data class NoteMaterialUploadLimitsDto(
+    val maxFiles: Int,
+    val maxMetadataCharacters: Int,
+    val maxPendingVersions: Int,
+    val maxUserReservedBytes: Long,
+    val maxVersionBytes: Long,
+    val maxVersionsPerUser: Int,
+    val partSizeBytes: Int,
+    val uploadExpiryHours: Int,
+)
+
+/** 契约 `components.schemas.NoteMaterialVersionDto`（response）。 */
+@Serializable
+data class NoteMaterialVersionDto(
+    val inputJson: String,
+    val manifestJson: String,
+    val upload: NoteMaterialUploadDto,
+)
+
+/** 契约 `components.schemas.NoteMaterialVersionDtoApiResponse`（response）。 */
+@Serializable
+data class NoteMaterialVersionDtoApiResponse(
+    val code: Int,
+    val data: NoteMaterialVersionDto? = null,
     val message: String,
     val timestamp: String,
 )

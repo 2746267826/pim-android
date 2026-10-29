@@ -10,7 +10,8 @@ import javax.inject.Singleton
 
 @Singleton
 class PimWorkerFactory @Inject constructor(
-    private val mobileSyncWorkerFactory: MobileSyncWorker.Factory
+    private val mobileSyncWorkerFactory: MobileSyncWorker.Factory,
+    private val noteUploadWorkerFactory: com.pim.app.notes.NoteUploadWorker.Factory
 ) : WorkerFactory() {
 
     override fun createWorker(
@@ -21,6 +22,7 @@ class PimWorkerFactory @Inject constructor(
         return when (workerClassName) {
             MobileSyncWorker::class.java.name ->
                 mobileSyncWorkerFactory.create(appContext, workerParameters)
+            com.pim.app.notes.NoteUploadWorker::class.java.name -> noteUploadWorkerFactory.create(appContext, workerParameters)
             else -> null
         }
     }

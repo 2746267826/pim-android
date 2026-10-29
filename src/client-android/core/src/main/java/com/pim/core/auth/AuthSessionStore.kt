@@ -10,7 +10,9 @@ data class AuthTokens(
 
 data class AuthSessionSnapshot(
     val tokens: AuthTokens?,
-    val serverIdentity: String? = null
+    val serverIdentity: String? = null,
+    val ownerId: String? = null,
+    val ownerName: String? = null
 )
 
 interface AuthSessionStore {
@@ -23,6 +25,19 @@ interface AuthSessionStore {
     ): Boolean
     fun clear(): Boolean
 
+    /** Identity comes from the authenticated server reply, never from decoding an unverified JWT. */
+    fun saveOwned(accessToken: String, refreshToken: String, expiresAtUtcMillis: Long,
+        serverIdentity: String, ownerId: String, ownerName: String?): Boolean = false
+
+    fun saveRefreshed(expected: AuthSessionSnapshot, tokens: AuthTokens, ownerId: String?, ownerName: String?): Boolean {
+        if (snapshot() != expected) return false
+        return if (ownerId != null) saveOwned(tokens.accessToken, tokens.refreshToken, tokens.expiresAtUtcMillis,
+            expected.serverIdentity ?: return false, ownerId, ownerName)
+        else save(tokens.accessToken, tokens.refreshToken, tokens.expiresAtUtcMillis, expected.serverIdentity ?: return false)
+    }
+
+    fun clearIfCurrent(expected: AuthSessionSnapshot): Boolean = snapshot() == expected && clear()
+
     fun accessToken(): String? = snapshot().tokens?.accessToken
     fun refreshToken(): String? = snapshot().tokens?.refreshToken
     fun expiresAtUtcMillis(): Long? = snapshot().tokens?.expiresAtUtcMillis
@@ -33,7 +48,7 @@ interface AuthSessionStore {
 }
 
 sealed interface AuthRefreshResult {
-    data class Success(val tokens: AuthTokens) : AuthRefreshResult
+    data class Success(val tokens: AuthTokens, val ownerId: String? = null, val ownerName: String? = null) : AuthRefreshResult
     data object Rejected : AuthRefreshResult
 }
 

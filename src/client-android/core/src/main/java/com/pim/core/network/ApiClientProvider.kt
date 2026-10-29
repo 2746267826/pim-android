@@ -31,6 +31,14 @@ class ApiClientProvider @Inject constructor(
         return createApiService(apiBaseUrl.toString(), refreshOkHttpClient)
     }
 
+    fun noteUploadApiService(binding: BoundUploadSession): ApiService {
+        val client = okHttpClient.newBuilder().apply {
+            // It must run before AuthInterceptor so identity is checked at every actual header attachment/retry.
+            interceptors().add(0, BoundUploadTagInterceptor(binding))
+        }.followRedirects(false).followSslRedirects(false).build()
+        return createApiService(PimServerEndpoints.apiBaseUrlForTrustedOrigin(binding.serverIdentity).toString(), client)
+    }
+
     fun dynamicApiService(): ApiService {
         return Proxy.newProxyInstance(
             ApiService::class.java.classLoader,

@@ -48,10 +48,6 @@ fun TodayScreen(
     val context = LocalContext.current
 
     Column(modifier = modifier.fillMaxSize()) {
-        androidx.compose.material3.TextButton(
-            onClick = { context.startActivity(com.pim.app.notes.NativeNotesActivity.intent(context)) },
-            modifier = Modifier.testTag("open-native-notes")
-        ) { Text("本机笔记 · 本地预览版") }
         TodayStatusBar(
             state = state,
             syncFeedback = syncFeedback,

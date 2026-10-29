@@ -210,7 +210,9 @@ class NativeNotesRichEditorTest {
         ready(); saved()
         val original = note()
         compose.onNodeWithTag("note-preview").performClick()
+        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("note-preview") and hasContentDescription("编辑笔记") and isEnabled()).fetchSemanticsNodes().size == 1 }
         compose.onNodeWithTag("note-preview").performClick()
+        compose.waitUntil(5000) { compose.onAllNodes(hasTestTag("note-preview") and hasContentDescription("预览笔记") and isEnabled()).fetchSemanticsNodes().size == 1 }
         compose.activityRule.scenario.recreate()
         ready()
         assertEquals(original, note())

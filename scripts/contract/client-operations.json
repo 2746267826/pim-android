@@ -46,6 +46,10 @@
     { "apiService": "sendHeartbeat", "method": "POST", "path": "/api/v1/daemon/heartbeat" },
     { "apiService": "sendEndpointNotificationAction", "method": "POST", "path": "/api/v1/endpoints/{deviceId}/notification-actions" },
     { "apiService": "sendEndpointHeartbeat", "method": "POST", "path": "/api/v1/endpoints/{deviceId}/heartbeat" },
-    { "apiService": "getClientLatest", "method": "GET", "path": "/api/client/shell/latest" }
+    { "apiService": "getClientLatest", "method": "GET", "path": "/api/client/shell/latest" },
+    {"apiService": "beginNoteMaterialUpload", "method": "POST", "path": "/api/v1/native-notes/versions"},
+    {"apiService": "getNoteMaterialVersion", "method": "GET", "path": "/api/v1/native-notes/versions/{versionId}"},
+    {"apiService": "uploadNoteMaterialPart", "method": "PUT", "path": "/api/v1/native-notes/versions/{versionId}/files/{fileIndex}/parts/{partIndex}"},
+    {"apiService": "completeNoteMaterialUpload", "method": "POST", "path": "/api/v1/native-notes/versions/{versionId}/complete"}
   ]
 }

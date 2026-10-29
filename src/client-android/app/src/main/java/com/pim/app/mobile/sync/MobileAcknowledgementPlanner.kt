@@ -181,6 +181,8 @@ suspend fun applyAcknowledgementPlan(
     dao: MobileDataDao,
     plan: MobileTypedAcknowledgementPlan
 ) {
+    // These usage rows are the upload outbox: confirmed entries are removed here exactly as before.
+    // This patch does not delete raw/history tables that are not part of this outbox.
     if (plan.confirmedItems.isNotEmpty()) {
         val eventIds = plan.confirmedItems
             .filter { it.entityType == "usage-event" }
@@ -241,7 +243,8 @@ suspend fun processUsageAcknowledgements(
     dao: MobileDataDao,
     sentItems: Set<MobileAcknowledgementItem>,
     response: MobileUsageIngestResult
-) {
+): MobileTypedAcknowledgementPlan {
     val plan = MobileAcknowledgementPlanner.planTyped(sentItems, response)
     applyAcknowledgementPlan(dao, plan)
+    return plan
 }

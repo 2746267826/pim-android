@@ -54,6 +54,8 @@ class MobileSyncSchedulerTest {
     fun immediateRequestInputDataDefaultsToFalse() {
         val data = MobileSyncScheduler.buildImmediateInputData(false)
         assertEquals(false, data.getBoolean("allow_metered_once", true))
+        assertEquals(0, data.getInt(MobileSyncScheduler.CONTINUATION_DEPTH_KEY, -1))
+        assertEquals(false, data.getBoolean(MobileSyncScheduler.MANUAL_RECOVERY_RETRY_KEY, true))
     }
 
     @Test
@@ -161,6 +163,63 @@ class MobileSyncSchedulerTest {
         val request = MobileSyncScheduler.buildImmediateRequest(NetworkType.CONNECTED, allowMeteredOnce = true)
         assertEquals(BackoffPolicy.EXPONENTIAL, request.workSpec.backoffPolicy)
         assertEquals(30, TimeUnit.MILLISECONDS.toSeconds(request.workSpec.backoffDelayDuration))
+    }
+
+    @Test
+    fun continuationRequestHasExplicitDelayDepthAndExponentialBackoff() {
+        val request = MobileSyncScheduler.buildContinuationRequest(
+            networkType = NetworkType.CONNECTED,
+            continuationDepth = 1
+        )
+
+        assertEquals(USAGE_CONTINUATION_DELAY_SECONDS, TimeUnit.MILLISECONDS.toSeconds(request.workSpec.initialDelay))
+        assertEquals(
+            1,
+            request.workSpec.input.getInt(MobileSyncScheduler.CONTINUATION_DEPTH_KEY, -1)
+        )
+        assertEquals(
+            false,
+            request.workSpec.input.getBoolean(MobileSyncScheduler.MANUAL_RECOVERY_RETRY_KEY, true)
+        )
+        assertEquals(BackoffPolicy.EXPONENTIAL, request.workSpec.backoffPolicy)
+        assertEquals(30, TimeUnit.MILLISECONDS.toSeconds(request.workSpec.backoffDelayDuration))
+    }
+
+    @Test
+    fun manualSyncRequestCarriesExplicitRecoveryIntent() {
+        val request = MobileSyncScheduler.buildImmediateRequest(
+            networkType = NetworkType.CONNECTED,
+            allowMeteredOnce = false,
+            manualRecoveryRetry = true
+        )
+
+        assertEquals(
+            true,
+            request.workSpec.input.getBoolean(MobileSyncScheduler.MANUAL_RECOVERY_RETRY_KEY, false)
+        )
+        assertEquals(0L, request.workSpec.initialDelay)
+    }
+
+    @Test
+    fun legacyClaimRequestCarriesExpectedOwnerAndServerBinding() {
+        val claim = LegacyOutboxClaimRequest(
+            serverIdentity = "https://pim.example",
+            ownerId = "11111111-1111-1111-1111-111111111111"
+        )
+        val request = MobileSyncScheduler.buildImmediateRequest(
+            networkType = NetworkType.CONNECTED,
+            allowMeteredOnce = false,
+            legacyOutboxClaim = claim
+        )
+
+        assertEquals(
+            claim.serverIdentity,
+            request.workSpec.input.getString(MobileSyncScheduler.LEGACY_CLAIM_SERVER_KEY)
+        )
+        assertEquals(
+            claim.ownerId,
+            request.workSpec.input.getString(MobileSyncScheduler.LEGACY_CLAIM_OWNER_KEY)
+        )
     }
 
     // --- resolveExistingWorkPolicy ---

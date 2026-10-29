@@ -30,6 +30,10 @@ import com.pim.core.contract.MobileUsageEventsUploadRequest
 import com.pim.core.contract.MobileUsageIngestResult
 import com.pim.core.contract.MobileUsageSummaryDto
 import com.pim.core.network.ApiService
+import com.pim.core.network.ApiClientProvider
+import com.pim.core.network.BoundUploadSession
+import com.pim.core.network.UploadSessionChangedException
+import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
 import com.pim.core.util.toCauseChainMessage
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -42,6 +46,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import org.json.JSONObject
+import retrofit2.HttpException
 import java.net.URI
 import java.security.MessageDigest
 import java.time.Instant
@@ -77,7 +82,21 @@ data class MobileSyncState(
 
 internal const val MAX_USAGE_BATCHES_PER_RUN = 10
 internal const val MAX_USAGE_BATCH_DURATION_MS = 120_000L
+/**
+ * 单次上传的总条目预算，不是每类各自的预算。
+ *
+ * API P0-B 兼容上限为 1,500；这里主动取三分之一，既沿用既有 500 测试常量，
+ * 也把 #525 中约 293KB 的混合请求压到约百 KB 量级。更低预算不改变 wire 契约。
+ */
 internal const val USAGE_BATCH_LIMIT = 500
+internal const val USAGE_BATCH_TARGET_WINDOW_MS = 2L * 60L * 60L * 1000L
+internal const val USAGE_BATCH_MAX_WINDOW_MS = 25L * 60L * 60L * 1000L
+internal const val MAX_USAGE_CONTINUATIONS_PER_CHAIN = 2
+internal const val USAGE_CONTINUATION_DELAY_SECONDS = 30L
+internal const val SERVER_USAGE_MAX_ATTEMPTS = 5
+internal const val SERVER_CODE_RETRY_EXHAUSTED = 40903
+internal const val SERVER_CODE_PAYLOAD_CONFLICT = 40902
+internal const val SERVER_CODE_LEASE_LOST = 40904
 
 /**
  * 单次同步最多补传多少批取证事件。这只是「单次运行的工作量上界」，
@@ -89,6 +108,7 @@ internal const val MAX_FORENSICS_BATCHES_PER_RUN = 10
 class MobileSyncCoordinator @Inject constructor(
     @ApplicationContext private val context: Context,
     private val api: ApiService,
+    private val apiClientProvider: ApiClientProvider,
     private val tokenManager: TokenManager,
     private val usageAccessChecker: UsageAccessChecker,
     private val usageEventCollector: UsageEventCollector,
@@ -109,7 +129,32 @@ class MobileSyncCoordinator @Inject constructor(
     private val _state = MutableStateFlow(readPersistedState())
     val currentState: StateFlow<MobileSyncState> = _state.asStateFlow()
 
-    suspend fun syncOnOpen(): MobileSyncState {
+    suspend fun legacyOutboxRecoveryPreview(): UsageOutboxRecoveryPreview? {
+        val pendingCount = pendingUsageRemaining(mobileDataDao)
+        if (pendingCount == 0) return null
+        val current = currentUsageOutboxOwnerBinding()
+        val action = evaluateUsageOutboxBinding(
+            stored = storedUsageOutboxOwnerBinding(),
+            current = current,
+            pendingCount = pendingCount
+        )
+        if (action != UsageOutboxBindingAction.UNBOUND_LEGACY_QUEUE) return null
+        val range = mobileDataDao.pendingUsageTimeRange()
+        return UsageOutboxRecoveryPreview(
+            serverIdentity = current.serverIdentity,
+            ownerId = current.ownerId,
+            ownerName = tokenManager.snapshot().ownerName,
+            pendingCount = pendingCount,
+            earliestUtc = range.earliestUtc,
+            latestUtc = range.latestUtc
+        )
+    }
+
+    suspend fun syncOnOpen(
+        continuationDepth: Int = 0,
+        manualRecoveryRetry: Boolean = false,
+        legacyOutboxClaim: LegacyOutboxClaimRequest? = null
+    ): MobileSyncState {
         // REQ-3 / 缺陷 #345：周期同步也是一次唤醒，必须写一条心搏。
         // 放在乐观锁**之前**，是因为"唤醒发生了"与"本次同步是否真的跑起来"是两件事：
         // 排队等锁而被跳过的那次唤醒同样是真实唤醒，也要被记下来。
@@ -123,17 +168,19 @@ class MobileSyncCoordinator @Inject constructor(
                 progressText = "同步正在进行中。"
             )
             persistState(running)
+            // This wake performed no sync work; never use stale success state to schedule continuation.
             return running
         }
 
         val resultState = try {
-            runSyncOnOpen()
+            runSyncOnOpen(manualRecoveryRetry, legacyOutboxClaim)
         } finally {
             syncMutex.unlock()
         }
 
-        if (resultState.phase == "catching-up" && resultState.outcome == MobileSyncOutcome.SUCCESS) {
-            syncScheduler.get().enqueueContinuation()
+        val safeContinuationDepth = continuationDepth.coerceAtLeast(0)
+        if (shouldEnqueueUsageContinuation(resultState, safeContinuationDepth, didWork = true)) {
+            syncScheduler.get().enqueueContinuation(safeContinuationDepth + 1)
         }
 
         return resultState
@@ -157,7 +204,10 @@ class MobileSyncCoordinator @Inject constructor(
         _state.value = readPersistedState()
     }
 
-    private suspend fun runSyncOnOpen(): MobileSyncState {
+    private suspend fun runSyncOnOpen(
+        manualRecoveryRetry: Boolean,
+        legacyOutboxClaim: LegacyOutboxClaimRequest?
+    ): MobileSyncState {
         val attemptedAt = nowIso()
         val serverUrl = configuredServerUrl()
         val deviceIdentity = deviceIdentity()
@@ -230,28 +280,60 @@ class MobileSyncCoordinator @Inject constructor(
             mobileDataDao.updateDeviceProfileSyncStatus(syncStatus = MobileSyncStatus.SYNCED)
 
             var current = preparing
-            val oldQueueState = uploadQueuedUsage(deviceIdentity.deviceId, attemptedAt)
+            val outboxBindingAction = ensureUsageOutboxBinding(legacyOutboxClaim)
+            if (outboxBindingAction != UsageOutboxBindingAction.ALLOWED) {
+                val bindingMessage = usageOutboxBindingMessage(outboxBindingAction)
+                val blocked = current.copy(
+                    phase = "usage-outbox-binding-blocked",
+                    progressText = bindingMessage,
+                    outcome = MobileSyncOutcome.BLOCKED,
+                    failedCount = pendingUsageRemaining(mobileDataDao),
+                    lastError = bindingMessage,
+                    lastErrorDetail = bindingMessage,
+                    pendingQueueCount = pendingQueueCount(),
+                    lastAttemptedUploadAt = attemptedAt
+                )
+                val locationState = uploadQueuedLocations(blocked, attemptedAt)
+                val finalState = blocked.copy(
+                    acceptedCount = blocked.acceptedCount + locationState.acceptedCount,
+                    rejectedCount = blocked.rejectedCount + locationState.rejectedCount,
+                    pendingQueueCount = pendingQueueCount(),
+                    lastAttemptedUploadAt = attemptedAt
+                )
+                uploadForensics()
+                persistState(finalState)
+                sendHeartbeat(deviceIdentity.deviceId, serverUrl, true, finalState)
+                return finalState
+            }
+            val oldQueueState = uploadQueuedUsage(
+                deviceId = deviceIdentity.deviceId,
+                attemptedAt = attemptedAt,
+                manualRecoveryRetry = manualRecoveryRetry
+            )
+            var lastUsageUploadState = oldQueueState
             if (oldQueueState != null) {
                 current = current.merge(oldQueueState)
                 val remaining = pendingUsageRemaining(mobileDataDao)
                 if (oldQueueState.outcome == MobileSyncOutcome.RETRY || remaining > 0) {
                     current = uploadQueuedLocations(current, attemptedAt)
                     val isTrueFailure = oldQueueState.outcome == MobileSyncOutcome.RETRY || current.failedCount > 0
-                    val outcome = if (isTrueFailure) {
-                        MobileSyncOutcome.RETRY
-                    } else {
-                        MobileSyncOutcome.SUCCESS
+                    val outcome = when {
+                        oldQueueState.outcome == MobileSyncOutcome.BLOCKED -> MobileSyncOutcome.BLOCKED
+                        isTrueFailure -> MobileSyncOutcome.RETRY
+                        else -> MobileSyncOutcome.SUCCESS
                     }
                     val finalRemaining = pendingUsageRemaining(mobileDataDao)
                     val finalState = current.copy(
-                        phase = when {
-                            current.phase == "location-upload-failed" -> current.phase
-                            oldQueueState.phase == "old-queue-upload-failed" || oldQueueState.phase == "upload-failed" -> oldQueueState.phase
-                            current.failedCount > 0 -> "completed-with-errors"
-                            finalRemaining > 0 -> "catching-up"
-                            else -> "completed"
-                        },
+                        phase = resolvePostUsageSyncPhase(
+                            usagePhase = oldQueueState.phase,
+                            locationPhase = current.phase,
+                            failedCount = current.failedCount,
+                            remaining = finalRemaining
+                        ),
                         progressText = when {
+                            oldQueueState.phase == "upload-blocked" ||
+                                oldQueueState.phase == "usage-outbox-binding-blocked" ->
+                                oldQueueState.progressText
                             current.phase == "location-upload-failed" -> current.progressText
                             finalRemaining > 0 && !isTrueFailure -> "正在补传（剩 $finalRemaining 条）。"
                             oldQueueState.progressText.isNotBlank() -> oldQueueState.progressText
@@ -361,8 +443,8 @@ class MobileSyncCoordinator @Inject constructor(
                 )
 
                 val collection = usageEventCollector.collectUsage(window.windowStartUtc, window.windowEndUtc)
-                val eventIds = mobileDataDao.insertUsageEvents(collection.events)
-                val summaryIds = mobileDataDao.insertUsageSummaries(collection.summaries)
+                mobileDataDao.insertUsageEvents(collection.events)
+                mobileDataDao.insertUsageSummaries(collection.summaries)
                 val packageNames = packageNames(collection.events, collection.summaries)
                 val appMetadata = appMetadataCollector.collectForPackages(packageNames)
                 if (appMetadata.isNotEmpty()) {
@@ -395,29 +477,40 @@ class MobileSyncCoordinator @Inject constructor(
                 )
                 persistState(current)
 
-                val uploadState = uploadWindow(
+                val uploadState = uploadQueuedUsage(
                     deviceId = deviceIdentity.deviceId,
-                    windowStartUtc = windowStartUtc,
-                    windowEndUtc = windowEndUtc,
-                    events = collection.events,
-                    summaries = collection.summaries,
-                    apps = appMetadata,
-                    eventIds = eventIds,
-                    summaryIds = summaryIds
+                    attemptedAt = attemptedAt,
+                    manualRecoveryRetry = manualRecoveryRetry
                 )
+                if (uploadState == null) {
+                    logs.warn(
+                        "mobile-sync",
+                        "缺口窗口已落本地，但分区上传未取得可发送批次。",
+                        mapOf(
+                            "windowStartUtc" to windowStartUtc,
+                            "windowEndUtc" to windowEndUtc
+                        )
+                    )
+                    continue
+                }
+                lastUsageUploadState = uploadState
 
                 val merged = current.merge(uploadState)
                 val hasUploadErrors = merged.failedCount > 0 || merged.lastError != null
                 current = merged.copy(
-                    phase = if (hasUploadErrors) {
-                        "upload-failed"
-                    } else {
-                        "uploading"
+                    phase = when {
+                        uploadState.phase == "upload-blocked" ||
+                            uploadState.phase == "usage-outbox-binding-blocked" ||
+                            uploadState.phase == "old-queue-upload-failed" ||
+                            uploadState.phase == "upload-failed" -> uploadState.phase
+                        uploadState.phase == "catching-up" -> "catching-up"
+                        hasUploadErrors -> "upload-failed"
+                        else -> "uploading"
                     },
-                    progressText = if (hasUploadErrors) {
-                        merged.lastError ?: uploadState.progressText
-                    } else {
-                        "第 ${index + 1}/${windows.size} 个窗口上传完成。"
+                    progressText = when {
+                        hasUploadErrors || uploadState.phase == "catching-up" ->
+                            merged.lastError ?: uploadState.progressText
+                        else -> "第 ${index + 1}/${windows.size} 个窗口上传完成。"
                     },
                     isInProgress = true,
                     gapWindowCount = windows.size,
@@ -433,6 +526,12 @@ class MobileSyncCoordinator @Inject constructor(
                     lastAttemptedUploadAt = attemptedAt
                 )
                 persistState(current)
+
+                if (uploadState.outcome != MobileSyncOutcome.SUCCESS ||
+                    pendingUsageRemaining(mobileDataDao) > 0
+                ) {
+                    break
+                }
             }
 
             current = uploadQueuedLocations(current, attemptedAt)
@@ -441,16 +540,35 @@ class MobileSyncCoordinator @Inject constructor(
             // 它有自己的失败出口（本地留存 + 结构化日志），不会把既有同步判成失败（AC-5.3）。
             uploadForensics()
 
+            val finalRemaining = pendingUsageRemaining(mobileDataDao)
+            val finalPhase = resolvePostUsageSyncPhase(
+                usagePhase = lastUsageUploadState?.phase.orEmpty(),
+                locationPhase = current.phase,
+                failedCount = current.failedCount,
+                remaining = finalRemaining
+            )
             val completed = current.copy(
-                phase = if (current.failedCount == 0) "completed" else "completed-with-errors",
-                progressText = if (current.failedCount == 0) {
-                    "手机同步已完成。"
-                } else {
-                    "手机同步已完成，但部分上传失败。"
+                phase = finalPhase,
+                progressText = when (finalPhase) {
+                    "catching-up" -> "正在补传（剩 $finalRemaining 条）。"
+                    "upload-blocked",
+                    "usage-outbox-binding-blocked",
+                    "old-queue-upload-failed",
+                    "upload-failed" -> current.progressText
+                    "completed-with-errors" -> "手机同步已完成，但部分上传失败。"
+                    else -> "手机同步已完成。"
                 },
                 isInProgress = false,
                 pendingQueueCount = pendingQueueCount(),
-                lastSuccessfulUploadAt = if (current.failedCount == 0) nowIso() else current.lastSuccessfulUploadAt
+                lastSuccessfulUploadAt = if (
+                    current.outcome == MobileSyncOutcome.SUCCESS &&
+                    current.failedCount == 0 &&
+                    finalRemaining == 0
+                ) {
+                    nowIso()
+                } else {
+                    current.lastSuccessfulUploadAt
+                }
             )
             persistState(completed)
             sendHeartbeat(deviceIdentity.deviceId, serverUrl, true, completed)
@@ -608,14 +726,112 @@ class MobileSyncCoordinator @Inject constructor(
         summaries: List<MobileUsageSummaryEntity>,
         apps: List<MobileAppMetadataEntity>,
         eventIds: List<Long>,
-        summaryIds: List<Long>
+        summaryIds: List<Long>,
+        manualRecoveryRetry: Boolean
     ): MobileSyncState {
         val sentItems = linkedSetOf<MobileAcknowledgementItem>().apply {
             eventIds.forEach { add(MobileAcknowledgementItem("usage-event", it.toString())) }
             summaryIds.forEach { add(MobileAcknowledgementItem("usage-summary", it.toString())) }
             apps.forEach { add(MobileAcknowledgementItem("app-metadata", "${it.packageName}@${it.versionCode}")) }
         }
-        val batchId = stableBatchId(deviceId, windowStartUtc, windowEndUtc, sentItems)
+        val storedOutboxBinding = storedUsageOutboxOwnerBinding()
+        if (storedOutboxBinding == null || !usageOutboxBindingAllowsCurrentUpload()) {
+            val message = usageOutboxBindingMessage(UsageOutboxBindingAction.BINDING_MISMATCH)
+            markUsageFailed(eventIds, summaryIds, apps, message)
+            return state(
+                phase = "usage-outbox-binding-blocked",
+                progressText = message,
+                outcome = MobileSyncOutcome.BLOCKED,
+                failedCount = maxOf(1, sentItems.size),
+                lastError = message,
+                lastErrorDetail = message,
+                currentWindowStartUtc = windowStartUtc,
+                currentWindowEndUtc = windowEndUtc,
+                currentEventCount = events.size,
+                currentSummaryCount = summaries.size,
+                currentAppMetadataCount = apps.size,
+                lastBatchStatus = "outbox-binding-blocked",
+                pendingQueueCount = pendingQueueCount()
+            )
+        }
+        val usageUploadApi = apiClientProvider.mobileUsageUploadApiService(
+            BoundUploadSession(
+                serverIdentity = storedOutboxBinding.serverIdentity,
+                ownerId = storedOutboxBinding.ownerId
+            )
+        )
+        val payloadFingerprint = usageBatchPayloadFingerprint(events, summaries, apps)
+        val recoveryBinding = usageBatchRecoveryBinding(payloadFingerprint)
+        val baseBatchId = stableBatchId(
+            deviceId = deviceId,
+            windowStartUtc = windowStartUtc,
+            windowEndUtc = windowEndUtc,
+            items = sentItems,
+            payloadFingerprint = payloadFingerprint
+        )
+        val recoveryDecision = if (manualRecoveryRetry) {
+            prepareManualUsageBatchRecovery(baseBatchId, recoveryBinding)
+        } else {
+            val state = readUsageBatchRecoveryState(baseBatchId, recoveryBinding)
+            UsageBatchRecoveryDecision(state = state, batchIdRotated = false)
+        }
+        val recoveryState = recoveryDecision.state
+        if (recoveryState.blockedBy409) {
+            val terminalMessage = recoveryState.lastTerminalError
+                ?: "服务端以 409 阻止了该批次。"
+            val userGuidance = when (recoveryState.blockReason) {
+                UsageBatchBlockReason.RETRY_EXHAUSTED ->
+                    "服务端已耗尽该批次重试次数。本地数据仍保留，可点击“立即同步”生成新的批次重试。"
+                UsageBatchBlockReason.PAYLOAD_CONFLICT ->
+                    "服务端检测到批次内容冲突。本地数据仍保留，需确认账号/服务器与批次内容后处理，不能自动换批次绕过。"
+                UsageBatchBlockReason.LEASE_LOST ->
+                    "服务端批次租约状态冲突。本地数据仍保留，请稍后手动同步或联系管理员。"
+                UsageBatchBlockReason.UNKNOWN_CONFLICT, null ->
+                    "服务端阻止了该批次。本地数据仍保留，请确认账号/服务器后手动同步，未知冲突不会自动换批次。"
+            }
+            logs.warn(
+                "mobile-sync",
+                terminalMessage,
+                mapOf(
+                    "baseBatchId" to baseBatchId,
+                    "manualRecoveryRetry" to manualRecoveryRetry
+                )
+            )
+            return state(
+                phase = "upload-blocked",
+                progressText = userGuidance,
+                outcome = MobileSyncOutcome.BLOCKED,
+                failedCount = sentItems.size,
+                lastError = terminalMessage,
+                lastErrorDetail = terminalMessage,
+                currentWindowStartUtc = windowStartUtc,
+                currentWindowEndUtc = windowEndUtc,
+                currentEventCount = events.size,
+                currentSummaryCount = summaries.size,
+                currentAppMetadataCount = apps.size,
+                lastBatchId = baseBatchId,
+                lastBatchStatus = "server-blocked",
+                pendingQueueCount = pendingQueueCount()
+            )
+        }
+        if (recoveryDecision.batchIdRotated) {
+            logs.info(
+                "mobile-sync",
+                "用户手动重试已终止批次，使用新的幂等 generation 上传仍在本地队列中的同一批数据。",
+                mapOf(
+                    "baseBatchId" to baseBatchId,
+                    "recoveryEpoch" to recoveryState.recoveryEpoch
+                )
+            )
+        }
+        val batchId = stableBatchId(
+            deviceId = deviceId,
+            windowStartUtc = windowStartUtc,
+            windowEndUtc = windowEndUtc,
+            items = sentItems,
+            payloadFingerprint = payloadFingerprint,
+            recoveryEpoch = recoveryState.recoveryEpoch
+        )
         val request = MobileUsageEventsUploadRequest(
             deviceId = deviceId,
             clientBatchId = batchId,
@@ -629,11 +845,63 @@ class MobileSyncCoordinator @Inject constructor(
         )
 
         val response = try {
-            api.uploadMobileUsage(request)
+            usageUploadApi.uploadMobileUsage(request)
+        } catch (ex: UploadSessionChangedException) {
+            val message = "本地 usage 队列的 owner/server 在发送前已变化，已保留 pending，未发送到新账号。"
+            markUsageFailed(eventIds, summaryIds, apps, message)
+            logs.warn(
+                "mobile-sync",
+                message,
+                mapOf(
+                    "windowStartUtc" to windowStartUtc,
+                    "windowEndUtc" to windowEndUtc
+                )
+            )
+            return state(
+                phase = "usage-outbox-binding-blocked",
+                progressText = message,
+                outcome = MobileSyncOutcome.BLOCKED,
+                failedCount = maxOf(1, sentItems.size),
+                lastError = message,
+                lastErrorDetail = message,
+                currentWindowStartUtc = windowStartUtc,
+                currentWindowEndUtc = windowEndUtc,
+                currentEventCount = events.size,
+                currentSummaryCount = summaries.size,
+                currentAppMetadataCount = apps.size,
+                lastBatchId = batchId,
+                lastBatchStatus = "outbox-session-changed",
+                pendingQueueCount = pendingQueueCount()
+            )
         } catch (ex: Exception) {
             if (ex is CancellationException) throw ex
-            val outcome = MobileSyncErrorClassifier.classify(ex)
-            val message = ex.toCauseChainMessage()
+            val conflict = (ex as? HttpException)?.takeIf { it.code() == 409 }
+            val isConflict = conflict != null
+            val serverCode = conflict?.let(::usageBatchHttpErrorCode)
+            val blockReason = if (isConflict) {
+                classifyUsageBatchConflictCode(serverCode)
+            } else {
+                null
+            }
+            val outcome = if (blockReason == UsageBatchBlockReason.LEASE_LOST) {
+                MobileSyncOutcome.RETRY
+            } else {
+                MobileSyncErrorClassifier.classify(ex)
+            }
+            val rawMessage = ex.toCauseChainMessage()
+            val message = if (serverCode != null) {
+                "$rawMessage (server-code=$serverCode)"
+            } else {
+                rawMessage
+            }
+            if (isConflict && blockReason != null) {
+                recordUsageBatchConflict(
+                    baseBatchId = baseBatchId,
+                    binding = recoveryBinding,
+                    reason = blockReason,
+                    message = message
+                )
+            }
             markUsageFailed(eventIds, summaryIds, apps, message)
             logs.warn(
                 "mobile-sync",
@@ -644,7 +912,7 @@ class MobileSyncCoordinator @Inject constructor(
                 phase = "upload-failed",
                 progressText = "使用记录上传失败：$message",
                 outcome = outcome,
-                failedCount = maxOf(1, events.size + summaries.size),
+                failedCount = maxOf(1, sentItems.size),
                 lastError = ex.message ?: ex::class.java.simpleName,
                 lastErrorDetail = message,
                 currentWindowStartUtc = windowStartUtc,
@@ -653,7 +921,11 @@ class MobileSyncCoordinator @Inject constructor(
                 currentSummaryCount = summaries.size,
                 currentAppMetadataCount = apps.size,
                 lastBatchId = batchId,
-                lastBatchStatus = "failed",
+                lastBatchStatus = when {
+                    blockReason == UsageBatchBlockReason.LEASE_LOST -> "lease-lost-retry"
+                    outcome == MobileSyncOutcome.BLOCKED -> "server-blocked"
+                    else -> "failed"
+                },
                 pendingQueueCount = pendingQueueCount()
             )
         }
@@ -670,7 +942,7 @@ class MobileSyncCoordinator @Inject constructor(
                 phase = "upload-failed",
                 progressText = message,
                 outcome = MobileSyncOutcome.RETRY,
-                failedCount = maxOf(1, events.size + summaries.size),
+                failedCount = maxOf(1, sentItems.size),
                 lastError = message,
                 lastErrorDetail = message,
                 currentWindowStartUtc = windowStartUtc,
@@ -684,7 +956,15 @@ class MobileSyncCoordinator @Inject constructor(
             )
         }
 
-        processUsageAcknowledgements(mobileDataDao, sentItems, ingest)
+        val acknowledgement = processUsageAcknowledgements(mobileDataDao, sentItems, ingest)
+        val hasAcknowledgedProgress =
+            acknowledgement.confirmedItems.isNotEmpty() ||
+                acknowledgement.deadLetterItems.isNotEmpty()
+        if (hasAcknowledgedProgress) {
+            clearUsageBatchRecoveryState(baseBatchId, recoveryBinding)
+        } else {
+            recordUsageBatchNoProgress(baseBatchId, recoveryBinding)
+        }
         logs.info(
             "mobile-sync",
             "使用记录窗口已上传。",
@@ -704,7 +984,8 @@ class MobileSyncCoordinator @Inject constructor(
             windowEndUtc = windowEndUtc,
             eventCount = events.size,
             summaryCount = summaries.size,
-            appMetadataCount = apps.size
+            appMetadataCount = apps.size,
+            acknowledgement = acknowledgement
         )
     }
 
@@ -985,9 +1266,12 @@ class MobileSyncCoordinator @Inject constructor(
         )
     }
 
-    private suspend fun uploadQueuedUsage(
+    internal suspend fun uploadQueuedUsage(
         deviceId: String,
-        attemptedAt: String
+        attemptedAt: String,
+        manualRecoveryRetry: Boolean,
+        maxBatchesPerRun: Int = MAX_USAGE_BATCHES_PER_RUN,
+        maxDurationMs: Long = MAX_USAGE_BATCH_DURATION_MS
     ): MobileSyncState? {
         val initialBatch = loadPendingUsageBatch(mobileDataDao, USAGE_BATCH_LIMIT)
         if (initialBatch.totalCount == 0) return null
@@ -996,11 +1280,43 @@ class MobileSyncCoordinator @Inject constructor(
         val startTime = SystemClock.elapsedRealtime()
         var accumulatedState: MobileSyncState? = null
 
-        while (batchCount < MAX_USAGE_BATCHES_PER_RUN && (SystemClock.elapsedRealtime() - startTime) < MAX_USAGE_BATCH_DURATION_MS) {
+        while (batchCount < maxBatchesPerRun &&
+            (SystemClock.elapsedRealtime() - startTime) < maxDurationMs
+        ) {
             currentCoroutineContext().ensureActive()
             val batch = if (batchCount == 0) initialBatch else loadPendingUsageBatch(mobileDataDao, USAGE_BATCH_LIMIT)
             if (batch.totalCount == 0) break
             batchCount++
+
+            val unsupportedSummaries = batch.summaries.filter {
+                !it.hasSupportedUsageBatchWindow()
+            }
+            if (unsupportedSummaries.isNotEmpty()) {
+                val summaryIds = unsupportedSummaries.map { it.id }
+                val message = "client-summary-window-outside-25h-contract"
+                mobileDataDao.updateUsageSummarySyncStatus(
+                    ids = summaryIds,
+                    syncStatus = MobileSyncStatus.REJECTED,
+                    lastError = message
+                )
+                val rejectedState = state(
+                    phase = "uploaded",
+                    progressText = "已拒绝 ${summaryIds.size} 条超出协议窗口的汇总记录并继续处理其他队列。",
+                    outcome = MobileSyncOutcome.SUCCESS,
+                    rejectedCount = summaryIds.size,
+                    lastError = message,
+                    lastBatchStatus = "client-rejected",
+                    pendingQueueCount = pendingQueueCount(),
+                    lastAttemptedUploadAt = attemptedAt
+                )
+                accumulatedState = accumulatedState?.merge(rejectedState) ?: rejectedState
+                logs.warn(
+                    "mobile-sync",
+                    "本地汇总窗口超出 API 25h 契约，已保留原始行并标记 rejected，避免阻塞整条队列。",
+                    mapOf("summaryIds" to summaryIds)
+                )
+                continue
+            }
 
             val windowStart = iso(batch.windowStartUtc!!)
             val windowEnd = iso(batch.windowEndUtc!!)
@@ -1013,7 +1329,8 @@ class MobileSyncCoordinator @Inject constructor(
                 summaries = batch.summaries,
                 apps = batch.apps,
                 eventIds = batch.events.map { it.id },
-                summaryIds = batch.summaries.map { it.id }
+                summaryIds = batch.summaries.map { it.id },
+                manualRecoveryRetry = manualRecoveryRetry
             )
 
             accumulatedState = accumulatedState?.merge(uploadState) ?: uploadState
@@ -1035,9 +1352,13 @@ class MobileSyncCoordinator @Inject constructor(
 
             if (uploadState.outcome == MobileSyncOutcome.RETRY || uploadState.failedCount > 0) {
                 val failedState = accumulatedState.copy(
-                    phase = "old-queue-upload-failed",
+                    phase = when (uploadState.phase) {
+                        "upload-blocked",
+                        "usage-outbox-binding-blocked" -> uploadState.phase
+                        else -> "old-queue-upload-failed"
+                    },
                     progressText = uploadState.lastError ?: "旧队列上传失败，已安排重试。",
-                    outcome = MobileSyncOutcome.RETRY,
+                    outcome = uploadState.outcome,
                     pendingQueueCount = pendingQueueCount(),
                     lastAttemptedUploadAt = attemptedAt
                 )
@@ -1080,6 +1401,189 @@ class MobileSyncCoordinator @Inject constructor(
         return accumulatedState
     }
 
+    private fun usageBatchRecoveryBinding(payloadFingerprint: String): UsageBatchRecoveryBinding {
+        val identity = currentUsageOutboxOwnerBinding()
+        return UsageBatchRecoveryBinding(
+            serverIdentity = identity.serverIdentity,
+            ownerId = identity.ownerId,
+            payloadFingerprint = payloadFingerprint
+        )
+    }
+
+    private fun currentUsageOutboxOwnerBinding(): UsageOutboxOwnerBinding {
+        val session = tokenManager.snapshot()
+        val configuredOrigin = runCatching {
+            PimServerEndpoints.from(configuredServerUrl()).trustedOrigin
+        }.getOrDefault(configuredServerUrl())
+        return UsageOutboxOwnerBinding(
+            serverIdentity = session.serverIdentity ?: configuredOrigin,
+            ownerId = session.ownerId.orEmpty()
+        )
+    }
+
+    private fun storedUsageOutboxOwnerBinding(): UsageOutboxOwnerBinding? {
+        val server = prefs.getString(USAGE_OUTBOX_SERVER_KEY, null)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        val owner = prefs.getString(USAGE_OUTBOX_OWNER_KEY, null)
+            ?.takeIf { it.isNotBlank() }
+            ?: return null
+        return UsageOutboxOwnerBinding(serverIdentity = server, ownerId = owner)
+    }
+
+    private suspend fun ensureUsageOutboxBinding(
+        claim: LegacyOutboxClaimRequest?
+    ): UsageOutboxBindingAction {
+        val current = currentUsageOutboxOwnerBinding()
+        val decision = resolveUsageOutboxBinding(
+            stored = storedUsageOutboxOwnerBinding(),
+            current = current,
+            pendingCount = pendingUsageRemaining(mobileDataDao),
+            claim = claim
+        )
+        if (decision.shouldBind) {
+            prefs.edit()
+                .putString(USAGE_OUTBOX_SERVER_KEY, current.serverIdentity)
+                .putString(USAGE_OUTBOX_OWNER_KEY, current.ownerId)
+                .apply()
+        }
+        return if (decision.shouldBind) {
+            UsageOutboxBindingAction.ALLOWED
+        } else {
+            decision.action
+        }
+    }
+
+    private fun usageOutboxBindingAllowsCurrentUpload(): Boolean {
+        return storedUsageOutboxOwnerBinding() == currentUsageOutboxOwnerBinding()
+    }
+
+    private fun usageOutboxBindingMessage(action: UsageOutboxBindingAction): String {
+        return when (action) {
+            UsageOutboxBindingAction.OWNER_MISSING ->
+                "当前登录缺少账号归属信息，已停止上传本地使用记录。请重新登录原账号后重试。"
+            UsageOutboxBindingAction.UNBOUND_LEGACY_QUEUE ->
+                "本地待传使用记录缺少账号/服务器归属，已保留并停止上传，不会自动认领给当前账号。"
+            UsageOutboxBindingAction.BINDING_MISMATCH ->
+                "本地待传使用记录属于另一账号或服务器，已停止上传并保留原队列。请切回原绑定后重试。"
+            UsageOutboxBindingAction.BIND_CURRENT,
+            UsageOutboxBindingAction.ALLOWED ->
+                "本地使用记录队列与当前账号/服务器绑定一致。"
+        }
+    }
+
+    private fun readUsageBatchRecoveryState(
+        baseBatchId: String,
+        binding: UsageBatchRecoveryBinding
+    ): UsageBatchRecoveryState {
+        val storage = usageBatchRecoveryStorageKey(baseBatchId, binding)
+        val storedBinding = UsageBatchRecoveryBinding(
+            serverIdentity = prefs.getString("${storage}_server", null).orEmpty(),
+            ownerId = prefs.getString("${storage}_owner", null).orEmpty(),
+            payloadFingerprint = prefs.getString("${storage}_payload", null).orEmpty()
+        )
+        if (storedBinding != binding) {
+            return UsageBatchRecoveryState(binding = binding)
+        }
+        return normalizeUsageBatchRecoveryState(UsageBatchRecoveryState(
+            recoveryEpoch = prefs.getInt("${storage}_epoch", 0),
+            noProgressAttempts = prefs.getInt("${storage}_attempts", 0),
+            blockedBy409 = prefs.getBoolean("${storage}_blocked", false),
+            blockReason = prefs.getString("${storage}_reason", null)
+                ?.let { stored ->
+                    UsageBatchBlockReason.values().firstOrNull { it.name == stored }
+                },
+            lastTerminalError = prefs.getString("${storage}_error", null),
+            binding = binding
+        ))
+    }
+
+    private fun recordUsageBatchNoProgress(
+        baseBatchId: String,
+        binding: UsageBatchRecoveryBinding
+    ) {
+        val current = readUsageBatchRecoveryState(baseBatchId, binding)
+        writeUsageBatchRecoveryState(
+            baseBatchId,
+            current.copy(
+                noProgressAttempts = minOf(
+                    current.noProgressAttempts + 1,
+                    SERVER_USAGE_MAX_ATTEMPTS
+                )
+            )
+        )
+    }
+
+    private fun recordUsageBatchConflict(
+        baseBatchId: String,
+        binding: UsageBatchRecoveryBinding,
+        reason: UsageBatchBlockReason,
+        message: String
+    ) {
+        val current = readUsageBatchRecoveryState(baseBatchId, binding)
+        writeUsageBatchRecoveryState(
+            baseBatchId,
+            usageBatchRecoveryStateAfterConflict(current, reason, message)
+        )
+    }
+
+    private fun prepareManualUsageBatchRecovery(
+        baseBatchId: String,
+        binding: UsageBatchRecoveryBinding
+    ): UsageBatchRecoveryDecision {
+        val current = readUsageBatchRecoveryState(baseBatchId, binding)
+        val decision = advanceUsageBatchRecoveryOnManualRetry(current, binding)
+        if (decision.batchIdRotated) {
+            writeUsageBatchRecoveryState(baseBatchId, decision.state)
+        }
+        return decision
+    }
+
+    private fun writeUsageBatchRecoveryState(
+        baseBatchId: String,
+        state: UsageBatchRecoveryState
+    ) {
+        val binding = state.binding ?: return
+        val storage = usageBatchRecoveryStorageKey(baseBatchId, binding)
+        prefs.edit()
+            .putString("${storage}_server", binding.serverIdentity)
+            .putString("${storage}_owner", binding.ownerId)
+            .putString("${storage}_payload", binding.payloadFingerprint)
+            .putInt("${storage}_epoch", state.recoveryEpoch)
+            .putInt("${storage}_attempts", state.noProgressAttempts)
+            .putBoolean("${storage}_blocked", state.blockedBy409)
+            .putString("${storage}_reason", state.blockReason?.name)
+            .putString("${storage}_error", state.lastTerminalError)
+            .apply()
+    }
+
+    private fun clearUsageBatchRecoveryState(
+        baseBatchId: String,
+        binding: UsageBatchRecoveryBinding
+    ) {
+        val storage = usageBatchRecoveryStorageKey(baseBatchId, binding)
+        prefs.edit()
+            .remove("${storage}_server")
+            .remove("${storage}_owner")
+            .remove("${storage}_payload")
+            .remove("${storage}_epoch")
+            .remove("${storage}_attempts")
+            .remove("${storage}_blocked")
+            .remove("${storage}_reason")
+            .remove("${storage}_error")
+            .apply()
+    }
+
+    private fun usageBatchRecoveryStorageKey(
+        baseBatchId: String,
+        binding: UsageBatchRecoveryBinding
+    ): String {
+        val bindingHash = sha256Hex(
+            "$baseBatchId|${binding.serverIdentity}|${binding.ownerId}|${binding.payloadFingerprint}"
+        )
+        return "usage_batch_recovery:$bindingHash"
+    }
+
     private fun displayName(profile: MobileDeviceProfileEntity): String {
         return listOf(profile.manufacturer, profile.model)
             .filter { it.isNotBlank() }
@@ -1118,6 +1622,8 @@ class MobileSyncCoordinator @Inject constructor(
     companion object {
         private const val FOURTEEN_DAYS_MS = 14L * 24L * 60L * 60L * 1000L
         private const val PREFS_NAME = "pim_mobile_sync_state"
+        private const val USAGE_OUTBOX_SERVER_KEY = "usage_outbox_server_identity"
+        private const val USAGE_OUTBOX_OWNER_KEY = "usage_outbox_owner_id"
     }
 }
 
@@ -1130,16 +1636,20 @@ internal fun stableBatchId(
     deviceId: String,
     windowStartUtc: String,
     windowEndUtc: String,
-    items: Collection<MobileAcknowledgementItem> = emptyList()
+    items: Collection<MobileAcknowledgementItem> = emptyList(),
+    recoveryEpoch: Int = 0,
+    payloadFingerprint: String = ""
 ): String {
     val itemsSignature = items.asSequence()
         .map { "${it.entityType}:${it.clientItemKey}" }
         .sorted()
         .joinToString(",")
-    return "android-${sha256Hex("$deviceId|$windowStartUtc|$windowEndUtc|$itemsSignature").take(24)}"
+    val recoverySignature = if (recoveryEpoch > 0) "|recovery:$recoveryEpoch" else ""
+    val payloadSignature = if (payloadFingerprint.isNotBlank()) "|payload:$payloadFingerprint" else ""
+    return "android-${sha256Hex("$deviceId|$windowStartUtc|$windowEndUtc|$itemsSignature$payloadSignature$recoverySignature").take(24)}"
 }
 
-private const val MAX_UPLOAD_WINDOW_MS = 2L * 60L * 60L * 1000L
+private const val MAX_UPLOAD_WINDOW_MS = USAGE_BATCH_TARGET_WINDOW_MS
 
 private data class ClampedGapWindow(
     val windowStartUtc: Long,
@@ -1208,23 +1718,38 @@ internal fun MobileUsageIngestResult.toState(
     windowEndUtc: String,
     eventCount: Int,
     summaryCount: Int,
-    appMetadataCount: Int
+    appMetadataCount: Int,
+    acknowledgement: MobileTypedAcknowledgementPlan? = null
 ): MobileSyncState {
+    val retryCount = acknowledgement?.retryItems?.size ?: failedCount
+    val isFullyAcknowledged = when {
+        acknowledgement == null -> failedCount == 0
+        acknowledgement.failureCode != null -> false
+        acknowledgement.retryItems.isNotEmpty() -> false
+        else -> acknowledgement.confirmedItems.size + acknowledgement.deadLetterItems.size ==
+            eventCount + summaryCount + appMetadataCount
+    }
+    val acknowledgementError = acknowledgement
+        ?.itemErrors
+        ?.values
+        ?.firstOrNull()
     return MobileSyncState(
         phase = "uploaded",
         progressText = "使用记录批次已上传。",
-        outcome = if (failedCount > 0) MobileSyncOutcome.RETRY else MobileSyncOutcome.SUCCESS,
+        outcome = if (isFullyAcknowledged) MobileSyncOutcome.SUCCESS else MobileSyncOutcome.RETRY,
         acceptedCount = acceptedCount,
         skippedCount = skippedCount,
         rejectedCount = rejectedCount,
-        failedCount = failedCount,
+        failedCount = if (isFullyAcknowledged) 0 else maxOf(1, retryCount),
+        lastError = if (isFullyAcknowledged) null else acknowledgementError ?: "server-ack-incomplete",
+        lastErrorDetail = if (isFullyAcknowledged) null else acknowledgementError ?: "server-ack-incomplete",
         currentWindowStartUtc = windowStartUtc,
         currentWindowEndUtc = windowEndUtc,
         currentEventCount = eventCount,
         currentSummaryCount = summaryCount,
         currentAppMetadataCount = appMetadataCount,
         lastBatchId = batchId,
-        lastBatchStatus = if (failedCount == 0) "completed" else "completed-with-errors"
+        lastBatchStatus = if (isFullyAcknowledged) "completed" else "completed-with-errors"
     )
 }
 
@@ -1248,6 +1773,279 @@ internal fun sortedMergeOutcome(a: MobileSyncOutcome, b: MobileSyncOutcome): Mob
         a == MobileSyncOutcome.BLOCKED || b == MobileSyncOutcome.BLOCKED -> MobileSyncOutcome.BLOCKED
         else -> MobileSyncOutcome.SUCCESS
     }
+}
+
+internal fun shouldEnqueueUsageContinuation(
+    state: MobileSyncState,
+    continuationDepth: Int,
+    didWork: Boolean,
+    maxContinuationDepth: Int = MAX_USAGE_CONTINUATIONS_PER_CHAIN
+): Boolean {
+    val acknowledgedProgress = state.acceptedCount + state.skippedCount + state.rejectedCount
+    return didWork &&
+        state.phase == "catching-up" &&
+        state.outcome == MobileSyncOutcome.SUCCESS &&
+        acknowledgedProgress > 0 &&
+        continuationDepth < maxContinuationDepth
+}
+
+internal fun resolvePostUsageSyncPhase(
+    usagePhase: String,
+    locationPhase: String,
+    failedCount: Int,
+    remaining: Int
+): String {
+    return when {
+        usagePhase == "upload-blocked" ||
+            usagePhase == "usage-outbox-binding-blocked" -> usagePhase
+        locationPhase == "location-upload-failed" -> locationPhase
+        usagePhase == "old-queue-upload-failed" || usagePhase == "upload-failed" -> usagePhase
+        failedCount > 0 -> "completed-with-errors"
+        remaining > 0 -> "catching-up"
+        else -> "completed"
+    }
+}
+
+internal data class UsageBatchRecoveryBinding(
+    val serverIdentity: String,
+    val ownerId: String,
+    val payloadFingerprint: String
+)
+
+internal data class UsageOutboxOwnerBinding(
+    val serverIdentity: String,
+    val ownerId: String
+)
+
+data class UsageOutboxRecoveryPreview(
+    val serverIdentity: String,
+    val ownerId: String,
+    val ownerName: String?,
+    val pendingCount: Int,
+    val earliestUtc: Long?,
+    val latestUtc: Long?
+)
+
+data class LegacyOutboxClaimRequest(
+    val serverIdentity: String,
+    val ownerId: String
+) {
+    init {
+        require(serverIdentity.isNotBlank())
+        require(ownerId.isNotBlank())
+    }
+}
+
+internal enum class UsageOutboxBindingAction {
+    BIND_CURRENT,
+    ALLOWED,
+    OWNER_MISSING,
+    UNBOUND_LEGACY_QUEUE,
+    BINDING_MISMATCH
+}
+
+internal data class UsageOutboxBindingDecision(
+    val action: UsageOutboxBindingAction,
+    val shouldBind: Boolean
+)
+
+internal fun evaluateUsageOutboxBinding(
+    stored: UsageOutboxOwnerBinding?,
+    current: UsageOutboxOwnerBinding?,
+    pendingCount: Int
+): UsageOutboxBindingAction {
+    if (current == null || current.serverIdentity.isBlank() || current.ownerId.isBlank()) {
+        return UsageOutboxBindingAction.OWNER_MISSING
+    }
+    if (pendingCount == 0) return UsageOutboxBindingAction.BIND_CURRENT
+    if (stored == null) return UsageOutboxBindingAction.UNBOUND_LEGACY_QUEUE
+    return if (stored == current) {
+        UsageOutboxBindingAction.ALLOWED
+    } else {
+        UsageOutboxBindingAction.BINDING_MISMATCH
+    }
+}
+
+internal fun resolveUsageOutboxBinding(
+    stored: UsageOutboxOwnerBinding?,
+    current: UsageOutboxOwnerBinding?,
+    pendingCount: Int,
+    claim: LegacyOutboxClaimRequest?
+): UsageOutboxBindingDecision {
+    if (current == null || current.serverIdentity.isBlank() || current.ownerId.isBlank()) {
+        return UsageOutboxBindingDecision(UsageOutboxBindingAction.OWNER_MISSING, false)
+    }
+    if (pendingCount == 0) {
+        return UsageOutboxBindingDecision(UsageOutboxBindingAction.BIND_CURRENT, true)
+    }
+    if (stored == current) {
+        return UsageOutboxBindingDecision(UsageOutboxBindingAction.ALLOWED, false)
+    }
+    if (stored != null) {
+        return UsageOutboxBindingDecision(UsageOutboxBindingAction.BINDING_MISMATCH, false)
+    }
+    if (claim == null) {
+        return UsageOutboxBindingDecision(UsageOutboxBindingAction.UNBOUND_LEGACY_QUEUE, false)
+    }
+    val claimMatches = claim.serverIdentity == current.serverIdentity && claim.ownerId == current.ownerId
+    return if (claimMatches) {
+        UsageOutboxBindingDecision(UsageOutboxBindingAction.ALLOWED, true)
+    } else {
+        UsageOutboxBindingDecision(UsageOutboxBindingAction.BINDING_MISMATCH, false)
+    }
+}
+
+internal enum class UsageBatchBlockReason {
+    RETRY_EXHAUSTED,
+    PAYLOAD_CONFLICT,
+    LEASE_LOST,
+    UNKNOWN_CONFLICT
+}
+
+internal data class UsageBatchRecoveryState(
+    val recoveryEpoch: Int = 0,
+    val noProgressAttempts: Int = 0,
+    val blockedBy409: Boolean = false,
+    val blockReason: UsageBatchBlockReason? = null,
+    val lastTerminalError: String? = null,
+    val binding: UsageBatchRecoveryBinding? = null
+)
+
+internal data class UsageBatchRecoveryDecision(
+    val state: UsageBatchRecoveryState,
+    val batchIdRotated: Boolean
+)
+
+internal fun normalizeUsageBatchRecoveryState(
+    state: UsageBatchRecoveryState
+): UsageBatchRecoveryState {
+    return if (
+        state.blockedBy409 &&
+        state.blockReason == UsageBatchBlockReason.LEASE_LOST
+    ) {
+        // Older builds latched this transient conflict. Keep diagnostics, but allow the
+        // same stable batch id to make the next bounded network attempt.
+        state.copy(blockedBy409 = false)
+    } else {
+        state
+    }
+}
+
+internal fun usageBatchRecoveryStateAfterConflict(
+    state: UsageBatchRecoveryState,
+    reason: UsageBatchBlockReason,
+    message: String
+): UsageBatchRecoveryState {
+    return state.copy(
+        noProgressAttempts = minOf(
+            state.noProgressAttempts + 1,
+            SERVER_USAGE_MAX_ATTEMPTS
+        ),
+        blockedBy409 = reason != UsageBatchBlockReason.LEASE_LOST,
+        blockReason = reason,
+        lastTerminalError = message.take(500)
+    )
+}
+
+internal fun advanceUsageBatchRecoveryOnManualRetry(
+    state: UsageBatchRecoveryState,
+    binding: UsageBatchRecoveryBinding
+): UsageBatchRecoveryDecision {
+    val bindingMatches = state.binding == binding
+    val canRecover = state.blockedBy409 &&
+        bindingMatches &&
+        binding.ownerId.isNotBlank() &&
+        state.blockReason == UsageBatchBlockReason.RETRY_EXHAUSTED
+    return if (canRecover) {
+        UsageBatchRecoveryDecision(
+            state = UsageBatchRecoveryState(
+                recoveryEpoch = state.recoveryEpoch + 1,
+                noProgressAttempts = 0,
+                blockedBy409 = false,
+                blockReason = null,
+                lastTerminalError = null,
+                binding = binding
+            ),
+            batchIdRotated = true
+        )
+    } else {
+        UsageBatchRecoveryDecision(state = state, batchIdRotated = false)
+    }
+}
+
+internal fun classifyUsageBatchConflictCode(code: Int?): UsageBatchBlockReason {
+    return when (code) {
+        SERVER_CODE_RETRY_EXHAUSTED -> UsageBatchBlockReason.RETRY_EXHAUSTED
+        SERVER_CODE_PAYLOAD_CONFLICT -> UsageBatchBlockReason.PAYLOAD_CONFLICT
+        SERVER_CODE_LEASE_LOST -> UsageBatchBlockReason.LEASE_LOST
+        else -> UsageBatchBlockReason.UNKNOWN_CONFLICT
+    }
+}
+
+internal fun usageBatchHttpErrorCode(exception: HttpException): Int? {
+    val body = exception.response()?.errorBody()?.string() ?: return null
+    return runCatching {
+        JSONObject(body).optInt("code", Int.MIN_VALUE).takeIf { it != Int.MIN_VALUE }
+    }.getOrNull()
+}
+
+internal fun usageBatchPayloadFingerprint(
+    events: List<MobileUsageEventEntity>,
+    summaries: List<MobileUsageSummaryEntity>,
+    apps: List<MobileAppMetadataEntity>
+): String {
+    val canonical = buildString {
+        fun appendValue(value: Any?) {
+            val text = value?.toString().orEmpty()
+            append(text.length).append(':').append(text).append('|')
+        }
+
+        events.sortedBy { it.id }.forEach { event ->
+            appendValue("event")
+            appendValue(event.id)
+            appendValue(event.packageName)
+            appendValue(event.className)
+            appendValue(event.eventType)
+            appendValue(event.eventName)
+            appendValue(event.eventTimeUtc)
+            appendValue(event.source)
+            appendValue(event.sourceWindowStartUtc)
+            appendValue(event.sourceWindowEndUtc)
+            appendValue(event.collectedAtUtc)
+            appendValue(event.rawJson)
+        }
+        summaries.sortedBy { it.id }.forEach { summary ->
+            appendValue("summary")
+            appendValue(summary.id)
+            appendValue(summary.packageName)
+            appendValue(summary.windowStartUtc)
+            appendValue(summary.windowEndUtc)
+            appendValue(summary.totalTimeForegroundMs)
+            appendValue(summary.lastTimeUsedUtc)
+            appendValue(summary.firstTimeStampUtc)
+            appendValue(summary.lastTimeStampUtc)
+            appendValue(summary.source)
+            appendValue(summary.sourceWindowStartUtc)
+            appendValue(summary.sourceWindowEndUtc)
+            appendValue(summary.collectedAtUtc)
+            appendValue(summary.rawJson)
+        }
+        apps.sortedBy { it.packageName }.forEach { app ->
+            appendValue("app")
+            appendValue(app.packageName)
+            appendValue(app.label)
+            appendValue(app.versionName)
+            appendValue(app.versionCode)
+            appendValue(app.firstInstallTimeUtc)
+            appendValue(app.lastUpdateTimeUtc)
+            appendValue(app.isSystemApp)
+            appendValue(app.category)
+            appendValue(app.installerPackageName)
+            appendValue(app.collectedAtUtc)
+            appendValue(app.rawJson)
+        }
+    }
+    return sha256Hex(canonical)
 }
 
 internal fun MobileUsageEventEntity.toDto(clientItemKey: String = id.toString()): MobileUsageEventDto {
@@ -1348,6 +2146,16 @@ data class PendingUsageBatch(
     val windowEndUtc: Long?
 ) {
     val totalCount: Int get() = events.size + summaries.size + apps.size
+
+    internal fun typedKeys(): Set<MobileAcknowledgementItem> {
+        return buildSet {
+            events.forEach { add(MobileAcknowledgementItem("usage-event", it.id.toString())) }
+            summaries.forEach { add(MobileAcknowledgementItem("usage-summary", it.id.toString())) }
+            apps.forEach {
+                add(MobileAcknowledgementItem("app-metadata", "${it.packageName}@${it.versionCode}"))
+            }
+        }
+    }
 }
 
 internal suspend fun loadPendingUsageBatch(
@@ -1358,22 +2166,147 @@ internal suspend fun loadPendingUsageBatch(
     val summaries = loadPriorityBatch(dao::getUsageSummariesBySyncStatus, limit)
     val apps = loadPriorityBatch(dao::getAppMetadataBySyncStatus, limit)
 
-    val times = mutableListOf<Long>()
-    events.forEach { times += it.eventTimeUtc }
-    summaries.forEach { times += it.windowStartUtc; times += it.windowEndUtc }
-    apps.forEach { times += it.collectedAtUtc }
+    return partitionPendingUsageBatch(events, summaries, apps, limit).firstOrNull()
+        ?: PendingUsageBatch(emptyList(), emptyList(), emptyList(), null, null)
+}
 
-    if (times.isEmpty()) {
-        return PendingUsageBatch(events, summaries, apps, null, null)
+internal fun MobileUsageSummaryEntity.hasSupportedUsageBatchWindow(): Boolean {
+    if (windowEndUtc <= windowStartUtc) return false
+    return windowEndUtc - windowStartUtc <= USAGE_BATCH_MAX_WINDOW_MS
+}
+
+/**
+ * Deterministically partitions a bounded candidate pool into upload batches.
+ *
+ * Events and app metadata are point-like. Summaries are atomic intervals: a legitimate
+ * daily fallback summary must be sent whole even when its span exceeds the normal 2h
+ * timeline target. A batch may therefore exceed 2h only because one of its summaries
+ * genuinely does; it may never bridge unrelated 40h-apart point records.
+ */
+internal fun partitionPendingUsageBatch(
+    events: List<MobileUsageEventEntity>,
+    summaries: List<MobileUsageSummaryEntity>,
+    apps: List<MobileAppMetadataEntity>,
+    maxItems: Int = USAGE_BATCH_LIMIT,
+    targetWindowMs: Long = USAGE_BATCH_TARGET_WINDOW_MS
+): List<PendingUsageBatch> {
+    require(maxItems > 0) { "maxItems must be positive" }
+    require(targetWindowMs > 0) { "targetWindowMs must be positive" }
+
+    val entries = buildList {
+        summaries.forEach { add(UsageQueueEntry.Summary(it)) }
+        events.forEach { add(UsageQueueEntry.Event(it)) }
+        apps.forEach { add(UsageQueueEntry.App(it)) }
+    }.sortedWith(
+        compareBy<UsageQueueEntry> { it.statusPriority }
+            .thenBy { it.startUtc }
+            .thenBy { it.kindOrder }
+            .thenBy { it.endUtc }
+            .thenBy { it.stableKey }
+    )
+
+    if (entries.isEmpty()) return emptyList()
+
+    val batches = mutableListOf<MutableUsageBatch>()
+    var current = MutableUsageBatch(maxItems, targetWindowMs)
+    batches += current
+    for (entry in entries) {
+        if (!current.canAccept(entry)) {
+            current = MutableUsageBatch(maxItems, targetWindowMs)
+            batches += current
+        }
+        current.add(entry)
     }
 
-    val windowStart = times.minOrNull()!!
-    var windowEnd = times.maxOrNull()!!
-    if (windowEnd <= windowStart) {
-        windowEnd = windowStart + 1
+    return batches
+        .filter { it.totalCount > 0 }
+        .map { it.toPendingUsageBatch() }
+}
+
+private enum class UsageQueueKind(val order: Int) {
+    Summary(0),
+    Event(1),
+    App(2)
+}
+
+private sealed class UsageQueueEntry(
+    val kind: UsageQueueKind,
+    val startUtc: Long,
+    val endUtc: Long,
+    val syncStatus: String,
+    val stableKey: String
+) {
+    val kindOrder: Int get() = kind.order
+    val statusPriority: Int get() = if (syncStatus == MobileSyncStatus.PENDING) 0 else 1
+
+    class Event(val row: MobileUsageEventEntity) : UsageQueueEntry(
+        kind = UsageQueueKind.Event,
+        startUtc = row.eventTimeUtc,
+        endUtc = row.eventTimeUtc,
+        syncStatus = row.syncStatus,
+        stableKey = row.id.toString()
+    )
+
+    class Summary(val row: MobileUsageSummaryEntity) : UsageQueueEntry(
+        kind = UsageQueueKind.Summary,
+        startUtc = row.windowStartUtc,
+        endUtc = row.windowEndUtc,
+        syncStatus = row.syncStatus,
+        stableKey = row.id.toString()
+    )
+
+    class App(val row: MobileAppMetadataEntity) : UsageQueueEntry(
+        kind = UsageQueueKind.App,
+        startUtc = row.collectedAtUtc,
+        endUtc = row.collectedAtUtc,
+        syncStatus = row.syncStatus,
+        stableKey = "${row.packageName}@${row.versionCode}"
+    )
+}
+
+private class MutableUsageBatch(
+    private val maxItems: Int,
+    private val targetWindowMs: Long
+) {
+    val events = mutableListOf<MobileUsageEventEntity>()
+    val summaries = mutableListOf<MobileUsageSummaryEntity>()
+    val apps = mutableListOf<MobileAppMetadataEntity>()
+    private var windowStartUtc: Long? = null
+    private var windowEndUtc: Long? = null
+
+    val totalCount: Int get() = events.size + summaries.size + apps.size
+
+    fun canAccept(entry: UsageQueueEntry): Boolean {
+        if (totalCount >= maxItems) return false
+        val currentStart = windowStartUtc ?: return true
+        val currentEnd = windowEndUtc ?: return true
+        val nextStart = minOf(currentStart, entry.startUtc)
+        val nextEnd = maxOf(currentEnd, entry.endUtc)
+        val nextSpan = (nextEnd - nextStart).coerceAtLeast(1)
+        val currentSpan = (currentEnd - currentStart).coerceAtLeast(1)
+        return nextSpan <= targetWindowMs || nextSpan <= currentSpan
     }
 
-    return PendingUsageBatch(events, summaries, apps, windowStart, windowEnd)
+    fun add(entry: UsageQueueEntry) {
+        windowStartUtc = windowStartUtc?.let { minOf(it, entry.startUtc) } ?: entry.startUtc
+        windowEndUtc = windowEndUtc?.let { maxOf(it, entry.endUtc) } ?: entry.endUtc
+        when (entry) {
+            is UsageQueueEntry.Event -> events += entry.row
+            is UsageQueueEntry.Summary -> summaries += entry.row
+            is UsageQueueEntry.App -> apps += entry.row
+        }
+    }
+
+    fun toPendingUsageBatch(): PendingUsageBatch {
+        val start = windowStartUtc
+        val rawEnd = windowEndUtc
+        val end = if (start != null && rawEnd != null) {
+            maxOf(rawEnd, start + 1)
+        } else {
+            rawEnd
+        }
+        return PendingUsageBatch(events, summaries, apps, start, end)
+    }
 }
 
 internal suspend fun pendingUsageRemaining(dao: MobileDataDao): Int {

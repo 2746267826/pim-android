@@ -8,7 +8,10 @@ import com.pim.app.mobile.diagnostics.DiagnosticOperations
 import com.pim.app.forensics.DroppedReasonUiState
 import com.pim.app.forensics.ForensicLivenessRepository
 import com.pim.app.forensics.LivenessUiSnapshot
+import com.pim.app.mobile.sync.LegacyOutboxClaimRequest
 import com.pim.app.mobile.sync.MobileSyncScheduler
+import com.pim.app.mobile.sync.UsageOutboxRecoveryPreview
+import com.pim.app.status.LegacyOutboxClaimPromptController
 import com.pim.app.settings.TrackingSettingsStore
 import com.pim.app.status.ConnectionProbeService
 import com.pim.app.status.ConnectionProbeStore
@@ -300,7 +303,12 @@ class StatusCenterViewModel @Inject constructor(
     val feedback: StateFlow<StatusActionFeedback?> = _feedback.asStateFlow()
 
     private val syncRunner = StatusSyncActionRunner(
-        syncNow = { allowMeteredOnce -> mobileSyncScheduler.enqueueNow(allowMeteredOnce) },
+        syncNow = { allowMeteredOnce ->
+            mobileSyncScheduler.enqueueNow(
+                allowMeteredOnce = allowMeteredOnce,
+                manualRecoveryRetry = true
+            )
+        },
         refresh = { repository.requestRefresh() },
         acceptedSignal = acceptedSignal
     )
@@ -310,6 +318,18 @@ class StatusCenterViewModel @Inject constructor(
         submit = { allowMeteredOnce -> submitSync(allowMeteredOnce) }
     )
     val showMeteredSyncConfirmation: StateFlow<Boolean> = controller.showConfirmation
+
+    private var approvedLegacyClaim: UsageOutboxRecoveryPreview? = null
+    private val legacyOutboxClaimController = LegacyOutboxClaimPromptController(
+        preview = { repository.legacyOutboxRecoveryPreview() },
+        submitNormal = { controller.request() },
+        submitClaim = { preview ->
+            approvedLegacyClaim = preview
+            controller.request()
+        }
+    )
+    val legacyOutboxClaimPrompt: StateFlow<UsageOutboxRecoveryPreview?> =
+        legacyOutboxClaimController.prompt
 
     private val _exportState = MutableStateFlow(DiagnosticExportUiState())
     val exportState: StateFlow<DiagnosticExportUiState> = _exportState.asStateFlow()
@@ -377,13 +397,40 @@ class StatusCenterViewModel @Inject constructor(
     }
 
     fun syncNow() {
-        controller.request()
+        if (state.value.syncPhase in setOf(
+                com.pim.app.status.SyncPhase.Accepted,
+                com.pim.app.status.SyncPhase.Running,
+                com.pim.app.status.SyncPhase.CatchingUp
+            )
+        ) {
+            return
+        }
+        viewModelScope.launch {
+            legacyOutboxClaimController.requestSync()
+        }
     }
 
     private fun submitSync(allowMeteredOnce: Boolean) {
+        val legacyClaim = approvedLegacyClaim
+        approvedLegacyClaim = null
         viewModelScope.launch {
             runSyncWithFeedback(
-                sync = { syncRunner.run(StatusActionRoute.TriggerSync, allowMeteredOnce) },
+                sync = {
+                    if (legacyClaim == null) {
+                        syncRunner.run(StatusActionRoute.TriggerSync, allowMeteredOnce)
+                    } else {
+                        mobileSyncScheduler.enqueueNow(
+                            allowMeteredOnce = allowMeteredOnce,
+                            manualRecoveryRetry = true,
+                            legacyOutboxClaim = LegacyOutboxClaimRequest(
+                                serverIdentity = legacyClaim.serverIdentity,
+                                ownerId = legacyClaim.ownerId
+                            )
+                        )
+                        acceptedSignal.trigger()
+                        repository.requestRefresh()
+                    }
+                },
                 feedbackSetter = { _feedback.value = it }
             )
         }
@@ -394,7 +441,16 @@ class StatusCenterViewModel @Inject constructor(
     }
 
     fun dismissMeteredSyncConfirmation() {
+        approvedLegacyClaim = null
         controller.dismiss()
+    }
+
+    fun confirmLegacyOutboxClaim() {
+        legacyOutboxClaimController.confirm()
+    }
+
+    fun dismissLegacyOutboxClaim() {
+        legacyOutboxClaimController.dismiss()
     }
 
     fun forceConnectionProbe() {

@@ -26,7 +26,8 @@ class StatusPresentationTest {
             SyncPhase.Waiting,
             SyncPhase.Completed,
             SyncPhase.Failed,
-            SyncPhase.Cancelled
+            SyncPhase.Cancelled,
+            SyncPhase.Blocked
         )
 
         SyncPhase.entries.forEach { phase ->
@@ -44,11 +45,11 @@ class StatusPresentationTest {
         assertEquals("同步条件未满足", syncPhaseLabel(SyncPhase.Blocked))
         assertEquals("补传中", syncPhaseLabel(SyncPhase.CatchingUp))
         assertEquals("请求已接受", syncButtonLabel(SyncPhase.Accepted))
-        assertEquals("暂不可同步", syncButtonLabel(SyncPhase.Blocked))
+        assertEquals("重新同步", syncButtonLabel(SyncPhase.Blocked))
         assertEquals("再次同步", syncButtonLabel(SyncPhase.Completed))
         assertEquals("补传中", syncButtonLabel(SyncPhase.CatchingUp))
         assertTrue(syncButtonLabel(SyncPhase.Failed).contains("重新"))
-        assertFalse(syncButtonEnabled(StatusCenterState.empty().copy(isLoading = false, syncPhase = SyncPhase.Blocked)))
+        assertTrue(syncButtonEnabled(StatusCenterState.empty().copy(isLoading = false, syncPhase = SyncPhase.Blocked)))
     }
 
     @Test

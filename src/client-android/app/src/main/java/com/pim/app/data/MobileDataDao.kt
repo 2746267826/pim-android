@@ -7,6 +7,11 @@ import androidx.room.Query
 import androidx.room.Upsert
 import kotlinx.coroutines.flow.Flow
 
+data class PendingUsageTimeRange(
+    val earliestUtc: Long? = null,
+    val latestUtc: Long? = null
+)
+
 @Dao
 interface MobileDataDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
@@ -43,7 +48,7 @@ interface MobileDataDao {
         """
         SELECT * FROM mobile_usage_events
         WHERE sync_status = :syncStatus
-        ORDER BY event_time_utc ASC
+        ORDER BY event_time_utc ASC, id ASC
         LIMIT :limit
         """
     )
@@ -56,7 +61,7 @@ interface MobileDataDao {
         """
         SELECT * FROM mobile_usage_summaries
         WHERE sync_status = :syncStatus
-        ORDER BY window_start_utc ASC
+        ORDER BY window_start_utc ASC, window_end_utc ASC, id ASC
         LIMIT :limit
         """
     )
@@ -145,6 +150,28 @@ interface MobileDataDao {
         syncedStatus: String = MobileSyncStatus.SYNCED,
         rejectedStatus: String = MobileSyncStatus.REJECTED
     ): Flow<Int>
+
+    @Query(
+        """
+        SELECT MIN(ts) AS earliestUtc, MAX(ts) AS latestUtc FROM (
+            SELECT event_time_utc AS ts FROM mobile_usage_events
+            WHERE sync_status != :syncedStatus AND sync_status != :rejectedStatus
+            UNION ALL
+            SELECT window_start_utc AS ts FROM mobile_usage_summaries
+            WHERE sync_status != :syncedStatus AND sync_status != :rejectedStatus
+            UNION ALL
+            SELECT window_end_utc AS ts FROM mobile_usage_summaries
+            WHERE sync_status != :syncedStatus AND sync_status != :rejectedStatus
+            UNION ALL
+            SELECT collected_at_utc AS ts FROM mobile_app_metadata
+            WHERE sync_status != :syncedStatus AND sync_status != :rejectedStatus
+        )
+        """
+    )
+    suspend fun pendingUsageTimeRange(
+        syncedStatus: String = MobileSyncStatus.SYNCED,
+        rejectedStatus: String = MobileSyncStatus.REJECTED
+    ): PendingUsageTimeRange
 
     /**
      * 时间窗内是否有定位点（AC-9.2 的空态判定：「无定位点、无心跳、无台账记录」才算「暂无」）。

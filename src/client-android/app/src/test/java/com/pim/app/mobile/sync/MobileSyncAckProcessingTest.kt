@@ -225,6 +225,41 @@ class MobileSyncAckProcessingTest {
         assertEquals("server-retry", dao.getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).single().lastError)
     }
 
+    @Test
+    fun emptyAmbiguousAcknowledgementKeepsEveryOutboxRowPending() = runTest {
+        val eventId = dao.insertUsageEvents(listOf(event())).single()
+        val summaryId = dao.insertUsageSummaries(listOf(summary())).single()
+        dao.upsertAppMetadata(listOf(appMeta("com.keep")))
+        val sentItems = linkedSetOf(
+            MobileAcknowledgementItem("usage-event", eventId.toString()),
+            MobileAcknowledgementItem("usage-summary", summaryId.toString()),
+            MobileAcknowledgementItem("app-metadata", "com.keep@1")
+        )
+
+        processUsageAcknowledgements(
+            dao = dao,
+            sentItems = sentItems,
+            response = MobileUsageIngestResult(
+                acceptedCount = 0,
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = sentItems.size,
+                itemResults = emptyList(),
+                batchId = "active-or-ambiguous"
+            )
+        )
+
+        assertEquals(eventId, dao.getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).single().id)
+        assertEquals(summaryId, dao.getUsageSummariesBySyncStatus(MobileSyncStatus.PENDING).single().id)
+        assertEquals(
+            "com.keep",
+            dao.getAppMetadataBySyncStatus(MobileSyncStatus.PENDING).single().packageName
+        )
+        assertEquals(0, dao.getUsageEventsBySyncStatus(MobileSyncStatus.REJECTED).size)
+        assertEquals(0, dao.getUsageSummariesBySyncStatus(MobileSyncStatus.REJECTED).size)
+        assertEquals(0, dao.getAppMetadataBySyncStatus(MobileSyncStatus.REJECTED).size)
+    }
+
     // --- Partial error info (only code or only message) ---
 
     @Test

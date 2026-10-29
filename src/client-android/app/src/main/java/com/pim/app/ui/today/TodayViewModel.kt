@@ -408,7 +408,12 @@ class TodayViewModel @Inject constructor(
     internal val syncSubmissionGate = AtomicBoolean(false)
 
     private val syncRunner = StatusSyncActionRunner(
-        syncNow = { allowMeteredOnce -> mobileSyncScheduler.enqueueNow(allowMeteredOnce) },
+        syncNow = { allowMeteredOnce ->
+            mobileSyncScheduler.enqueueNow(
+                allowMeteredOnce = allowMeteredOnce,
+                manualRecoveryRetry = true
+            )
+        },
         refresh = { statusCenterRepository.requestRefresh() },
         acceptedSignal = acceptedSignal
     )

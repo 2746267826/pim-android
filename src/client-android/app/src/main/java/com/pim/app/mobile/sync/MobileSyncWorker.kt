@@ -27,7 +27,18 @@ class MobileSyncWorker @AssistedInject constructor(
 
     override suspend fun doWork(): Result {
         return try {
-            val state = syncCoordinator.syncOnOpen()
+            val continuationDepth = inputData.getInt(
+                MobileSyncScheduler.CONTINUATION_DEPTH_KEY,
+                0
+            )
+            val manualRecoveryRetry = inputData.getBoolean(
+                MobileSyncScheduler.MANUAL_RECOVERY_RETRY_KEY,
+                false
+            )
+            val state = syncCoordinator.syncOnOpen(
+                continuationDepth = continuationDepth,
+                manualRecoveryRetry = manualRecoveryRetry
+            )
             mapOutcomeToWorkerResult(state.outcome)
         } catch (ex: CancellationException) {
             throw ex

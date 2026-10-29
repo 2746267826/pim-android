@@ -300,7 +300,12 @@ class StatusCenterViewModel @Inject constructor(
     val feedback: StateFlow<StatusActionFeedback?> = _feedback.asStateFlow()
 
     private val syncRunner = StatusSyncActionRunner(
-        syncNow = { allowMeteredOnce -> mobileSyncScheduler.enqueueNow(allowMeteredOnce) },
+        syncNow = { allowMeteredOnce ->
+            mobileSyncScheduler.enqueueNow(
+                allowMeteredOnce = allowMeteredOnce,
+                manualRecoveryRetry = true
+            )
+        },
         refresh = { repository.requestRefresh() },
         acceptedSignal = acceptedSignal
     )

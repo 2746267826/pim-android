@@ -22,6 +22,7 @@ internal object MobileSyncErrorClassifier {
             is HttpException -> {
                 when (throwable.code()) {
                     408, 429, in 500..599 -> MobileSyncOutcome.RETRY
+                    409 -> MobileSyncOutcome.BLOCKED
                     in 400..499 -> MobileSyncOutcome.BLOCKED
                     else -> MobileSyncOutcome.RETRY
                 }

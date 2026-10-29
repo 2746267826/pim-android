@@ -561,6 +561,32 @@ class MobileAcknowledgementPlannerTest {
     }
 
     @Test
+    fun allZeroEmptyAcknowledgementRetainsEveryTypedItemForRetry() {
+        val sentItems = setOf(
+            MobileAcknowledgementItem("usage-event", "11"),
+            MobileAcknowledgementItem("usage-summary", "12"),
+            MobileAcknowledgementItem("app-metadata", "com.example@1")
+        )
+
+        val plan = MobileAcknowledgementPlanner.planTyped(
+            sentItems = sentItems,
+            response = MobileUsageIngestResult(
+                skippedCount = 0,
+                rejectedCount = 0,
+                failedCount = 0,
+                itemResults = emptyList(),
+                batchId = "batch-zero-empty",
+                acceptedCount = 0
+            )
+        )
+
+        assertEquals(emptySet<MobileAcknowledgementItem>(), plan.confirmedItems)
+        assertEquals(emptySet<MobileAcknowledgementItem>(), plan.deadLetterItems)
+        assertEquals(sentItems, plan.retryItems)
+        assertEquals("server-ack-ambiguous", plan.failureCode)
+    }
+
+    @Test
     fun uploadMappingsUseStableRoomAndPackageVersionKeys() {
         val event = MobileUsageEventEntity(
             id = 11,

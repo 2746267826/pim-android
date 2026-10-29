@@ -43,7 +43,7 @@ interface MobileDataDao {
         """
         SELECT * FROM mobile_usage_events
         WHERE sync_status = :syncStatus
-        ORDER BY event_time_utc ASC
+        ORDER BY event_time_utc ASC, id ASC
         LIMIT :limit
         """
     )
@@ -56,7 +56,7 @@ interface MobileDataDao {
         """
         SELECT * FROM mobile_usage_summaries
         WHERE sync_status = :syncStatus
-        ORDER BY window_start_utc ASC
+        ORDER BY window_start_utc ASC, window_end_utc ASC, id ASC
         LIMIT :limit
         """
     )

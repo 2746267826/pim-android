@@ -33,19 +33,26 @@ class MobileSyncScheduler @Inject constructor(
             .enqueueUniquePeriodicWork(PERIODIC_NAME, ExistingPeriodicWorkPolicy.UPDATE, request)
     }
 
-    fun enqueueNow(allowMeteredOnce: Boolean = false) {
+    fun enqueueNow(
+        allowMeteredOnce: Boolean = false,
+        manualRecoveryRetry: Boolean = false
+    ) {
         val settings = trackingSettingsStore.read()
         val networkType = resolveImmediateNetworkType(settings, allowMeteredOnce)
-        val request = buildImmediateRequest(networkType, allowMeteredOnce)
+        val request = buildImmediateRequest(
+            networkType = networkType,
+            allowMeteredOnce = allowMeteredOnce,
+            manualRecoveryRetry = manualRecoveryRetry
+        )
         val policy = resolveExistingWorkPolicy(allowMeteredOnce)
         WorkManager.getInstance(context)
             .enqueueUniqueWork(NOW_NAME, policy, request)
     }
 
-    fun enqueueContinuation() {
+    fun enqueueContinuation(continuationDepth: Int = 1) {
         val settings = trackingSettingsStore.read()
         val networkType = resolveImmediateNetworkType(settings, allowMeteredOnce = false)
-        val request = buildImmediateRequest(networkType, allowMeteredOnce = false)
+        val request = buildContinuationRequest(networkType, continuationDepth)
         WorkManager.getInstance(context)
             .enqueueUniqueWork(NOW_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
     }
@@ -70,8 +77,16 @@ class MobileSyncScheduler @Inject constructor(
             return if (settings.syncOnUnmeteredOnly && !allowMeteredOnce) NetworkType.UNMETERED else NetworkType.CONNECTED
         }
 
-        fun buildImmediateInputData(allowMeteredOnce: Boolean): Data {
-            return workDataOf("allow_metered_once" to allowMeteredOnce)
+        fun buildImmediateInputData(
+            allowMeteredOnce: Boolean,
+            continuationDepth: Int = 0,
+            manualRecoveryRetry: Boolean = false
+        ): Data {
+            return workDataOf(
+                "allow_metered_once" to allowMeteredOnce,
+                CONTINUATION_DEPTH_KEY to continuationDepth.coerceAtLeast(0),
+                MANUAL_RECOVERY_RETRY_KEY to manualRecoveryRetry
+            )
         }
 
         fun buildPeriodicRequest(networkType: NetworkType): PeriodicWorkRequest {
@@ -84,20 +99,49 @@ class MobileSyncScheduler @Inject constructor(
                 .build()
         }
 
-        fun buildImmediateRequest(networkType: NetworkType, allowMeteredOnce: Boolean): OneTimeWorkRequest {
+        fun buildImmediateRequest(
+            networkType: NetworkType,
+            allowMeteredOnce: Boolean,
+            continuationDepth: Int = 0,
+            initialDelaySeconds: Long = 0,
+            manualRecoveryRetry: Boolean = false
+        ): OneTimeWorkRequest {
             val constraints = Constraints.Builder()
                 .setRequiredNetworkType(networkType)
                 .build()
-            val inputData = buildImmediateInputData(allowMeteredOnce)
-            return OneTimeWorkRequestBuilder<MobileSyncWorker>()
+            val inputData = buildImmediateInputData(
+                allowMeteredOnce = allowMeteredOnce,
+                continuationDepth = continuationDepth,
+                manualRecoveryRetry = manualRecoveryRetry
+            )
+            val builder = OneTimeWorkRequestBuilder<MobileSyncWorker>()
                 .setConstraints(constraints)
                 .setBackoffCriteria(BackoffPolicy.EXPONENTIAL, 30, TimeUnit.SECONDS)
                 .setInputData(inputData)
-                .build()
+            if (initialDelaySeconds > 0) {
+                builder.setInitialDelay(initialDelaySeconds, TimeUnit.SECONDS)
+            }
+            return builder.build()
+        }
+
+        fun buildContinuationRequest(
+            networkType: NetworkType,
+            continuationDepth: Int
+        ): OneTimeWorkRequest {
+            return buildImmediateRequest(
+                networkType = networkType,
+                allowMeteredOnce = false,
+                continuationDepth = continuationDepth,
+                initialDelaySeconds = USAGE_CONTINUATION_DELAY_SECONDS,
+                manualRecoveryRetry = false
+            )
         }
 
         fun resolveExistingWorkPolicy(@Suppress("UNUSED_PARAMETER") allowMeteredOnce: Boolean = false): ExistingWorkPolicy {
             return ExistingWorkPolicy.REPLACE
         }
+
+        const val CONTINUATION_DEPTH_KEY = "continuation_depth"
+        const val MANUAL_RECOVERY_RETRY_KEY = "manual_recovery_retry"
     }
 }

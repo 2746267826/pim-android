@@ -89,6 +89,14 @@ class NativeNotesActivity : ComponentActivity() {
             val completion by model.completion.collectAsStateWithLifecycle()
             val uploads by model.uploads.state.collectAsStateWithLifecycle()
             val asr by model.asr.state.collectAsStateWithLifecycle()
+            val artifacts by model.artifacts.state.collectAsStateWithLifecycle()
+            val artifactEntry by model.artifactEntry.collectAsStateWithLifecycle()
+            val artifactConsentDone by model.artifactConsentDone.collectAsStateWithLifecycle()
+            val artifactStarting by model.artifactStarting.collectAsStateWithLifecycle()
+            val artifactKind by model.artifactKind.collectAsStateWithLifecycle()
+            val artifactSelections by model.artifactSelections.collectAsStateWithLifecycle()
+            val artifactViews by model.artifactViews.collectAsStateWithLifecycle()
+            val artifactContentViews by model.artifactContentViews.collectAsStateWithLifecycle()
             val uploadTarget = rememberUploadTarget(model.uploads)
             val asrActions = remember(model) {
                 NoteAsrActions(
@@ -100,6 +108,9 @@ class NativeNotesActivity : ComponentActivity() {
                     start = model::startAsr,
                     replayStart = model::replayAsrStart,
                     replayRetry = model::replayAsrRetry,
+                    openDerived = { versionId, noteId, asrTaskId ->
+                        model.openArtifacts(versionId, noteId, asrTaskId, "")
+                    },
                 )
             }
             PimTheme {
@@ -161,7 +172,23 @@ class NativeNotesActivity : ComponentActivity() {
                     }, completion = completion, onDismissCompletion = model::dismissCompletion, onDismissMessage = model::dismissMessage,
                     uploads = uploads, uploadTarget = uploadTarget, onUpload = model::submitUpload,
                     onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload,
-                    asr = asr, asrActions = asrActions)
+                    asr = asr, asrActions = asrActions,
+                    artifactOverlay = {
+                        artifactEntry?.let { entry ->
+                            NoteArtifactOverlay(
+                                state = artifacts,
+                                entry = entry,
+                                consentDone = artifactConsentDone,
+                                starting = artifactStarting,
+                                selectedKind = artifactKind,
+                                selections = artifactSelections,
+                                viewedCandidates = artifactViews,
+                                contentViews = artifactContentViews,
+                                entryActions = noteArtifactEntryActions(model),
+                                screenActions = noteArtifactScreenActions(model),
+                            )
+                        }
+                    })
             }
         }
     }

@@ -58,6 +58,20 @@
     {"apiService": "getNoteAsrTask", "method": "GET", "path": "/api/v1/native-notes/asr-tasks/{taskId}"},
     {"apiService": "getNoteAsrSegments", "method": "GET", "path": "/api/v1/native-notes/asr-tasks/{taskId}/segments"},
     {"apiService": "stopNoteAsrTask", "method": "POST", "path": "/api/v1/native-notes/asr-tasks/{taskId}/stop"},
-    {"apiService": "retryNoteAsrTask", "method": "POST", "path": "/api/v1/native-notes/asr-tasks/{taskId}/retry"}
+    {"apiService": "retryNoteAsrTask", "method": "POST", "path": "/api/v1/native-notes/asr-tasks/{taskId}/retry"},
+    {"apiService": "getNoteDerivedLimits", "method": "GET", "path": "/api/v1/native-notes/derived-tasks/limits"},
+    {"apiService": "getNoteDerivedDestinations", "method": "GET", "path": "/api/v1/native-notes/derived-tasks/destinations"},
+    {"apiService": "getNoteDerivedSources", "method": "GET", "path": "/api/v1/native-notes/derived-tasks/sources"},
+    {"apiService": "startNoteDerivedTask", "method": "POST", "path": "/api/v1/native-notes/derived-tasks"},
+    {"apiService": "getNoteDerivedTasks", "method": "GET", "path": "/api/v1/native-notes/derived-tasks"},
+    {"apiService": "getNoteDerivedTask", "method": "GET", "path": "/api/v1/native-notes/derived-tasks/{taskId}"},
+    {"apiService": "getNoteDerivedSteps", "method": "GET", "path": "/api/v1/native-notes/derived-tasks/{taskId}/steps"},
+    {"apiService": "stopNoteDerivedTask", "method": "POST", "path": "/api/v1/native-notes/derived-tasks/{taskId}/stop"},
+    {"apiService": "retryNoteDerivedTask", "method": "POST", "path": "/api/v1/native-notes/derived-tasks/{taskId}/retry"},
+    {"apiService": "getNoteDerivedArtifacts", "method": "GET", "path": "/api/v1/native-notes/derived-artifacts"},
+    {"apiService": "getNoteDerivedArtifact", "method": "GET", "path": "/api/v1/native-notes/derived-artifacts/{artifactId}"},
+    {"apiService": "getNoteDerivedVersion", "method": "GET", "path": "/api/v1/native-notes/derived-artifacts/{artifactId}/versions/{versionId}"},
+    {"apiService": "saveNoteDerivedManualRevision", "method": "POST", "path": "/api/v1/native-notes/derived-artifacts/{artifactId}/manual-revisions"},
+    {"apiService": "selectNoteDerivedVersion", "method": "POST", "path": "/api/v1/native-notes/derived-artifacts/{artifactId}/select"}
   ]
 }

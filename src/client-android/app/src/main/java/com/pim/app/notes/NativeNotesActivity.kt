@@ -94,7 +94,7 @@ class NativeNotesActivity : ComponentActivity() {
             val artifactConsentDone by model.artifactConsentDone.collectAsStateWithLifecycle()
             val artifactStarting by model.artifactStarting.collectAsStateWithLifecycle()
             val artifactKind by model.artifactKind.collectAsStateWithLifecycle()
-            val artifactSelections by model.artifactSelections.collectAsStateWithLifecycle()
+            val artifactPendingSelections by model.artifactPendingSelections.collectAsStateWithLifecycle()
             val artifactViews by model.artifactViews.collectAsStateWithLifecycle()
             val artifactContentViews by model.artifactContentViews.collectAsStateWithLifecycle()
             val uploadTarget = rememberUploadTarget(model.uploads)
@@ -181,7 +181,7 @@ class NativeNotesActivity : ComponentActivity() {
                                 consentDone = artifactConsentDone,
                                 starting = artifactStarting,
                                 selectedKind = artifactKind,
-                                selections = artifactSelections,
+                                pendingSelections = artifactPendingSelections,
                                 viewedCandidates = artifactViews,
                                 contentViews = artifactContentViews,
                                 entryActions = noteArtifactEntryActions(model),

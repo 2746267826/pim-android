@@ -15,7 +15,7 @@ data class NoteArtifactEntry(
 fun NoteArtifactRepositoryState.toUiState(
     entry: NoteArtifactEntry,
     selectedKind: NoteArtifactKind,
-    selectedCandidateIds: Map<NoteArtifactKind, String?> = emptyMap(),
+    pendingSelectionCandidateIds: Map<NoteArtifactKind, String?> = emptyMap(),
     viewedCandidateIds: Map<NoteArtifactKind, String?> = emptyMap(),
     contentViews: Map<NoteArtifactKind, NoteArtifactContentView> = emptyMap(),
 ): NoteArtifactUiState {
@@ -49,13 +49,13 @@ fun NoteArtifactRepositoryState.toUiState(
         selectedKind = selectedKind,
         fullRecord = editor(
             kind = NoteArtifactKind.FullRecord,
-            selectedCandidateIds = selectedCandidateIds,
+            pendingSelectionCandidateIds = pendingSelectionCandidateIds,
             viewedCandidateIds = viewedCandidateIds,
             contentViews = contentViews,
         ),
         analysis = editor(
             kind = NoteArtifactKind.Analysis,
-            selectedCandidateIds = selectedCandidateIds,
+            pendingSelectionCandidateIds = pendingSelectionCandidateIds,
             viewedCandidateIds = viewedCandidateIds,
             contentViews = contentViews,
         ),
@@ -67,7 +67,7 @@ fun NoteArtifactRepositoryState.toUiState(
 
 private fun NoteArtifactRepositoryState.editor(
     kind: NoteArtifactKind,
-    selectedCandidateIds: Map<NoteArtifactKind, String?>,
+    pendingSelectionCandidateIds: Map<NoteArtifactKind, String?>,
     viewedCandidateIds: Map<NoteArtifactKind, String?>,
     contentViews: Map<NoteArtifactKind, NoteArtifactContentView>,
 ): NoteArtifactEditorUiState {
@@ -98,18 +98,22 @@ private fun NoteArtifactRepositoryState.editor(
             hasConflict = version.hasConflict,
         )
     }
-    val selected = selectedCandidateIds[kind]?.takeIf { id -> candidates.any { it.candidateId == id } }
-        ?: (if (materialVersionId == null) artifact?.headVersionId else null)
-        ?: candidates.firstOrNull { it.isServerHead }?.candidateId
-        ?: candidates.firstOrNull()?.candidateId
+    val artifactHeadVersionId = artifact?.headVersionId
+    val confirmedHead = artifactHeadVersionId?.let { headVersionId ->
+        candidates.firstOrNull {
+            it.candidateId == headVersionId && it.isServerHead
+        }?.candidateId
+    }
+    val pendingSelection = pendingSelectionCandidateIds[kind]
+        ?.takeIf { id -> candidates.any { it.candidateId == id } }
     val viewed = viewedCandidateIds[kind]?.takeIf { id -> candidates.any { it.candidateId == id } }
-        ?: selected
     val taskDetail = detail?.takeIf { selectedTaskId == task?.taskId }
     return NoteArtifactEditorUiState(
         kind = kind,
         draft = draft,
         candidates = candidates,
-        selectedCandidateId = selected,
+        confirmedHeadCandidateId = confirmedHead,
+        pendingSelectionCandidateId = pendingSelection,
         viewedCandidateId = viewed,
         contentView = contentViews[kind] ?: NoteArtifactContentView.LocalDraft,
         workPhase = task.workPhase(),

@@ -43,8 +43,8 @@ class NotesViewModel @Inject constructor(
     val artifactStarting = mutableArtifactStarting.asStateFlow()
     private val mutableArtifactKind = MutableStateFlow(NoteArtifactKind.FullRecord)
     val artifactKind = mutableArtifactKind.asStateFlow()
-    private val mutableArtifactSelections = MutableStateFlow<Map<NoteArtifactKind, String?>>(emptyMap())
-    val artifactSelections = mutableArtifactSelections.asStateFlow()
+    private val mutableArtifactPendingSelections = MutableStateFlow<Map<NoteArtifactKind, String?>>(emptyMap())
+    val artifactPendingSelections = mutableArtifactPendingSelections.asStateFlow()
     private val mutableArtifactViews = MutableStateFlow<Map<NoteArtifactKind, String?>>(emptyMap())
     val artifactViews = mutableArtifactViews.asStateFlow()
     private val mutableArtifactContentViews =
@@ -116,7 +116,7 @@ class NotesViewModel @Inject constructor(
 
     fun openArtifacts(versionId: String, noteId: String, asrTaskId: String?, title: String) {
         mutableArtifactEntry.value = NoteArtifactEntry(noteId, versionId, asrTaskId, title)
-        mutableArtifactSelections.value = emptyMap()
+        mutableArtifactPendingSelections.value = emptyMap()
         mutableArtifactViews.value = emptyMap()
         mutableArtifactContentViews.value = emptyMap()
         viewModelScope.launch {
@@ -200,6 +200,17 @@ class NotesViewModel @Inject constructor(
             tell("尚未读取到服务端当前版本基线；请刷新后再保存，本机稿保留。")
             return
         }
+        val expectedHeadVersionId = artifact.headVersionId ?: run {
+            tell("服务端尚未确认当前版本；请先在候选列表明确选择此稿，选择成功后再保存人工稿。本机稿保留。")
+            return
+        }
+        val confirmedHead = artifacts.state.value.versions[request.kind].orEmpty().any {
+            it.versionId == expectedHeadVersionId && it.isHead
+        }
+        if (!confirmedHead) {
+            tell("服务端 head 尚未确认或无匹配版本；请先显式选择此稿并刷新。本机稿保留。")
+            return
+        }
         if (draft.dirty) {
             tell("请先保存本机稿，再同步服务端；未保存的输入不会被发送。")
             return
@@ -211,7 +222,7 @@ class NotesViewModel @Inject constructor(
                 localDraftId = draft.localDraftId,
                 expectedLocalRevision = draft.localRevision,
                 expectedHeadRevision = expectedHeadRevision,
-                expectedHeadVersionId = artifact.headVersionId,
+                expectedHeadVersionId = expectedHeadVersionId,
                 contentMarkdown = draft.text,
             )
             if (artifacts.state.value.noteId == null) artifacts.refresh(entry.noteId, entry.materialVersionId)
@@ -229,6 +240,7 @@ class NotesViewModel @Inject constructor(
     }
 
     fun selectArtifactCandidate(kind: NoteArtifactKind, candidateId: String) {
+        if (mutableArtifactPendingSelections.value[kind] != null) return
         val artifact = artifacts.state.value.artifactRefs[kind] ?: run {
             tell("尚无可选的服务端结果或完整元数据；请刷新后重试，本机稿保留。")
             return
@@ -237,9 +249,15 @@ class NotesViewModel @Inject constructor(
             tell("尚未读取到服务端当前版本基线；请刷新后重试，本机稿保留。")
             return
         }
-        mutableArtifactSelections.value = mutableArtifactSelections.value + (kind to candidateId)
+        mutableArtifactPendingSelections.value =
+            mutableArtifactPendingSelections.value + (kind to candidateId)
         viewModelScope.launch {
-            artifacts.selectCandidate(artifact.artifactId, revision, candidateId)
+            try {
+                artifacts.selectCandidate(artifact.artifactId, revision, candidateId)
+            } finally {
+                mutableArtifactPendingSelections.value =
+                    mutableArtifactPendingSelections.value - kind
+            }
         }
     }
 

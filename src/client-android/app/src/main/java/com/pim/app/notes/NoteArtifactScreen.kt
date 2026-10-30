@@ -506,8 +506,8 @@ private fun ArtifactWorkCard(
                 )
             }
             ArtifactFact(
-                label = "当前选用版本",
-                value = selectedVersionLabel(editor),
+                label = "服务端当前版本",
+                value = confirmedHeadVersionLabel(editor),
             )
             ArtifactFact(
                 label = "本机编辑基线",
@@ -682,11 +682,17 @@ private fun LocalDraftPanel(
                             ),
                         )
                     },
-                    enabled = !draft.dirty,
+                    enabled = editor.canSaveManualRevision,
                     modifier = Modifier.fillMaxWidth()
                         .testTag("note-artifact-save-server-${editor.kind.name}"),
                 ) {
-                    Text(if (draft.dirty) "先保存本机稿再同步服务端" else "保存人工稿到服务端")
+                    Text(
+                        when {
+                            draft.dirty -> "先保存本机稿再同步服务端"
+                            editor.confirmedHeadCandidate == null -> "请先选择服务端版本"
+                            else -> "保存人工稿到服务端"
+                        },
+                    )
                 }
             }
         }
@@ -746,13 +752,15 @@ private fun CandidateCard(
     onSelect: () -> Unit,
 ) {
     val dimensions = PimTheme.dimensions
-    val isCurrent = editor.selectedCandidateId == candidate.candidateId
+    val isCurrent = editor.confirmedHeadCandidateId == candidate.candidateId
+    val isPending = editor.isSelectingCandidate(candidate.candidateId)
     OutlinedCard(
         Modifier.fillMaxWidth()
             .semantics {
                 stateDescription = when {
-                    isCurrent && editor.isDirty -> "当前选用；本机稿有未同步修改"
-                    isCurrent -> "当前选用"
+                    isCurrent && editor.isDirty -> "服务端当前版本；本机稿有未同步修改"
+                    isCurrent -> "服务端当前版本"
+                    isPending -> "正在确认选择"
                     else -> "未选用"
                 }
             }
@@ -779,7 +787,7 @@ private fun CandidateCard(
                         tint = MaterialTheme.colorScheme.primary,
                     )
                     Text(
-                        text = "当前选用",
+                        text = "服务端当前版本",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.primary,
                         modifier = Modifier.testTag(
@@ -819,7 +827,7 @@ private fun CandidateCard(
             )
             if (editor.isDirty) {
                 Text(
-                    text = "本机稿有未同步修改。选择只更新当前选用标记，不会覆盖输入框或改变本机编辑基线。",
+                    text = "本机稿有未同步修改。选择会请求服务端确认此版本；成功后更新服务端当前版本，不会覆盖输入框或改变本机编辑基线。",
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.error,
                 )
@@ -833,13 +841,14 @@ private fun CandidateCard(
             }
             Button(
                 onClick = onSelect,
-                enabled = !isCurrent,
+                enabled = editor.canSelectCandidate(candidate.candidateId),
                 modifier = Modifier.fillMaxWidth()
                     .testTag("note-artifact-select-${editor.kind.name}-${candidate.candidateId}"),
             ) {
                 Text(
                     when {
-                        isCurrent -> "当前选用"
+                        isCurrent -> "服务端当前版本"
+                        isPending -> "正在确认选择…"
                         editor.isDirty -> "选为当前版本（保留本机稿）"
                         else -> "选择此稿"
                     },
@@ -864,13 +873,13 @@ private fun ArtifactFact(label: String, value: String) {
     }
 }
 
-private fun selectedVersionLabel(editor: NoteArtifactEditorUiState): String {
-    val selected = editor.selectedCandidate
+private fun confirmedHeadVersionLabel(editor: NoteArtifactEditorUiState): String {
+    val selected = editor.confirmedHeadCandidate
     return when {
         selected != null -> "${selected.origin.displayName()} · ${selected.serverVersionId}"
-        !editor.selectedCandidateId.isNullOrBlank() ->
-            "${editor.selectedCandidateId}（当前候选列表未包含）"
-        else -> "尚未选用服务端版本"
+        !editor.confirmedHeadCandidateId.isNullOrBlank() ->
+            "${editor.confirmedHeadCandidateId}（当前候选列表未包含）"
+        else -> "尚未确认服务端当前版本"
     }
 }
 

@@ -9,7 +9,7 @@ fun NoteArtifactOverlay(
     consentDone: Boolean,
     starting: Boolean,
     selectedKind: NoteArtifactKind,
-    selections: Map<NoteArtifactKind, String?>,
+    pendingSelections: Map<NoteArtifactKind, String?>,
     viewedCandidates: Map<NoteArtifactKind, String?>,
     contentViews: Map<NoteArtifactKind, NoteArtifactContentView>,
     entryActions: NoteArtifactEntryActions,
@@ -27,7 +27,7 @@ fun NoteArtifactOverlay(
             state = state.toUiState(
                 entry = entry,
                 selectedKind = selectedKind,
-                selectedCandidateIds = selections,
+                pendingSelectionCandidateIds = pendingSelections,
                 viewedCandidateIds = viewedCandidates,
                 contentViews = contentViews,
             ),

@@ -63,32 +63,57 @@ class NoteArtifactUiModelsTest {
     fun candidateViewsAndRefreshNeverReplaceDirtyDraftOrItsBase() {
         val draft = dirtyDraft()
         val first = candidate("candidate-1", NoteArtifactCandidateOrigin.ModelOriginal)
+            .copy(isServerHead = true)
         val second = candidate("candidate-2", NoteArtifactCandidateOrigin.FollowUpCandidate)
         val editor = NoteArtifactEditorUiState(
             kind = NoteArtifactKind.FullRecord,
             draft = draft,
             candidates = listOf(first, second),
-            selectedCandidateId = first.candidateId,
+            confirmedHeadCandidateId = first.candidateId,
         )
 
-        val selected = editor.withSelectedCandidate(second.candidateId)
-        assertSame(draft, selected.draft)
-        assertEquals("server-base-1", selected.localBaseLabel)
+        val pending = editor.withPendingSelection(second.candidateId)
+        assertSame(draft, pending.draft)
+        assertEquals("server-base-1", pending.localBaseLabel)
+        assertEquals(first.candidateId, pending.confirmedHeadCandidateId)
+        assertEquals(second.candidateId, pending.pendingSelectionCandidateId)
 
-        val viewed = selected.withViewedCandidate(first.candidateId)
+        val viewed = pending.withSelectionSettled().withViewedCandidate(second.candidateId)
         assertSame(draft, viewed.draft)
         assertEquals(NoteArtifactContentView.ServerOriginal, viewed.contentView)
         assertEquals("server-base-1", viewed.localBaseLabel)
+        assertEquals(first.candidateId, viewed.confirmedHeadCandidateId)
 
         val refreshed = viewed.withRefreshedCandidates(
             updatedCandidates = listOf(first),
+            updatedPendingSelectionCandidateId = null,
             updatedWorkPhase = NoteArtifactWorkPhase.Running,
         )
         assertSame(draft, refreshed.draft)
         assertEquals("server-base-1", refreshed.localBaseLabel)
         assertEquals(NoteArtifactWorkPhase.Running, refreshed.workPhase)
-        assertEquals(second.candidateId, refreshed.selectedCandidateId)
-        assertEquals(first.candidateId, refreshed.viewedCandidateId)
+        assertEquals(first.candidateId, refreshed.confirmedHeadCandidateId)
+        assertEquals(second.candidateId, refreshed.viewedCandidateId)
+        assertEquals(null, refreshed.viewedCandidate)
+    }
+
+    @Test
+    fun noConfirmedHeadBlocksManualSaveAndDoesNotComeFromCandidateFallback() {
+        val onlyCandidate = candidate("candidate-only", NoteArtifactCandidateOrigin.ModelOriginal)
+        val editor = NoteArtifactEditorUiState(
+            kind = NoteArtifactKind.FullRecord,
+            draft = dirtyDraft().copy(dirty = false, text = "saved", savedText = "saved"),
+            candidates = listOf(onlyCandidate),
+            pendingSelectionCandidateId = onlyCandidate.candidateId,
+        )
+
+        assertFalse(editor.canSaveManualRevision)
+        assertFalse(editor.canSelectCandidate(onlyCandidate.candidateId))
+        assertEquals(null, editor.confirmedHeadCandidateId)
+
+        val settled = editor.withSelectionSettled()
+        assertTrue(settled.canSelectCandidate(onlyCandidate.candidateId))
+        assertFalse(settled.canSaveManualRevision)
     }
 
     @Test

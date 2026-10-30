@@ -740,6 +740,7 @@ class NativeNoteDerivedE2ETest {
 
     private fun saveHumanThroughUi(kind: NoteArtifactKind, text: String): NoteDerivedVersionDto {
         compose.onNodeWithTag("note-artifact-kind-${kind.name}").performClick()
+        selectModelCandidateForManualRevision(kind)
         enterDraftText(kind, text)
         saveLocalDraftThroughUi(kind)
         compose.waitUntil(15_000) {
@@ -772,6 +773,24 @@ class NativeNoteDerivedE2ETest {
                 "finalError" to "${error::class.qualifiedName}: ${error.message}",
             )
             throw error
+        }
+    }
+
+    private fun selectModelCandidateForManualRevision(kind: NoteArtifactKind) {
+        val noteId = latestLocalNoteId()
+        val artifact = mustArtifact(noteId, kind)
+        val candidate = artifact.versions.firstOrNull { it.isHead }
+            ?: artifact.versions.firstOrNull { it.author == NoteDerivedVersionAuthor.MODEL }
+            ?: error("No Model or selected candidate available for manual revision")
+        val tag = "note-artifact-select-${kind.name}-${candidate.versionId}"
+        scrollToNodeEventually("note-artifact-list", hasTestTag(tag))
+        compose.onNodeWithTag(tag)
+            .assertIsDisplayed()
+            .assertIsEnabled()
+            .performClick()
+        compose.waitUntil(15_000) {
+            editor?.model?.artifacts?.state?.value?.artifactRefs?.get(kind)?.headVersionId ==
+                candidate.versionId
         }
     }
 

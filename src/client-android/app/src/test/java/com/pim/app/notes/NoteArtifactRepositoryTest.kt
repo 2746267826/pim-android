@@ -146,6 +146,75 @@ class NoteArtifactRepositoryTest {
         assertTrue(problem.orEmpty().contains("未确认"))
     }
 
+    @Test fun failedCandidateSelectionKeepsDirtyDraftAndRetryCanConfirmServerHead() = runBlocking {
+        val task = seedTask()
+        transport.artifactFallback = listOf(
+            NoteArtifactArtifactRefProjection(
+                artifactId = "artifact-full",
+                kind = NoteArtifactKind.FullRecord,
+                revision = "artifact-revision",
+                headVersionId = null,
+            ),
+        )
+        transport.versionFallback = mapOf(
+            "artifact-full" to listOf(version("candidate-model", NoteArtifactKind.FullRecord, materialVersionId, false)),
+        )
+        transport.detail = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", null))
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, task.taskId)
+        val draft = repository.state.value.drafts.single { it.kind == NoteArtifactKind.FullRecord }
+        repository.stageText(draft.localDraftId, draft.localRevision, "dirty text survives select failure")
+        val dirtyDraft = repository.state.value.drafts.single { it.localDraftId == draft.localDraftId }
+        val before = repository.state.value.toUiState(
+            entry = NoteArtifactEntry(noteId, materialVersionId),
+            selectedKind = NoteArtifactKind.FullRecord,
+        )
+        assertNull(before.fullRecord.confirmedHeadCandidateId)
+        assertFalse(before.fullRecord.canSaveManualRevision)
+        assertTrue(before.fullRecord.canSelectCandidate("candidate-model"))
+
+        transport.selectError = IOException("selection receipt unknown")
+        repository.selectCandidate("artifact-full", "artifact-revision", "candidate-model")
+
+        val afterFailure = repository.state.value.toUiState(
+            entry = NoteArtifactEntry(noteId, materialVersionId),
+            selectedKind = NoteArtifactKind.FullRecord,
+        )
+        assertNull(afterFailure.fullRecord.confirmedHeadCandidateId)
+        assertFalse(afterFailure.fullRecord.canSaveManualRevision)
+        assertTrue(afterFailure.fullRecord.canSelectCandidate("candidate-model"))
+        assertEquals(
+            dirtyDraft,
+            repository.state.value.drafts.single { it.localDraftId == draft.localDraftId },
+        )
+        assertEquals("dirty text survives select failure", dirtyDraft.text)
+        assertTrue(dirtyDraft.dirty)
+
+        transport.selectError = null
+        transport.artifactFallback = listOf(
+            NoteArtifactArtifactRefProjection(
+                artifactId = "artifact-full",
+                kind = NoteArtifactKind.FullRecord,
+                revision = "artifact-revision",
+                headVersionId = "candidate-model",
+            ),
+        )
+        transport.versionFallback = mapOf(
+            "artifact-full" to listOf(version("candidate-model", NoteArtifactKind.FullRecord, materialVersionId, true)),
+        )
+        repository.selectCandidate("artifact-full", "artifact-revision", "candidate-model")
+
+        val confirmed = repository.state.value.toUiState(
+            entry = NoteArtifactEntry(noteId, materialVersionId),
+            selectedKind = NoteArtifactKind.FullRecord,
+        )
+        assertEquals("candidate-model", confirmed.fullRecord.confirmedHeadCandidateId)
+        assertFalse(confirmed.fullRecord.canSelectCandidate("candidate-model"))
+        assertEquals("dirty text survives select failure", confirmed.fullRecord.draft?.text)
+        assertTrue(confirmed.fullRecord.isDirty)
+        assertEquals(listOf("artifact-revision", "artifact-revision"), transport.selectHeads)
+    }
+
     @Test fun oneConfirmationStartsOneTaskAssociatedWithBothArtifactKinds() = runBlocking {
         val material = readyMaterial("A")
         val repository = repository()
@@ -310,11 +379,12 @@ class NoteArtifactRepositoryTest {
         val ui = repository.state.value.toUiState(
             entry = NoteArtifactEntry(noteId, materialA),
             selectedKind = NoteArtifactKind.Analysis,
-            selectedCandidateIds = mapOf(NoteArtifactKind.Analysis to "version-b-analysis"),
+            pendingSelectionCandidateIds = mapOf(NoteArtifactKind.Analysis to "version-b-analysis"),
         )
         assertEquals(materialA, ui.material.materialVersionId)
         assertEquals(listOf("version-a-analysis"), ui.analysis.candidates.map { it.candidateId })
-        assertEquals("version-a-analysis", ui.analysis.selectedCandidateId)
+        assertEquals("version-a-analysis", ui.analysis.confirmedHeadCandidateId)
+        assertNull(ui.analysis.pendingSelectionCandidateId)
 
         repository.refresh(noteId, selectedTaskId = taskB.taskId)
         assertEquals(materialA, repository.state.value.materialVersionId)
@@ -465,6 +535,7 @@ class NoteArtifactRepositoryTest {
         val manualRevisionHeads = mutableListOf<String>()
         val manualRevisionHeadVersions = mutableListOf<String?>()
         val selectHeads = mutableListOf<String>()
+        var selectError: Throwable? = null
         val starts = mutableListOf<NoteArtifactTaskRecord>()
         val detailCalls = mutableListOf<String>()
         val details = mutableMapOf<String, NoteArtifactTaskDetail>()
@@ -545,6 +616,7 @@ class NoteArtifactRepositoryTest {
             versionId: String,
         ): String {
             selectHeads += expectedHeadRevision
+            selectError?.let { throw it }
             return versionId
         }
     }

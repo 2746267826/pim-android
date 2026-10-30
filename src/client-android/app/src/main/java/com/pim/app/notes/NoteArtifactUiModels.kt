@@ -130,7 +130,12 @@ data class NoteArtifactEditorUiState(
     val kind: NoteArtifactKind,
     val draft: NoteArtifactDraft? = null,
     val candidates: List<NoteArtifactCandidateUi> = emptyList(),
+    @Deprecated("Use confirmedHeadCandidateId only after a server head receipt")
     val selectedCandidateId: String? = null,
+    /** Candidate confirmed by the server as the artifact head, never a local guess. */
+    val confirmedHeadCandidateId: String? = null,
+    /** Candidate with an explicit select request currently awaiting a server receipt. */
+    val pendingSelectionCandidateId: String? = null,
     val viewedCandidateId: String? = null,
     val contentView: NoteArtifactContentView = NoteArtifactContentView.LocalDraft,
     val workPhase: NoteArtifactWorkPhase = NoteArtifactWorkPhase.Idle,
@@ -142,9 +147,11 @@ data class NoteArtifactEditorUiState(
     val canRegenerate: Boolean get() = workPhase != NoteArtifactWorkPhase.Running
     val canRecover: Boolean get() =
         workPhase == NoteArtifactWorkPhase.Failed || workPhase == NoteArtifactWorkPhase.Unknown
+    val canSaveManualRevision: Boolean
+        get() = draft != null && draft.dirty.not() && confirmedHeadCandidate != null
 
-    val selectedCandidate: NoteArtifactCandidateUi?
-        get() = candidates.firstOrNull { it.candidateId == selectedCandidateId }
+    val confirmedHeadCandidate: NoteArtifactCandidateUi?
+        get() = candidates.firstOrNull { it.candidateId == confirmedHeadCandidateId }
 
     val viewedCandidate: NoteArtifactCandidateUi?
         get() = candidates.firstOrNull { it.candidateId == viewedCandidateId }
@@ -153,10 +160,25 @@ data class NoteArtifactEditorUiState(
         get() = draft?.baseServerArtifactVersionId?.takeIf(String::isNotBlank)
             ?: "尚无服务端基线"
 
+    fun canSelectCandidate(candidateId: String): Boolean =
+        pendingSelectionCandidateId == null &&
+            candidateId != confirmedHeadCandidateId &&
+            candidates.any { it.candidateId == candidateId }
+
+    fun isSelectingCandidate(candidateId: String): Boolean =
+        pendingSelectionCandidateId == candidateId
+
     /**
-     * Selecting a server version changes the current artifact choice only.
-     * It never rewrites [draft], including a dirty working copy.
+     * An in-flight explicit selection is not a confirmed server choice and must
+     * never rewrite the local draft or its base.
      */
+    fun withPendingSelection(candidateId: String): NoteArtifactEditorUiState =
+        copy(pendingSelectionCandidateId = candidateId)
+
+    fun withSelectionSettled(): NoteArtifactEditorUiState =
+        copy(pendingSelectionCandidateId = null)
+
+    @Deprecated("Local selection is not a server-confirmed head; refresh metadata after select")
     fun withSelectedCandidate(candidateId: String): NoteArtifactEditorUiState =
         copy(selectedCandidateId = candidateId)
 
@@ -176,14 +198,16 @@ data class NoteArtifactEditorUiState(
      */
     fun withRefreshedCandidates(
         updatedCandidates: List<NoteArtifactCandidateUi>,
-        updatedSelectedCandidateId: String? = selectedCandidateId,
+        updatedConfirmedHeadCandidateId: String? = confirmedHeadCandidateId,
+        updatedPendingSelectionCandidateId: String? = pendingSelectionCandidateId,
         updatedViewedCandidateId: String? = viewedCandidateId,
         updatedWorkPhase: NoteArtifactWorkPhase = workPhase,
         updatedWorkDetail: String? = workDetail,
         updatedProblem: String? = problem,
     ): NoteArtifactEditorUiState = copy(
         candidates = updatedCandidates,
-        selectedCandidateId = updatedSelectedCandidateId,
+        confirmedHeadCandidateId = updatedConfirmedHeadCandidateId,
+        pendingSelectionCandidateId = updatedPendingSelectionCandidateId,
         viewedCandidateId = updatedViewedCandidateId,
         workPhase = updatedWorkPhase,
         workDetail = updatedWorkDetail,

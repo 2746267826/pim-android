@@ -109,6 +109,7 @@ class NativeNoteDerivedE2ETest {
     private lateinit var base: String
     private var editor: NativeNotesActivity? = null
     private var activeFixture: Fixture? = null
+    private var humanSaveProbe: Map<String, String>? = null
 
     @After
     fun closeOwnedSurfaces() {
@@ -700,17 +701,20 @@ class NativeNoteDerivedE2ETest {
         assertEquals(fixture.imageBytes.size, imageRows.size)
         assertTrue(imageRows.all { it["stored"]?.jsonPrimitive?.content?.toBoolean() == true })
         val imageHashes = imageRows.map { it.getValue("sha256").jsonPrimitive.content }.toSet()
-        assertEquals(fixture.imageBytes.keys, imageHashes)
+        val imageBytesByHash = fixture.imageBytes.entries.associate { (_, bytes) ->
+            sha256Hex(bytes) to bytes
+        }
+        assertEquals(imageBytesByHash.keys, imageHashes)
         imageRows.forEach { image ->
             val sha256 = image.getValue("sha256").jsonPrimitive.content
             assertEquals(
-                fixture.imageBytes.getValue(sha256).size,
+                imageBytesByHash.getValue(sha256).size,
                 image.getValue("sizeBytes").jsonPrimitive.int,
             )
         }
         val provider = providerSummary()
-        assertEquals(fixture.imageBytes.keys, provider.receivedImages.map { it.sha256 }.toSet())
-        fixture.imageBytes.forEach { (sha256, bytes) ->
+        assertEquals(imageBytesByHash.keys, provider.receivedImages.map { it.sha256 }.toSet())
+        imageBytesByHash.forEach { (sha256, bytes) ->
             assertTrue(
                 "Provider did not receive $sha256 with the expected byte count",
                 provider.receivedImages.any { it.sha256 == sha256 && it.bytes == bytes.size },
@@ -738,18 +742,117 @@ class NativeNoteDerivedE2ETest {
         compose.onNodeWithTag("note-artifact-kind-${kind.name}").performClick()
         enterDraftText(kind, text)
         saveLocalDraftThroughUi(kind)
+        compose.waitUntil(15_000) {
+            val state = editor?.model?.artifacts?.state?.value
+            state?.drafts?.any { it.kind == kind && !it.dirty } == true &&
+                state.artifactRefs[kind]?.revision != null
+        }
+        compose.onNodeWithTag("note-artifact-save-server-${kind.name}")
+            .performScrollTo()
+            .assertIsDisplayed()
+            .assertIsEnabled()
+        val before = humanSaveState(kind)
         compose.onNodeWithTag("note-artifact-save-server-${kind.name}")
             .performScrollTo()
             .assertIsEnabled()
             .performClick()
         val noteId = latestLocalNoteId()
-        val version = waitForVersion(noteId, kind) {
-            it.author == NoteDerivedVersionAuthor.USER && it.isHead && it.contentMarkdown == text
+        humanSaveProbe = probeHumanSaveAfterClick(noteId, kind, text, before)
+        try {
+            val version = waitForVersion(noteId, kind) {
+                it.author == NoteDerivedVersionAuthor.USER && it.isHead && it.contentMarkdown == text
+            }
+            assertFalse(version.hasConflict)
+            assertEquals(kind.toWire(), version.kind)
+            shot("human-saved-${kind.name}")
+            return version
+        } catch (error: AssertionError) {
+            humanSaveProbe = humanSaveProbe.orEmpty() + mapOf(
+                "finalOutcome" to "FAIL",
+                "finalError" to "${error::class.qualifiedName}: ${error.message}",
+            )
+            throw error
         }
-        assertFalse(version.hasConflict)
-        assertEquals(kind.toWire(), version.kind)
-        shot("human-saved-${kind.name}")
-        return version
+    }
+
+    private fun humanSaveState(kind: NoteArtifactKind): Map<String, String> {
+        val model = checkNotNull(editor?.model) { "Missing owned editor" }
+        val state = model.artifacts.state.value
+        val draft = state.drafts
+            .filter { it.kind == kind && it.noteId == model.selectedId.value }
+            .maxByOrNull { it.updatedAtMillis }
+        val artifact = state.artifactRefs[kind]
+        return linkedMapOf(
+            "vmMessage" to model.message.value.toString(),
+            "repositoryMessage" to state.message.toString(),
+            "draftPresent" to (draft != null).toString(),
+            "draftDirty" to draft?.dirty.toString(),
+            "draftLocalRevision" to draft?.localRevision.toString(),
+            "draftBaseVersion" to draft?.baseServerArtifactVersionId.toString(),
+            "artifactRevision" to artifact?.revision.toString(),
+            "artifactHeadVersion" to artifact?.headVersionId.toString(),
+        )
+    }
+
+    private fun probeHumanSaveAfterClick(
+        noteId: String,
+        kind: NoteArtifactKind,
+        text: String,
+        before: Map<String, String>,
+    ): Map<String, String> {
+        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(10)
+        var after = humanSaveState(kind)
+        var userVersions = emptyList<String>()
+        var apiReadError: String? = null
+        while (System.nanoTime() < deadline) {
+            after = humanSaveState(kind)
+            val read = runCatching { userVersions(noteId, kind, text) }
+            userVersions = read.getOrDefault(emptyList())
+            apiReadError = read.exceptionOrNull()?.let { "${it::class.qualifiedName}: ${it.message}" }
+            val changedMessage = after["vmMessage"] != before["vmMessage"] ||
+                after["repositoryMessage"] != before["repositoryMessage"]
+            if (userVersions.isNotEmpty() || changedMessage) break
+            Thread.sleep(250)
+        }
+        val classification = when {
+            userVersions.isNotEmpty() -> "USER_version_visible"
+            after["repositoryMessage"] != before["repositoryMessage"] ->
+                "repository_message_after_click"
+            after["vmMessage"] != before["vmMessage"] ->
+                "vm_message_after_click"
+            else -> "no_observable_callback_state"
+        }
+        return linkedMapOf(
+            "clickCount" to "1",
+            "buttonState" to "visible_enabled_clicked",
+            "before.vmMessage" to before.getValue("vmMessage"),
+            "before.repositoryMessage" to before.getValue("repositoryMessage"),
+            "before.draftDirty" to before.getValue("draftDirty"),
+            "before.draftLocalRevision" to before.getValue("draftLocalRevision"),
+            "before.artifactRevision" to before.getValue("artifactRevision"),
+            "after.vmMessage" to after.getValue("vmMessage"),
+            "after.repositoryMessage" to after.getValue("repositoryMessage"),
+            "after.draftDirty" to after.getValue("draftDirty"),
+            "after.draftLocalRevision" to after.getValue("draftLocalRevision"),
+            "after.draftBaseVersion" to after.getValue("draftBaseVersion"),
+            "after.userVersionIds" to userVersions.joinToString(","),
+            "after.apiReadError" to apiReadError.toString(),
+            "classification" to classification,
+            "finalOutcome" to "PENDING",
+        )
+    }
+
+    private fun userVersions(
+        noteId: String,
+        kind: NoteArtifactKind,
+        text: String,
+    ): List<String> {
+        val artifact = mustArtifact(noteId, kind)
+        return artifact.versions.mapNotNull { summary ->
+            runCatching { getVersion(artifact.artifactId, summary.versionId) }.getOrNull()
+        }.filter {
+            it.author == NoteDerivedVersionAuthor.USER && it.contentMarkdown == text
+        }.map { it.versionId }
     }
 
     private fun enterDraftText(kind: NoteArtifactKind, text: String) {
@@ -1150,6 +1253,7 @@ class NativeNoteDerivedE2ETest {
     }
 
     private fun captureCaseEvidence(caseName: String, body: () -> Unit) {
+        humanSaveProbe = null
         var failure: Throwable? = null
         try {
             body()
@@ -1220,6 +1324,12 @@ class NativeNoteDerivedE2ETest {
             runCatching {
                 File(dir, "provider-summary.json").writeText(qa("provider/summary"))
             }.onFailure { notes += "provider summary failed: ${it.message}" }
+
+            runCatching {
+                humanSaveProbe?.let { probe ->
+                    File(dir, "human-save-probe.json").writeText(Json.encodeToString(probe))
+                }
+            }.onFailure { notes += "human save probe failed: ${it.message}" }
 
             runCatching {
                 val tasks = NoteArtifactTaskStore.at(context.noBackupFilesDir).tasks()

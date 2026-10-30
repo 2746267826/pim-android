@@ -244,7 +244,8 @@ class NotesViewModel @Inject constructor(
     }
 
     fun regenerateArtifact(kind: NoteArtifactKind) {
-        viewModelScope.launch { artifacts.regenerate(kind) }
+        val entry = mutableArtifactEntry.value ?: return
+        viewModelScope.launch { artifacts.regenerate(kind, entry.materialVersionId) }
     }
 
     fun stopArtifact(kind: NoteArtifactKind) {

@@ -61,7 +61,8 @@ data class NoteArtifactRemoteTaskView(
  * or Authorization header. One record covers one fixed material version, the
  * kinds requested by one confirmation, and one exact owner/server binding.
  * [kind] remains the primary/legacy kind for old task files; consumers must use
- * [supports] when matching a UI kind.
+ * [supports] when matching a UI kind. Missing [kinds] means a pre-field task
+ * whose server operation already produced both artifacts.
  */
 @Serializable
 data class NoteArtifactTaskRecord(
@@ -72,7 +73,7 @@ data class NoteArtifactTaskRecord(
     val materialCreatedAtMillis: Long? = null,
     val asrTaskId: String? = null,
     val kind: NoteArtifactKind,
-    val kinds: Set<NoteArtifactKind> = setOf(kind),
+    val kinds: Set<NoteArtifactKind> = NoteArtifactKind.entries.toSet(),
     val inputSha256: String,
     val manifestSha256: String,
     val serverIdentity: String,

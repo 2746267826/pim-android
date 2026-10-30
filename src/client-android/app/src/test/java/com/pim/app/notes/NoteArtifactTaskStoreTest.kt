@@ -3,6 +3,7 @@ package com.pim.app.notes
 import com.pim.app.TestPimApp
 import com.pim.core.network.BoundUploadSession
 import java.io.File
+import kotlinx.serialization.json.jsonObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotEquals
@@ -97,6 +98,28 @@ class NoteArtifactTaskStoreTest {
         assertEquals(kinds, repeated.kinds)
         assertTrue(repeated.supports(NoteArtifactKind.FullRecord))
         assertTrue(repeated.supports(NoteArtifactKind.Analysis))
+        assertEquals(1, store().tasks().size)
+    }
+
+    @Test fun oldPendingJsonWithoutKindsRecoversBothEntrypointsWithTheSameTaskId() {
+        val kinds = setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis)
+        val record = intent(kinds)
+        store().update(record.taskId, nowMillis = 2_000) {
+            it.copy(
+                localPhase = NoteArtifactIntentPhase.VerificationPending,
+                lastProblem = "unknown receipt",
+            )
+        }
+        val file = File(temp.root, "note-artifact-tasks/${record.taskId}.json")
+        val source = NoteJson.parseToJsonElement(file.readText()).jsonObject
+        file.writeText(kotlinx.serialization.json.JsonObject(source - "kinds").toString())
+
+        val decoded = store().read(record.taskId)
+
+        assertEquals(kinds, decoded.kinds)
+        assertTrue(decoded.supports(NoteArtifactKind.FullRecord))
+        assertTrue(decoded.supports(NoteArtifactKind.Analysis))
+        assertEquals(record.taskId, intent(kinds).taskId)
         assertEquals(1, store().tasks().size)
     }
 

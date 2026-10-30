@@ -26,6 +26,8 @@ data class NoteArtifactRepositoryState(
     val loaded: Boolean = false,
     val syncing: Boolean = false,
     val noteId: String? = null,
+    val materialVersionId: String? = null,
+    val taskBinding: BoundUploadSession? = null,
     val tasks: List<NoteArtifactTaskRecord> = emptyList(),
     val drafts: List<NoteArtifactDraft> = emptyList(),
     val destinations: List<NoteArtifactDestination> = emptyList(),
@@ -75,6 +77,7 @@ class NoteArtifactRepository(
     ) = withContext(Dispatchers.IO) {
         initialize()
         sync.withLock {
+            val previousState = state.value
             val target = targetProvider()
             if (target == null) {
                 mutableState.update {
@@ -82,6 +85,8 @@ class NoteArtifactRepository(
                         loaded = true,
                         syncing = false,
                         noteId = noteId,
+                        materialVersionId = null,
+                        taskBinding = null,
                         tasks = emptyList(),
                         drafts = emptyList(),
                         destinations = emptyList(),
@@ -90,6 +95,7 @@ class NoteArtifactRepository(
                         artifactBinding = null,
                         artifactRefs = emptyMap(),
                         versions = emptyMap(),
+                        selectedTaskId = null,
                         detail = null,
                         message = "请先登录后核对固定材料与派生目标。",
                     )
@@ -109,17 +115,28 @@ class NoteArtifactRepository(
             }
             val taskState = runCatching { tasks.load() }
                 .getOrElse { NoteArtifactTasksState(loaded = true, loadFailed = true) }
-            val currentTasks = taskState.tasks
+            val inheritedVersionId = materialVersionId ?: previousState.materialVersionId
+                ?.takeIf {
+                    previousState.noteId == noteId && previousState.taskBinding == target.binding
+                }
+            val tasksForNote = taskState.tasks
                 .filter { it.binding == target.binding && it.noteId == noteId }
                 .sortedByDescending { it.updatedAtMillis }
+            val currentTasks = if (inheritedVersionId == null) {
+                tasksForNote
+            } else {
+                tasksForNote.filter { it.materialVersionId == inheritedVersionId }
+            }
             val chosenTaskId = selectedTaskId?.takeIf { id -> currentTasks.any { it.taskId == id } }
                 ?: currentTasks.firstOrNull()?.taskId
             val chosen = currentTasks.firstOrNull { it.taskId == chosenTaskId }
-            val fixedVersionId = chosen?.materialVersionId ?: materialVersionId
+            val fixedVersionId = inheritedVersionId ?: chosen?.materialVersionId
 
-            val canReuseMetadata = state.value.artifactBinding == target.binding &&
-                state.value.noteId == noteId &&
-                state.value.artifactRefs.values.all { !it.revision.isNullOrBlank() }
+            val canReuseMetadata = previousState.artifactBinding == target.binding &&
+                previousState.noteId == noteId &&
+                previousState.taskBinding == target.binding &&
+                previousState.materialVersionId == fixedVersionId &&
+                previousState.artifactRefs.values.all { !it.revision.isNullOrBlank() }
             var refs = if (canReuseMetadata) state.value.artifactRefs else emptyMap()
             var versions = if (canReuseMetadata) state.value.versions else emptyMap()
             var artifactProblem: String? = null
@@ -180,7 +197,11 @@ class NoteArtifactRepository(
                 runCatching { ensureDrafts(target.binding, noteId, fixedVersionId, refs, versions) }
                     .getOrElse {
                         artifactProblem = it.message ?: "本机派生稿无法准备"
-                        runCatching { drafts.drafts(target.binding).filter { draft -> draft.noteId == noteId } }
+                        runCatching {
+                            drafts.drafts(target.binding).filter { draft ->
+                                draft.noteId == noteId && draft.materialVersionId == fixedVersionId
+                            }
+                        }
                             .getOrDefault(emptyList())
                     }
             } else {
@@ -192,6 +213,8 @@ class NoteArtifactRepository(
                     loaded = true,
                     syncing = false,
                     noteId = noteId,
+                    materialVersionId = fixedVersionId,
+                    taskBinding = target.binding,
                     tasks = currentTasks,
                     drafts = loadedDrafts,
                     destinations = destinations,
@@ -258,6 +281,14 @@ class NoteArtifactRepository(
                 destinationBackgroundAvailable = destination.backgroundProcessingAvailable,
                 ownerName = target.ownerName,
             )
+            mutableState.update {
+                it.copy(
+                    noteId = noteId,
+                    materialVersionId = materialVersionId,
+                    taskBinding = target.binding,
+                    selectedTaskId = created.taskId,
+                )
+            }
             try {
                 controller.start(created.taskId, freshlyConfirmed = true)
                 publish("任务已保存；固定材料、完整记录与独立分析来源不会随新稿变化。")
@@ -338,12 +369,25 @@ class NoteArtifactRepository(
      * Regeneration always creates a new TaskId and only appends a model
      * candidate. It never rewrites the manual draft or the current head.
      */
-    suspend fun regenerate(kind: NoteArtifactKind) = withContext(Dispatchers.IO) {
+    suspend fun regenerate(
+        kind: NoteArtifactKind,
+        materialVersionId: String? = null,
+    ) = withContext(Dispatchers.IO) {
         initialize()
         val noteId = state.value.noteId ?: return@withContext
-        val latest = state.value.tasks.filter { it.supports(kind) }.maxByOrNull { it.updatedAtMillis }
+        val target = targetProvider() ?: run {
+            publish("请先登录后再重新生成。")
+            return@withContext
+        }
+        val pinnedVersionId = materialVersionId ?: state.value.materialVersionId?.takeIf {
+            state.value.noteId == noteId && state.value.taskBinding == target.binding
+        }
+        val latest = state.value.tasks.filter {
+            it.binding == target.binding && it.noteId == noteId && it.supports(kind) &&
+                (pinnedVersionId == null || it.materialVersionId == pinnedVersionId)
+        }.maxByOrNull { it.updatedAtMillis }
         if (latest == null) {
-            publish("尚未创建该结果的派生任务，请先明确选择目标并开始生成。")
+            publish("当前固定材料尚未创建该结果的派生任务，请先明确选择目标并开始生成。")
             return@withContext
         }
         if (latest.localPhase in setOf(
@@ -513,20 +557,23 @@ class NoteArtifactRepository(
         NoteArtifactKind.entries.forEach { kind ->
             val artifact = refs[kind]
             val history = versions[kind].orEmpty()
+                .filter { it.sourceVersionId == materialVersionId }
             val head = history.firstOrNull { it.isHead } ?: artifact?.headVersionId?.let { id ->
                 history.firstOrNull { it.versionId == id }
-            }
+            } ?: history.firstOrNull()
             drafts.getOrCreate(
                 binding = binding,
                 noteId = noteId,
                 materialVersionId = materialVersionId,
                 kind = kind,
                 initialText = head?.contentMarkdown.orEmpty(),
-                baseServerArtifactVersionId = head?.versionId ?: artifact?.headVersionId,
+                baseServerArtifactVersionId = head?.versionId,
                 expectedServerRevision = artifact?.revision,
             )
         }
-        return drafts.drafts(binding).filter { it.noteId == noteId }
+        return drafts.drafts(binding).filter {
+            it.noteId == noteId && it.materialVersionId == materialVersionId
+        }
     }
 
     private fun controllerFor(id: String): NoteArtifactController {
@@ -543,10 +590,20 @@ class NoteArtifactRepository(
         val target = targetProvider()
         val taskState = runCatching { tasks.load() }
             .getOrElse { NoteArtifactTasksState(loaded = true, loadFailed = true) }
+        val current = state.value
+        val scopedVersionId = current.materialVersionId?.takeIf {
+            target != null && current.taskBinding == target.binding
+        }
         val visibleTasks = if (target == null) emptyList() else taskState.tasks
-            .filter { it.binding == target.binding && it.noteId == state.value.noteId }
+            .filter {
+                it.binding == target.binding && it.noteId == current.noteId &&
+                    (scopedVersionId == null || it.materialVersionId == scopedVersionId)
+            }
         val visibleDrafts = if (target == null) emptyList() else runCatching {
-            drafts.drafts(target.binding).filter { it.noteId == state.value.noteId }
+            drafts.drafts(target.binding).filter {
+                it.noteId == current.noteId &&
+                    (scopedVersionId == null || it.materialVersionId == scopedVersionId)
+            }
         }.getOrDefault(emptyList())
         mutableState.update {
             it.copy(

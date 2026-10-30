@@ -19,7 +19,10 @@ fun NoteArtifactRepositoryState.toUiState(
     viewedCandidateIds: Map<NoteArtifactKind, String?> = emptyMap(),
     contentViews: Map<NoteArtifactKind, NoteArtifactContentView> = emptyMap(),
 ): NoteArtifactUiState {
-    val newestTask = tasks.maxByOrNull { it.updatedAtMillis }
+    val scopedTasks = tasks.filter {
+        materialVersionId == null || it.materialVersionId == materialVersionId
+    }
+    val newestTask = scopedTasks.maxByOrNull { it.updatedAtMillis }
     val material = NoteArtifactMaterialUi(
         title = newestTask?.sourceTitle?.takeIf(String::isNotBlank)
             ?: entry.title.ifBlank { "未命名固定材料" },
@@ -31,7 +34,7 @@ fun NoteArtifactRepositoryState.toUiState(
             ?: newestTask?.ownerId?.take(8)
             ?: "当前账号",
         noteId = newestTask?.noteId ?: entry.noteId,
-        materialVersionId = newestTask?.materialVersionId ?: entry.materialVersionId,
+        materialVersionId = materialVersionId ?: newestTask?.materialVersionId ?: entry.materialVersionId,
         fixedAtLabel = when {
             newestTask?.materialCreatedAtMillis != null ->
                 formatArtifactMillis(newestTask.materialCreatedAtMillis)
@@ -68,10 +71,16 @@ private fun NoteArtifactRepositoryState.editor(
     viewedCandidateIds: Map<NoteArtifactKind, String?>,
     contentViews: Map<NoteArtifactKind, NoteArtifactContentView>,
 ): NoteArtifactEditorUiState {
-    val task = tasks.filter { it.supports(kind) }.maxByOrNull { it.updatedAtMillis }
+    val task = tasks.filter {
+        it.supports(kind) && (materialVersionId == null || it.materialVersionId == materialVersionId)
+    }.maxByOrNull { it.updatedAtMillis }
     val artifact = artifactRefs[kind]
-    val history = versions[kind].orEmpty()
-    val draft = drafts.filter { it.kind == kind }.maxByOrNull { it.updatedAtMillis }
+    val history = versions[kind].orEmpty().filter {
+        materialVersionId == null || it.sourceVersionId == materialVersionId
+    }
+    val draft = drafts.filter {
+        it.kind == kind && (materialVersionId == null || it.materialVersionId == materialVersionId)
+    }.maxByOrNull { it.updatedAtMillis }
     val candidates = history.map { version ->
         NoteArtifactCandidateUi(
             candidateId = version.versionId,
@@ -89,10 +98,12 @@ private fun NoteArtifactRepositoryState.editor(
             hasConflict = version.hasConflict,
         )
     }
-    val selected = selectedCandidateIds[kind]
-        ?: artifact?.headVersionId
+    val selected = selectedCandidateIds[kind]?.takeIf { id -> candidates.any { it.candidateId == id } }
+        ?: (if (materialVersionId == null) artifact?.headVersionId else null)
         ?: candidates.firstOrNull { it.isServerHead }?.candidateId
-    val viewed = viewedCandidateIds[kind] ?: selected
+        ?: candidates.firstOrNull()?.candidateId
+    val viewed = viewedCandidateIds[kind]?.takeIf { id -> candidates.any { it.candidateId == id } }
+        ?: selected
     val taskDetail = detail?.takeIf { selectedTaskId == task?.taskId }
     return NoteArtifactEditorUiState(
         kind = kind,

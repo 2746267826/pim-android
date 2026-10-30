@@ -24,6 +24,7 @@ data class DiagnosticSyncHistoryRow(
 )
 
 data class DiagnosticLocationRow(
+    val id: Long,
     val latitude: Double,
     val longitude: Double,
     val altitudeMeters: Double?,
@@ -41,6 +42,7 @@ data class DiagnosticLocationRow(
 
 /** 丢弃原因明细的导出行（REQ-9 / AC-9.1）：时刻 / 原因 / 准确度 / provider / 策略档。 */
 data class DiagnosticDroppedDetailRow(
+    val id: Long,
     val recordedAtUtc: Long,
     val reason: String,
     val accuracyMeters: Float?,

@@ -34,7 +34,9 @@ import java.io.BufferedOutputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.FileNotFoundException
+import java.io.IOException
 import java.io.InputStream
+import java.io.OutputStream
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -104,6 +106,13 @@ private data class LogExportSummary(
     )
 }
 
+private data class SpooledCoreEntry(
+    val entryName: String,
+    val file: File,
+    val rowCount: Int,
+    val bytes: Long
+)
+
 private data class LogExportLimits(
     val maxLineBytes: Int,
     val maxFileBytes: Long,
@@ -149,6 +158,9 @@ class DiagnosticExportRepository internal constructor(
     private val maxLogLineBytes: Int = DEFAULT_MAX_LOG_LINE_BYTES,
     private val maxLogFileBytes: Long = DEFAULT_MAX_LOG_FILE_BYTES,
     private val maxLogTotalBytes: Long = DEFAULT_MAX_LOG_TOTAL_BYTES,
+    private val corePageSize: Int = DEFAULT_CORE_PAGE_SIZE,
+    private val onCorePageSpooled: (entryName: String, pageRows: Int, totalRows: Int) -> Unit =
+        { _, _, _ -> },
     private val availableBytes: () -> Long = {
         File(context.filesDir, "diagnostics/exports").mkdirs()
         StatFs(File(context.filesDir, "diagnostics/exports").path).availableBytes
@@ -163,6 +175,8 @@ class DiagnosticExportRepository internal constructor(
         }
     },
     private val deleteExportFile: (File) -> Boolean = { it.delete() },
+    private val deleteSpoolDirectory: (File) -> Boolean = { it.deleteRecursively() },
+    private val openCoreSpoolOutput: (File) -> OutputStream = File::outputStream,
     private val mutex: Mutex = Mutex(),
     private val scheduleSnapshot: () -> ScheduleCacheSnapshot = {
         ScheduleCacheSnapshot(
@@ -210,6 +224,10 @@ class DiagnosticExportRepository internal constructor(
         policyTransitionWriteFailure = { policyTransitionWriteFailureSource.state.value }
     )
 
+    init {
+        require(corePageSize > 0) { "corePageSize must be positive" }
+    }
+
     override suspend fun export(includeRecentLocations: Boolean): DiagnosticExportResult = withContext(dispatcher) {
         mutex.withLock {
             val dao = db.mobileDataDao()
@@ -218,49 +236,58 @@ class DiagnosticExportRepository internal constructor(
             exportDir.mkdirs()
             val tmpFile = File(exportDir, "pim-diagnostics-$exportNow.zip.tmp")
             val finalFile = File(exportDir, "pim-diagnostics-$exportNow.zip")
+            val spoolDir = File(exportDir, "${tmpFile.name}.spool")
 
             try {
-                val coreEntries = linkedMapOf<String, String>()
-                coreEntries["status.json"] = buildStatus(exportNow, dao).toString()
-                coreEntries["settings.json"] = buildSettings().toString()
-                coreEntries["database-counts.json"] = buildDatabaseCounts(dao).toString()
-                coreEntries["sync-history.json"] = buildSyncHistory(dao).toString()
-                coreEntries["dropped-locations.jsonl"] = buildDroppedLocationDetails()
-                coreEntries["forensics.jsonl"] = buildForensicEvents(exportNow)
-
-                var coordinateCount = 0
-                if (includeRecentLocations) {
-                    val locations = dao.diagnosticLocations(
-                        exportNow - 24L * 3600_000L,
-                        exportNow
-                    )
-                    coordinateCount = locations.size
-                    coreEntries["locations.jsonl"] = locations.joinToString("\n") { loc ->
-                        locationToJson(loc).toString()
-                    }
-                }
+                val fixedCoreEntries = linkedMapOf<String, String>()
+                fixedCoreEntries["status.json"] = buildStatus(exportNow, dao).toString()
+                fixedCoreEntries["settings.json"] = buildSettings().toString()
+                fixedCoreEntries["database-counts.json"] = buildDatabaseCounts(dao).toString()
+                fixedCoreEntries["sync-history.json"] = buildSyncHistory(dao).toString()
 
                 val logRefs = structuredLogRepository.snapshotFileRefs()
                 val selectedLogBytes = selectedLogInputBytes(logRefs)
-                val coreBytes = coreEntries.entries.sumOf { (name, content) ->
+                val fixedCoreBytes = fixedCoreEntries.entries.sumOf { (name, content) ->
                     name.toByteArray(Charsets.UTF_8).size.toLong() +
                         content.toByteArray(Charsets.UTF_8).size.toLong()
                 }
-                if (coreBytes + selectedLogBytes + 1_048_576L > availableBytes()) {
-                    throw DiagnosticExportException(
-                        "INSUFFICIENT_STORAGE",
-                        "Not enough storage space for export"
-                    )
-                }
+                ensureStorage(requiredBytes = fixedCoreBytes + selectedLogBytes)
+
+                val spooledCoreEntries = spoolCoreEntries(
+                    dao = dao,
+                    exportNow = exportNow,
+                    includeRecentLocations = includeRecentLocations,
+                    spoolDir = spoolDir
+                )
+                val coreSpoolBytes = spooledCoreEntries.sumOf { it.bytes }
+                ensureStorage(
+                    requiredBytes = fixedCoreBytes + coreSpoolBytes + selectedLogBytes
+                )
 
                 val logSummary = LogExportSummary()
                 val writtenNames = linkedSetOf<String>()
+                var coordinateCount = 0
                 BufferedOutputStream(tmpFile.outputStream()).use { bos ->
                     ZipOutputStream(bos).use { zos ->
-                        for ((name, content) in coreEntries) {
+                        for ((name, content) in fixedCoreEntries) {
                             writeRedactedEntry(zos, name, content)
                             writtenNames.add(name)
                         }
+
+                        for (entry in spooledCoreEntries) {
+                            currentCoroutineContext().ensureActive()
+                            writeSpooledEntry(zos, entry)
+                            writtenNames.add(entry.entryName)
+                            when (entry.entryName) {
+                                "locations.jsonl" -> coordinateCount = entry.rowCount
+                            }
+                        }
+                        val droppedLocationCount = spooledCoreEntries
+                            .first { it.entryName == "dropped-locations.jsonl" }
+                            .rowCount
+                        val forensicEventCount = spooledCoreEntries
+                            .first { it.entryName == "forensics.jsonl" }
+                            .rowCount
 
                         var totalReadBytes = 0L
                         for (ref in logRefs) {
@@ -313,6 +340,8 @@ class DiagnosticExportRepository internal constructor(
                             includeRecentLocations = includeRecentLocations,
                             exportNow = exportNow,
                             coordinateCount = coordinateCount,
+                            droppedLocationCount = droppedLocationCount,
+                            forensicEventCount = forensicEventCount,
                             entries = writtenNames + "manifest.json",
                             logExport = summary
                         ).toString()
@@ -336,6 +365,12 @@ class DiagnosticExportRepository internal constructor(
                 }
 
                 currentCoroutineContext().ensureActive()
+                if (spoolDir.exists() && !spoolDir.deleteRecursively()) {
+                    throw DiagnosticExportException(
+                        "EXPORT_FAILED",
+                        "Failed to remove diagnostic core spool"
+                    )
+                }
                 publish(tmpFile, finalFile)
                 val summary = logSummary.toSummary(
                     maxLineBytes = maxLogLineBytes,
@@ -354,6 +389,20 @@ class DiagnosticExportRepository internal constructor(
             } catch (e: DiagnosticExportException) {
                 tmpFile.delete()
                 throw e
+            } catch (e: IOException) {
+                tmpFile.delete()
+                if (isStorageFailure(e)) {
+                    throw DiagnosticExportException(
+                        "INSUFFICIENT_STORAGE",
+                        "Not enough storage space for export",
+                        e
+                    )
+                }
+                throw DiagnosticExportException(
+                    "EXPORT_FAILED",
+                    "Diagnostic export failed",
+                    e
+                )
             } catch (e: Exception) {
                 tmpFile.delete()
                 throw DiagnosticExportException(
@@ -361,6 +410,10 @@ class DiagnosticExportRepository internal constructor(
                     "Diagnostic export failed",
                     e
                 )
+            } finally {
+                if (spoolDir.exists()) {
+                    spoolDir.deleteRecursively()
+                }
             }
         }
     }
@@ -407,6 +460,16 @@ class DiagnosticExportRepository internal constructor(
                     if (file.isFile && EXPORT_FILE_PATTERN.matches(file.name)) {
                         try {
                             if (!deleteExportFile(file)) {
+                                anyDeleteFailed = true
+                            }
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            anyDeleteFailed = true
+                        }
+                    } else if (file.isDirectory && CORE_SPOOL_PATTERN.matches(file.name)) {
+                        try {
+                            if (!deleteSpoolDirectory(file)) {
                                 anyDeleteFailed = true
                             }
                         } catch (e: CancellationException) {
@@ -573,6 +636,8 @@ class DiagnosticExportRepository internal constructor(
         includeRecentLocations: Boolean,
         exportNow: Long,
         coordinateCount: Int,
+        droppedLocationCount: Int,
+        forensicEventCount: Int,
         entries: Set<String>,
         logExport: LogExportView
     ): JSONObject {
@@ -597,6 +662,14 @@ class DiagnosticExportRepository internal constructor(
             .put("includeRecentLocations", includeRecentLocations)
             .put("coordinateCount", coordinateCount)
             .put("entries", JSONArray(entries.sorted()))
+            .put(
+                "coreExport",
+                JSONObject()
+                    .put("droppedLocationCount", droppedLocationCount)
+                    .put("forensicEventCount", forensicEventCount)
+                    .put("recentLocationCount", coordinateCount)
+                    .put("pageSize", corePageSize)
+            )
             .put("logExport", logExport.toJson())
 
         if (includeRecentLocations) {
@@ -653,8 +726,13 @@ class DiagnosticExportRepository internal constructor(
         private const val DEFAULT_MAX_LOG_LINE_BYTES = 64 * 1024
         private const val DEFAULT_MAX_LOG_FILE_BYTES = 8L * 1024 * 1024
         private const val DEFAULT_MAX_LOG_TOTAL_BYTES = 24L * 1024 * 1024
+        private const val DEFAULT_CORE_PAGE_SIZE = 128
+        private const val MIN_FREE_BYTES = 1_048_576L
+        private const val SPACE_RECHECK_BYTES = 1_048_576L
         private val LOG_NAME_PATTERN = Regex("""^logs/mobile-\d{4}-\d{2}-\d{2}\.jsonl$""")
         private val EXPORT_FILE_PATTERN = Regex("""^pim-diagnostics-\d+\.zip(?:\.tmp)?$""")
+        private val CORE_SPOOL_PATTERN =
+            Regex("""^pim-diagnostics-\d+\.zip\.tmp\.spool$""")
         private val CORE_ENTRIES = setOf(
             "manifest.json", "status.json", "settings.json",
             "database-counts.json", "sync-history.json",
@@ -760,37 +838,236 @@ class DiagnosticExportRepository internal constructor(
     }
 
     /**
-     * 丢弃原因明细（REQ-9 / AC-9.1）：时刻 / 原因 / 准确度 / provider / 策略档。
-     * 不设条数上限，条数由 30 天时间清理决定（AC-9.3）。
+     * Materializes a stable database snapshot into bounded JSONL spool files.
+     *
+     * Only the three core-table reads and spool writes run in the Room transaction.
+     * ZIP compression, log reads, verification and publication happen after it ends.
      */
-    private suspend fun buildDroppedLocationDetails(): String {
-        val rows = db.mobileDataDao().diagnosticDroppedDetailRows()
-        return rows.joinToString("\n") { row ->
-            JSONObject()
-                .put("recordedAtUtc", row.recordedAtUtc)
-                .put("reason", row.reason)
-                .put("accuracyMeters", row.accuracyMeters?.toDouble() ?: JSONObject.NULL)
-                .put("provider", row.provider ?: JSONObject.NULL)
-                .put("policyMode", row.policyMode)
-                .toString()
+    private suspend fun spoolCoreEntries(
+        dao: com.pim.app.data.MobileDataDao,
+        exportNow: Long,
+        includeRecentLocations: Boolean,
+        spoolDir: File
+    ): List<SpooledCoreEntry> {
+        if (!spoolDir.mkdirs() && !spoolDir.isDirectory) {
+            throw IOException("Failed to create diagnostic core spool directory")
+        }
+        return try {
+            db.withTransaction {
+                val entries = mutableListOf<SpooledCoreEntry>()
+                entries += spoolCoreJsonLines(
+                    file = File(spoolDir, "dropped-locations.jsonl"),
+                    entryName = "dropped-locations.jsonl",
+                    readPage = { afterTimeUtc, afterId, limit ->
+                        dao.diagnosticDroppedDetailPage(afterTimeUtc, afterId, limit)
+                    },
+                    timestampOf = { it.recordedAtUtc },
+                    idOf = { it.id },
+                    toJson = { row ->
+                        JSONObject()
+                            .put("recordedAtUtc", row.recordedAtUtc)
+                            .put("reason", row.reason)
+                            .put(
+                                "accuracyMeters",
+                                row.accuracyMeters?.toDouble() ?: JSONObject.NULL
+                            )
+                            .put("provider", row.provider ?: JSONObject.NULL)
+                            .put("policyMode", row.policyMode)
+                    }
+                )
+
+                val forensicDao = db.forensicEventDao()
+                entries += spoolCoreJsonLines(
+                    file = File(spoolDir, "forensics.jsonl"),
+                    entryName = "forensics.jsonl",
+                    readPage = { afterTimeUtc, afterId, limit ->
+                        forensicDao.eventsInRangePage(
+                            fromUtc = 0L,
+                            toUtc = exportNow,
+                            afterOccurredAtUtc = afterTimeUtc,
+                            afterId = afterId,
+                            pageSize = limit
+                        )
+                    },
+                    timestampOf = { it.occurredAtUtc },
+                    idOf = { it.id },
+                    toJson = { row ->
+                        JSONObject()
+                            .put("eventType", row.eventType)
+                            .put("occurredAtUtc", row.occurredAtUtc)
+                            .put("clientItemKey", row.clientItemKey)
+                            .put("syncStatus", row.syncStatus)
+                            .put("payload", payloadOf(row.payloadJson))
+                    }
+                )
+
+                if (includeRecentLocations) {
+                    entries += spoolCoreJsonLines(
+                        file = File(spoolDir, "locations.jsonl"),
+                        entryName = "locations.jsonl",
+                        readPage = { afterTimeUtc, afterId, limit ->
+                            dao.diagnosticLocationPage(
+                                from = exportNow - 24L * 3600_000L,
+                                to = exportNow,
+                                afterRecordedAtUtc = afterTimeUtc,
+                                afterId = afterId,
+                                pageSize = limit
+                            )
+                        },
+                        timestampOf = { it.recordedAtUtc },
+                        idOf = { it.id },
+                        toJson = ::locationToJson
+                    )
+                }
+                entries
+            }
+        } catch (e: IOException) {
+            if (isStorageFailure(e)) {
+                throw DiagnosticExportException(
+                    "INSUFFICIENT_STORAGE",
+                    "Not enough storage space for diagnostic core spool",
+                    e
+                )
+            }
+            throw e
         }
     }
 
     /**
-     * 进程退出原因台账与存活心跳（REQ-1 ~ REQ-4）。
-     * 负载本身已在写入时脱敏（不含经纬度/令牌/账号），这里原样带出以便核对死因。
+     * Streams one complete row set into an owned spool file. The working set is
+     * one page plus one row and its redacted JSON encoding; no row is truncated.
      */
-    private suspend fun buildForensicEvents(exportNow: Long): String {
-        val rows = db.forensicEventDao().eventsInRange(0L, exportNow)
-        return rows.joinToString("\n") { row ->
-            JSONObject()
-                .put("eventType", row.eventType)
-                .put("occurredAtUtc", row.occurredAtUtc)
-                .put("clientItemKey", row.clientItemKey)
-                .put("syncStatus", row.syncStatus)
-                .put("payload", payloadOf(row.payloadJson))
-                .toString()
+    private suspend fun <T> spoolCoreJsonLines(
+        file: File,
+        entryName: String,
+        readPage: suspend (afterTimeUtc: Long, afterId: Long, limit: Int) -> List<T>,
+        timestampOf: (T) -> Long,
+        idOf: (T) -> Long,
+        toJson: (T) -> JSONObject
+    ): SpooledCoreEntry {
+        var afterTimeUtc = Long.MIN_VALUE
+        var afterId = Long.MIN_VALUE
+        var rowCount = 0
+
+        BufferedOutputStream(openCoreSpoolOutput(file)).use { output ->
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                var freeAtPageStart = ensureStorage(requiredBytes = 0L)
+                var bytesSinceStorageCheck = 0L
+                val page = readPage(afterTimeUtc, afterId, corePageSize)
+                if (page.isEmpty()) break
+
+                for (row in page) {
+                    currentCoroutineContext().ensureActive()
+                    val line = redactedJsonLine(entryName, toJson(row))
+                    val lineBytes = line.toByteArray(Charsets.UTF_8)
+                    val pendingBytes = bytesSinceStorageCheck + lineBytes.size + 1L
+                    val freeForPending = freeAtPageStart - MIN_FREE_BYTES
+                    if (pendingBytes > freeForPending || pendingBytes < bytesSinceStorageCheck) {
+                        throw insufficientStorage()
+                    }
+                    output.write(lineBytes)
+                    output.write('\n'.code)
+                    bytesSinceStorageCheck = pendingBytes
+
+                    if (bytesSinceStorageCheck >= SPACE_RECHECK_BYTES) {
+                        freeAtPageStart = ensureStorage(requiredBytes = 0L)
+                        bytesSinceStorageCheck = 0L
+                    }
+                }
+
+                rowCount += page.size
+                val last = page.last()
+                val nextTimeUtc = timestampOf(last)
+                val nextId = idOf(last)
+                check(
+                    nextTimeUtc > afterTimeUtc ||
+                        (nextTimeUtc == afterTimeUtc && nextId > afterId)
+                ) { "Pagination cursor did not advance for $entryName" }
+                afterTimeUtc = nextTimeUtc
+                afterId = nextId
+                onCorePageSpooled(entryName, page.size, rowCount)
+            }
         }
+
+        return SpooledCoreEntry(
+            entryName = entryName,
+            file = file,
+            rowCount = rowCount,
+            bytes = file.length()
+        )
+    }
+
+    private suspend fun writeSpooledEntry(
+        zos: ZipOutputStream,
+        entry: SpooledCoreEntry
+    ) {
+        zos.putNextEntry(ZipEntry(entry.entryName))
+        var copied = 0L
+        try {
+            entry.file.inputStream().use { input ->
+                val buffer = ByteArray(64 * 1024)
+                while (true) {
+                    currentCoroutineContext().ensureActive()
+                    val read = input.read(buffer)
+                    if (read < 0) break
+                    if (read == 0) continue
+                    zos.write(buffer, 0, read)
+                    copied += read
+                }
+            }
+            check(copied == entry.bytes) {
+                "Core spool changed while exporting ${entry.entryName}"
+            }
+            zos.closeEntry()
+        } catch (e: Exception) {
+            runCatching { zos.closeEntry() }
+            throw e
+        }
+    }
+
+    private suspend fun redactedJsonLine(entryName: String, value: JSONObject): String {
+        currentCoroutineContext().ensureActive()
+        val redacted = redactor.redactJsonLine(value.toString())
+        require(redactor.findCredentialLeaks(redacted).isEmpty()) {
+            "Credential leak in $entryName"
+        }
+        return redacted
+    }
+
+    private fun ensureStorage(requiredBytes: Long): Long {
+        val available = availableBytes()
+        if (
+            requiredBytes < 0L ||
+            available < MIN_FREE_BYTES ||
+            requiredBytes > available - MIN_FREE_BYTES
+        ) {
+            throw insufficientStorage()
+        }
+        return available
+    }
+
+    private fun insufficientStorage() = DiagnosticExportException(
+        "INSUFFICIENT_STORAGE",
+        "Not enough storage space for export"
+    )
+
+    private fun isStorageFailure(error: IOException): Boolean {
+        val message = generateSequence(error as Throwable?) { it.cause }
+            .take(8)
+            .mapNotNull { it.message }
+            .joinToString(" ")
+            .lowercase()
+        if (
+            "enospc" in message ||
+            "no space left" in message ||
+            "not enough space" in message ||
+            "disk full" in message ||
+            "insufficient storage" in message
+        ) {
+            return true
+        }
+        return runCatching { availableBytes() < MIN_FREE_BYTES }.getOrDefault(false)
     }
 
     private fun payloadOf(json: String): Any = try {

@@ -68,7 +68,7 @@ private fun NoteArtifactRepositoryState.editor(
     viewedCandidateIds: Map<NoteArtifactKind, String?>,
     contentViews: Map<NoteArtifactKind, NoteArtifactContentView>,
 ): NoteArtifactEditorUiState {
-    val task = tasks.filter { it.kind == kind }.maxByOrNull { it.updatedAtMillis }
+    val task = tasks.filter { it.supports(kind) }.maxByOrNull { it.updatedAtMillis }
     val artifact = artifactRefs[kind]
     val history = versions[kind].orEmpty()
     val draft = drafts.filter { it.kind == kind }.maxByOrNull { it.updatedAtMillis }

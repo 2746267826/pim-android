@@ -4,8 +4,11 @@ import com.pim.app.TestPimApp
 import com.pim.core.network.BoundUploadSession
 import java.io.IOException
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
+import org.junit.Assert.assertNotEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -28,6 +31,15 @@ class NoteArtifactRepositoryTest {
         modelId = "66666666-6666-4666-8666-666666666666",
         modelRevision = "77777777-7777-4777-8777-777777777777",
         endpoint = "https://model.example/v1/responses",
+    )
+    private val destination = NoteArtifactDestination(
+        modelId = consent.modelId,
+        modelRevision = consent.modelRevision,
+        displayName = "测试模型",
+        model = "model-a",
+        endpoint = consent.endpoint,
+        capabilities = listOf("text", "vision"),
+        backgroundProcessingAvailable = true,
     )
 
     private val transport = FakeTransport()
@@ -129,6 +141,84 @@ class NoteArtifactRepositoryTest {
         assertTrue(problem.orEmpty().contains("未确认"))
     }
 
+    @Test fun oneConfirmationStartsOneTaskAssociatedWithBothArtifactKinds() = runBlocking {
+        val material = readyMaterial()
+        val repository = repository()
+        repository.refresh(noteId, material)
+
+        val taskId = repository.start(
+            noteId = noteId,
+            materialVersionId = material,
+            asrTaskId = null,
+            destination = destination,
+            freshlyConfirmed = true,
+        )
+
+        assertEquals(1, transport.starts.size)
+        assertEquals(taskId, transport.starts.single().taskId)
+        assertEquals(
+            setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis),
+            transport.starts.single().kinds,
+        )
+        val saved = repository.state.value.tasks.single { it.taskId == taskId }
+        assertEquals(
+            setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis),
+            saved.kinds,
+        )
+        assertTrue(saved.supports(NoteArtifactKind.FullRecord))
+        assertTrue(saved.supports(NoteArtifactKind.Analysis))
+    }
+
+    @Test fun explicitRegenerationCreatesOneNewTaskAndKeepsManualDraftAndSelectedHead() = runBlocking {
+        val material = readyMaterial()
+        val seeded = tasks.createIntent(
+            binding = binding,
+            noteId = noteId,
+            materialVersionId = material,
+            kinds = setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis),
+            inputSha256 = materialDigest(NoteMaterialStore.at(temp.root).uploadSnapshot(material).inputJson),
+            manifestSha256 = materialDigest(NoteMaterialStore.at(temp.root).uploadSnapshot(material).manifestJson),
+            consent = consent,
+            ownerName = "alice",
+        )
+        tasks.recordRemote(
+            seeded.taskId,
+            NoteArtifactRemoteTaskView("task-rev-1", "Succeeded", observedAtMillis = 1_000),
+        )
+        transport.artifactFallback = listOf(
+            completeRef(NoteArtifactKind.FullRecord, "artifact-full", "artifact-rev-1", "head-full"),
+            completeRef(NoteArtifactKind.Analysis, "artifact-analysis", "artifact-rev-a", "head-analysis"),
+        )
+        transport.detail = detail(
+            partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-full"),
+            partialRef(NoteArtifactKind.Analysis, "artifact-analysis", "head-analysis"),
+        )
+        val repository = repository()
+        repository.refresh(noteId, material, seeded.taskId)
+        val beforeRef = repository.state.value.artifactRefs.getValue(NoteArtifactKind.Analysis)
+        val beforeDraft = repository.state.value.drafts.single {
+            it.kind == NoteArtifactKind.Analysis && it.materialVersionId == material
+        }
+        repository.stageText(beforeDraft.localDraftId, beforeDraft.localRevision, "manual text survives")
+        val stagedDraft = repository.state.value.drafts.single { it.localDraftId == beforeDraft.localDraftId }
+
+        repository.regenerate(NoteArtifactKind.Analysis)
+
+        assertEquals(1, transport.starts.size)
+        val regenerated = transport.starts.single()
+        assertNotEquals(seeded.taskId, regenerated.taskId)
+        assertEquals(
+            setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis),
+            regenerated.kinds,
+        )
+        assertEquals(2, tasks.tasks().size)
+        assertEquals(beforeRef, repository.state.value.artifactRefs.getValue(NoteArtifactKind.Analysis))
+        val afterDraft = repository.state.value.drafts.single { it.localDraftId == beforeDraft.localDraftId }
+        assertEquals(stagedDraft, afterDraft)
+        assertEquals("manual text survives", afterDraft.text)
+        assertTrue(afterDraft.dirty)
+    }
+
     private fun repository() = NoteArtifactRepository(
         tasks = tasks,
         drafts = NoteArtifactDraftStore.at(temp.root),
@@ -137,11 +227,21 @@ class NoteArtifactRepositoryTest {
         factory = { transport },
     )
 
+    private fun readyMaterial(): String {
+        val created = NoteDocument.create()
+        val note = NoteDocument(JsonObject(created.source + ("id" to JsonPrimitive(noteId))))
+        note.validate()
+        val store = NoteMaterialStore.at(temp.root)
+        val material = store.create(note, emptyList())
+        store.prepare(material.id)
+        return material.id
+    }
+
     private fun seedTask() = tasks.createIntent(
         binding = binding,
         noteId = noteId,
         materialVersionId = materialVersionId,
-        kind = NoteArtifactKind.FullRecord,
+        kinds = setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis),
         inputSha256 = "a".repeat(64),
         manifestSha256 = "b".repeat(64),
         consent = consent,
@@ -199,14 +299,34 @@ class NoteArtifactRepositoryTest {
         val manualRevisionHeads = mutableListOf<String>()
         val manualRevisionHeadVersions = mutableListOf<String?>()
         val selectHeads = mutableListOf<String>()
+        val starts = mutableListOf<NoteArtifactTaskRecord>()
         var artifactCalls = 0
         var artifactError: Throwable? = null
+        var artifactFallback: List<NoteArtifactArtifactRefProjection> = emptyList()
         lateinit var detail: NoteArtifactTaskDetail
 
-        override suspend fun destinations(): List<NoteArtifactDestination> = emptyList()
+        override suspend fun destinations(): List<NoteArtifactDestination> = listOf(
+            NoteArtifactDestination(
+                modelId = "66666666-6666-4666-8666-666666666666",
+                modelRevision = "77777777-7777-4777-8777-777777777777",
+                displayName = "测试模型",
+                model = "model-a",
+                endpoint = "https://model.example/v1/responses",
+                capabilities = listOf("text", "vision"),
+                backgroundProcessingAvailable = true,
+            ),
+        )
 
-        override suspend fun start(record: NoteArtifactTaskRecord): NoteArtifactRemoteTaskView =
-            error("start is not used by repository tests")
+        override suspend fun start(record: NoteArtifactTaskRecord): NoteArtifactRemoteTaskView {
+            starts += record
+            return NoteArtifactRemoteTaskView(
+                revision = "task-rev-${starts.size + 1}",
+                phase = "Queued",
+                inputSha256 = record.inputSha256,
+                manifestSha256 = record.manifestSha256,
+                observedAtMillis = 2_000,
+            )
+        }
 
         override suspend fun get(taskId: String): NoteArtifactRemoteTaskView =
             error("get is not used by repository tests")
@@ -216,7 +336,7 @@ class NoteArtifactRepositoryTest {
         override suspend fun artifacts(noteId: String): List<NoteArtifactArtifactRefProjection> {
             artifactCalls += 1
             artifactError?.let { throw it }
-            return if (artifactResponses.isEmpty()) emptyList() else artifactResponses.removeFirst()
+            return if (artifactResponses.isEmpty()) artifactFallback else artifactResponses.removeFirst()
         }
 
         override suspend fun versions(artifactId: String): List<NoteArtifactVersionProjection> =

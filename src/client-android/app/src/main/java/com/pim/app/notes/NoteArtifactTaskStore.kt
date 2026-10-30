@@ -38,7 +38,7 @@ class NoteArtifactTaskStore(private val root: File) {
         sourceTitle: String = "",
         materialCreatedAtMillis: Long? = null,
         asrTaskId: String? = null,
-        kind: NoteArtifactKind,
+        kinds: Set<NoteArtifactKind>,
         inputSha256: String,
         manifestSha256: String,
         consent: NoteArtifactConsent,
@@ -51,6 +51,9 @@ class NoteArtifactTaskStore(private val root: File) {
     ): NoteArtifactTaskRecord = synchronized(lock) {
         require(validArtifactTaskId(noteId) && validArtifactTaskId(materialVersionId))
         require(asrTaskId == null || validNoteId(asrTaskId))
+        val requestedKinds = kinds.toSet()
+        require(requestedKinds.isNotEmpty()) { "派生任务至少需要一种结果" }
+        val primaryKind = NoteArtifactKind.entries.first { it in requestedKinds }
         require(sourceTitle.length <= 500)
         require(materialCreatedAtMillis == null || materialCreatedAtMillis >= 0)
         validateDigests(inputSha256, manifestSha256)
@@ -60,7 +63,9 @@ class NoteArtifactTaskStore(private val root: File) {
         val sameIntent = existing.firstOrNull {
             it.binding == binding && it.noteId == noteId && it.materialVersionId == materialVersionId &&
                 it.sourceTitle == sourceTitle && it.materialCreatedAtMillis == materialCreatedAtMillis &&
-                it.asrTaskId == asrTaskId && it.kind == kind && it.consent == consent &&
+                it.asrTaskId == asrTaskId && it.kinds == requestedKinds &&
+                it.inputSha256 == inputSha256.lowercase() &&
+                it.manifestSha256 == manifestSha256.lowercase() && it.consent == consent &&
                 it.localPhase in PENDING_INTENT_PHASES
         }
         if (sameIntent != null) return@synchronized sameIntent
@@ -72,7 +77,8 @@ class NoteArtifactTaskStore(private val root: File) {
             sourceTitle = sourceTitle.take(500),
             materialCreatedAtMillis = materialCreatedAtMillis,
             asrTaskId = asrTaskId,
-            kind = kind,
+            kind = primaryKind,
+            kinds = requestedKinds,
             inputSha256 = inputSha256.lowercase(),
             manifestSha256 = manifestSha256.lowercase(),
             serverIdentity = binding.serverIdentity,
@@ -151,6 +157,7 @@ class NoteArtifactTaskStore(private val root: File) {
         require(record.asrTaskId == null || validNoteId(record.asrTaskId))
         require(record.sourceTitle.length <= 500)
         require(record.materialCreatedAtMillis == null || record.materialCreatedAtMillis >= 0)
+        require(record.kinds.isNotEmpty() && record.kind in record.kinds)
         require(record.expectedUserId == record.ownerId)
         record.binding
         require(record.ownerName.length <= 200)
@@ -189,7 +196,7 @@ class NoteArtifactTaskStore(private val root: File) {
             after.materialVersionId == before.materialVersionId && after.asrTaskId == before.asrTaskId &&
             after.sourceTitle == before.sourceTitle &&
             after.materialCreatedAtMillis == before.materialCreatedAtMillis &&
-            after.kind == before.kind &&
+            after.kind == before.kind && after.kinds == before.kinds &&
             after.inputSha256 == before.inputSha256 && after.manifestSha256 == before.manifestSha256 &&
             after.serverIdentity == before.serverIdentity && after.ownerId == before.ownerId &&
             after.expectedUserId == before.expectedUserId && after.consent == before.consent &&

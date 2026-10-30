@@ -149,18 +149,16 @@ class NotesViewModel @Inject constructor(
         val entry = mutableArtifactEntry.value ?: return
         if (kinds.isEmpty() || mutableArtifactStarting.value) return
         mutableArtifactStarting.value = true
+        mutableArtifactKind.value = kinds.minBy { it.ordinal }
         viewModelScope.launch {
             try {
-                kinds.sortedBy { it.ordinal }.forEach { kind ->
-                    artifacts.start(
-                        noteId = entry.noteId,
-                        materialVersionId = entry.materialVersionId,
-                        asrTaskId = entry.asrTaskId,
-                        kind = kind,
-                        destination = destination,
-                        freshlyConfirmed = true,
-                    )
-                }
+                artifacts.start(
+                    noteId = entry.noteId,
+                    materialVersionId = entry.materialVersionId,
+                    asrTaskId = entry.asrTaskId,
+                    destination = destination,
+                    freshlyConfirmed = true,
+                )
                 mutableArtifactConsentDone.value = true
                 artifacts.refresh(entry.noteId, entry.materialVersionId)
             } catch (error: CancellationException) {
@@ -274,7 +272,10 @@ class NotesViewModel @Inject constructor(
     private fun latestArtifactTask(kind: NoteArtifactKind): NoteArtifactTaskRecord? {
         val entry = mutableArtifactEntry.value ?: return null
         return artifacts.state.value.tasks
-            .filter { it.kind == kind && it.noteId == entry.noteId && it.materialVersionId == entry.materialVersionId }
+            .filter {
+                it.supports(kind) && it.noteId == entry.noteId &&
+                    it.materialVersionId == entry.materialVersionId
+            }
             .maxByOrNull { it.updatedAtMillis }
     }
 

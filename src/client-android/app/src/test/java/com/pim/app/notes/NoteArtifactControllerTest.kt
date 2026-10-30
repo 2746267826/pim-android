@@ -44,7 +44,6 @@ class NoteArtifactControllerTest {
     private fun prepared() = controller().prepare(
         noteId = noteId,
         materialVersionId = materialVersionId,
-        kind = NoteArtifactKind.FullRecord,
         inputSha256 = "a".repeat(64),
         manifestSha256 = "b".repeat(64),
         consent = consent,
@@ -64,6 +63,38 @@ class NoteArtifactControllerTest {
         assertEquals(1, store.tasks().size)
     }
 
+    @Test fun oneConfirmationWithBothKindsStartsOneSharedTaskAndKeepsBothAssociations() = runBlocking {
+        val kinds = setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis)
+        val record = prepared()
+        transport.startView = view("rev-1", "Queued").copy(
+            completeRecordArtifactId = "artifact-full",
+            analysisArtifactId = "artifact-analysis",
+        )
+
+        val saved = controller().start(record.taskId, freshlyConfirmed = true)
+
+        assertEquals(1, transport.starts.size)
+        assertEquals(setOf(record.taskId), transport.starts.map { it.taskId }.toSet())
+        assertEquals(kinds, transport.starts.single().kinds)
+        assertEquals(kinds, saved.kinds)
+        assertTrue(saved.supports(NoteArtifactKind.FullRecord))
+        assertTrue(saved.supports(NoteArtifactKind.Analysis))
+        assertEquals("artifact-full", saved.remote?.completeRecordArtifactId)
+        assertEquals("artifact-analysis", saved.remote?.analysisArtifactId)
+        assertEquals(1, store.tasks().size)
+    }
+
+    @Test fun viewPreferenceNeverNarrowsTheTwoArtifactsProducedByOneTask() {
+        val record = prepared()
+
+        assertEquals(
+            setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis),
+            record.kinds,
+        )
+        assertTrue(record.supports(NoteArtifactKind.FullRecord))
+        assertTrue(record.supports(NoteArtifactKind.Analysis))
+    }
+
     @Test fun unknownStartReceiptIsNeverResentAndVerifyUsesTheSameTaskId() = runBlocking {
         val record = prepared()
         transport.startError = IOException("timeout after send")
@@ -80,6 +111,29 @@ class NoteArtifactControllerTest {
         assertEquals(listOf(record.taskId), transport.gets)
         assertEquals(1, transport.starts.size)
         assertEquals(NoteArtifactIntentPhase.Accepted, verified.localPhase)
+    }
+
+    @Test fun unknownSharedStartReplayFromEitherKindUsesTheSameTaskId() = runBlocking {
+        val kinds = setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis)
+        val record = prepared()
+        transport.startError = IOException("timeout after send")
+        assertThrows(IOException::class.java) {
+            runBlocking { controller().start(record.taskId, freshlyConfirmed = true) }
+        }
+
+        val pending = store.tasks().single()
+        assertEquals(record.taskId, pending.taskId)
+        assertEquals(NoteArtifactIntentPhase.VerificationPending, pending.localPhase)
+        assertTrue(pending.supports(NoteArtifactKind.FullRecord))
+        assertTrue(pending.supports(NoteArtifactKind.Analysis))
+        assertEquals(record.taskId, prepared().taskId)
+
+        transport.startError = null
+        controller().replayStart(record.taskId, freshlyConfirmed = true)
+
+        assertEquals(2, transport.starts.size)
+        assertEquals(setOf(record.taskId), transport.starts.map { it.taskId }.toSet())
+        assertEquals(1, store.tasks().size)
     }
 
     @Test fun replayStartRequiresFreshConfirmationAndKeepsTheOriginalTaskId() = runBlocking {

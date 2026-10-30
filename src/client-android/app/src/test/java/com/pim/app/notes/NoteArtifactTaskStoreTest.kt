@@ -40,14 +40,14 @@ class NoteArtifactTaskStoreTest {
     private fun store() = NoteArtifactTaskStore.at(temp.root)
 
     private fun intent(
-        kind: NoteArtifactKind = NoteArtifactKind.FullRecord,
+        kinds: Set<NoteArtifactKind> = setOf(NoteArtifactKind.FullRecord),
         material: String = materialVersionId,
         target: BoundUploadSession = binding,
     ) = store().createIntent(
         binding = target,
         noteId = noteId,
         materialVersionId = material,
-        kind = kind,
+        kinds = kinds,
         inputSha256 = "a".repeat(64),
         manifestSha256 = "b".repeat(64),
         consent = consent,
@@ -66,6 +66,7 @@ class NoteArtifactTaskStoreTest {
         assertEquals(binding, reloaded.binding)
         assertEquals(materialVersionId, reloaded.materialVersionId)
         assertEquals(NoteArtifactKind.FullRecord, reloaded.kind)
+        assertEquals(setOf(NoteArtifactKind.FullRecord), reloaded.kinds)
         assertEquals(consent, reloaded.consent)
         assertEquals(NoteArtifactIntentPhase.Prepared, reloaded.localPhase)
         val raw = File(temp.root, "note-artifact-tasks/${record.taskId}.json").readText()
@@ -78,13 +79,25 @@ class NoteArtifactTaskStoreTest {
     @Test fun pendingSameIntentIsIdempotentButKindAndMaterialRemainSeparate() {
         val full = intent()
         val same = intent()
-        val analysis = intent(kind = NoteArtifactKind.Analysis)
+        val analysis = intent(kinds = setOf(NoteArtifactKind.Analysis))
         val otherMaterial = intent(material = otherMaterialVersionId)
 
         assertEquals(full.taskId, same.taskId)
         assertNotEquals(full.taskId, analysis.taskId)
         assertNotEquals(full.taskId, otherMaterial.taskId)
         assertEquals(3, store().tasks().size)
+    }
+
+    @Test fun pendingSharedIntentIsIdempotentAcrossBothUiKinds() {
+        val kinds = setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis)
+        val first = intent(kinds)
+        val repeated = intent(kinds)
+
+        assertEquals(first.taskId, repeated.taskId)
+        assertEquals(kinds, repeated.kinds)
+        assertTrue(repeated.supports(NoteArtifactKind.FullRecord))
+        assertTrue(repeated.supports(NoteArtifactKind.Analysis))
+        assertEquals(1, store().tasks().size)
     }
 
     @Test fun acceptedOrRejectedIntentDoesNotBlockANewExplicitTask() {
@@ -110,7 +123,9 @@ class NoteArtifactTaskStoreTest {
             store().update(record.taskId) { it.copy(materialVersionId = otherMaterialVersionId) }
         }
         assertThrows(IllegalArgumentException::class.java) {
-            store().update(record.taskId) { it.copy(kind = NoteArtifactKind.Analysis) }
+            store().update(record.taskId) {
+                it.copy(kind = NoteArtifactKind.Analysis, kinds = setOf(NoteArtifactKind.Analysis))
+            }
         }
         assertThrows(IllegalArgumentException::class.java) {
             store().update(record.taskId) { it.copy(ownerId = otherOwner, expectedUserId = otherOwner) }
@@ -129,7 +144,7 @@ class NoteArtifactTaskStoreTest {
                 binding = binding,
                 noteId = noteId,
                 materialVersionId = materialVersionId,
-                kind = NoteArtifactKind.FullRecord,
+                kinds = setOf(NoteArtifactKind.FullRecord),
                 inputSha256 = "a".repeat(64),
                 manifestSha256 = "b".repeat(64),
                 consent = consent.copy(confirmed = false),
@@ -140,7 +155,7 @@ class NoteArtifactTaskStoreTest {
                 binding = binding,
                 noteId = noteId,
                 materialVersionId = materialVersionId,
-                kind = NoteArtifactKind.FullRecord,
+                kinds = setOf(NoteArtifactKind.FullRecord),
                 inputSha256 = "a".repeat(64),
                 manifestSha256 = "b".repeat(64),
                 consent = consent.copy(endpoint = "http://user:secret@model.example/v1"),

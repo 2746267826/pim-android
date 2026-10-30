@@ -85,7 +85,7 @@ fun NoteArtifactEntrySheet(
                 Column(Modifier.weight(1f)) {
                     Text("生成笔记结果", style = MaterialTheme.typography.titleLarge)
                     Text(
-                        "固定材料 · 明确目标 · 人工与模型来源分开",
+                        "固定材料 · 明确目标 · 每次任务同时生成两类结果",
                         style = MaterialTheme.typography.labelMedium,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )
@@ -149,7 +149,12 @@ fun NoteArtifactEntrySheet(
                     }
                 }
                 item {
-                    Text("要生成的结果", style = MaterialTheme.typography.titleMedium)
+                    Text("生成后优先查看", style = MaterialTheme.typography.titleMedium)
+                    Text(
+                        "仅决定确认后首先打开哪一类；一次任务始终同时生成完整记录与独立分析。",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
                     Row(horizontalArrangement = Arrangement.spacedBy(dimensions.spaceSmall)) {
                         FilterChip(
                             selected = fullRecordSelected,
@@ -167,7 +172,7 @@ fun NoteArtifactEntrySheet(
                 }
                 item {
                     PimStatusBanner(
-                        "生成会调用外部模型，可能产生费用。只有点击下方确认才会提交；" +
+                        "无论上方查看偏好如何，每次确认都会同时请求完整记录与独立分析，并可能产生费用。只有点击下方确认才会提交；" +
                             "刷新、查看和上传不会自动调用模型。失败或未知结果不会自动重发。",
                         PimStatusTone.Warning,
                         Modifier.testTag("note-artifact-entry-charge-notice"),

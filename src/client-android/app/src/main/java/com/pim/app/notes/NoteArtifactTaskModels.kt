@@ -58,8 +58,10 @@ data class NoteArtifactRemoteTaskView(
 
 /**
  * Private durable task state. It never contains an access token, refresh token,
- * or Authorization header. One record covers one fixed material version, one
- * product kind, and one exact owner/server binding.
+ * or Authorization header. One record covers one fixed material version, the
+ * kinds requested by one confirmation, and one exact owner/server binding.
+ * [kind] remains the primary/legacy kind for old task files; consumers must use
+ * [supports] when matching a UI kind.
  */
 @Serializable
 data class NoteArtifactTaskRecord(
@@ -70,6 +72,7 @@ data class NoteArtifactTaskRecord(
     val materialCreatedAtMillis: Long? = null,
     val asrTaskId: String? = null,
     val kind: NoteArtifactKind,
+    val kinds: Set<NoteArtifactKind> = setOf(kind),
     val inputSha256: String,
     val manifestSha256: String,
     val serverIdentity: String,
@@ -89,9 +92,11 @@ data class NoteArtifactTaskRecord(
     val createdAtMillis: Long,
     val updatedAtMillis: Long,
 ) {
+    fun supports(candidate: NoteArtifactKind): Boolean = candidate in kinds
+
     val binding: BoundUploadSession get() = BoundUploadSession(serverIdentity, ownerId)
     override fun toString() =
-        "NoteArtifactTaskRecord(taskId=$taskId, kind=$kind, phase=$localPhase, wirePhase=${remote?.phase})"
+        "NoteArtifactTaskRecord(taskId=$taskId, kinds=$kinds, phase=$localPhase, wirePhase=${remote?.phase})"
 }
 
 data class NoteArtifactTasksState(

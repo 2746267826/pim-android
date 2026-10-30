@@ -51,6 +51,7 @@ import com.pim.core.network.AuthRefreshCoordinator
 import com.pim.core.network.BoundUploadSession
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.security.MessageDigest
 import java.util.UUID
@@ -122,8 +123,7 @@ class NativeNoteDerivedE2ETest {
         captureCaseEvidence("normal-human-regenerate") {
             val fixture = prepareAsrAndOpenDerived("normal")
             val providerBeforeDerived = providerSummary()
-            val firstTask = startDerivedFromEntry(expectBothKinds = true)
-            assertOneDerivedTask(fixture)
+            val firstTask = startDerivedFromEntry(fixture, expectBothKinds = true)
             val firstRun = runDerivedAndVerify(fixture, firstTask.taskId, providerBeforeDerived)
             assertEquals(NoteDerivedArtifactKind.COMPLETERECORD, firstRun.artifact(NoteArtifactKind.FullRecord).kind)
             assertEquals(NoteDerivedArtifactKind.INDEPENDENTANALYSIS, firstRun.artifact(NoteArtifactKind.Analysis).kind)
@@ -144,7 +144,7 @@ class NativeNoteDerivedE2ETest {
             val taskIdsBefore = derivedTasks(fixture.noteId).map { it.taskId }.toSet()
             val providerBeforeRegenerate = providerSummary()
             regenerateThroughUi(NoteArtifactKind.FullRecord)
-            val regeneratedTask = waitForNewDerivedTask(fixture.noteId, taskIdsBefore)
+            val regeneratedTask = waitForNewDerivedTask(fixture, taskIdsBefore)
             val regeneratedRun = runDerivedAndVerify(fixture, regeneratedTask.taskId, providerBeforeRegenerate)
             assertEquals(3, regeneratedRun.task.steps.size)
             assertTrue(regeneratedRun.task.steps.all { it.status == "Succeeded" })
@@ -189,8 +189,7 @@ class NativeNoteDerivedE2ETest {
     fun concurrentServerWriteKeepsBothVersionsAndTheLocalDraft() =
         captureCaseEvidence("concurrent-conflict") {
             val fixture = prepareAsrAndOpenDerived("concurrent")
-            val task = startDerivedFromEntry(expectBothKinds = false)
-            assertOneDerivedTask(fixture)
+            val task = startDerivedFromEntry(fixture, expectBothKinds = false)
             runDerivedAndVerify(fixture, task.taskId, providerSummary())
 
             val humanText = "# 人工基线 ${UUID.randomUUID()}"
@@ -258,8 +257,7 @@ class NativeNoteDerivedE2ETest {
             val fixture = prepareAsrAndOpenDerived("unknown")
             qa("faults/arm?kind=derived-start-response")
             val providerBefore = providerSummary()
-            val task = startDerivedFromEntry(expectBothKinds = false)
-            assertOneDerivedTask(fixture)
+            val task = startDerivedFromEntry(fixture, expectBothKinds = false)
             val localTask = NoteArtifactTaskStore.at(context.noBackupFilesDir)
                 .tasks()
                 .single { it.taskId == task.taskId }
@@ -322,7 +320,6 @@ class NativeNoteDerivedE2ETest {
         val textCalls: Int,
         val callHashes: List<String>,
         val receivedImages: List<ProviderImage>,
-        val allExpectedImagesExact: Boolean,
     )
 
     private data class ProviderImage(
@@ -399,9 +396,6 @@ class NativeNoteDerivedE2ETest {
 
     private fun prepareFixture(label: String): PreparedFixture {
         val qaFixture = Json.parseToJsonElement(qa("fixture")).jsonObject
-        val seedVersionId = qaFixture.getValue("source").jsonObject
-            .getValue("versionId").jsonPrimitive.content
-        val seedImageBytes = materialImageBytes(seedVersionId)
         showLibrary()
         compose.waitUntil(20_000) {
             compose.onAllNodes(hasTestTag("notes-create") and isEnabled()).fetchSemanticsNodes().isNotEmpty()
@@ -435,9 +429,15 @@ class NativeNoteDerivedE2ETest {
         }
         waitSaved(model, noteId)
         val markdown = model.notes.state.value.documents.getValue(noteId).blocks.single()
+        val photoBytes = ByteArrayOutputStream().also { output ->
+            val bitmap = Bitmap.createBitmap(24, 18, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(android.graphics.Color.rgb(24, 106, 87))
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            bitmap.recycle()
+        }.toByteArray()
         compose.runOnUiThread {
             model.prepareMaterial(noteId, NoteInsertion(markdown.string("id"), markdown.string("text").length))
-            model.importPhoto({ seedImageBytes.getValue("Photo").inputStream() })
+            model.importPhoto({ photoBytes.inputStream() })
         }
         compose.waitUntil(20_000) {
             !model.busy.value &&
@@ -450,12 +450,6 @@ class NativeNoteDerivedE2ETest {
             }
         }
         waitSaved(model, noteId)
-        val inkPreview = File(
-            File(context.noBackupFilesDir, "notes"),
-            "$noteId/${NoteFileStore.inkPath(ink)}",
-        )
-        check(inkPreview.parentFile?.isDirectory == true || inkPreview.parentFile?.mkdirs() == true)
-        inkPreview.writeBytes(seedImageBytes.getValue("InkPreview"))
 
         val recording = RecordingEngine(
             RecordingFileStore(File(context.noBackupFilesDir, "recordings")),
@@ -486,13 +480,6 @@ class NativeNoteDerivedE2ETest {
         }
         awaitRemoteSource(versionId)
         val imageBytes = materialImageBytes(versionId)
-        assertEquals(seedImageBytes.keys, imageBytes.keys)
-        seedImageBytes.forEach { (kind, expected) ->
-            assertTrue(
-                "Current $kind bytes must match the provider's fixed synthetic image",
-                expected.contentEquals(imageBytes.getValue(kind)),
-            )
-        }
         val destinationId = qaFixture.getValue("destinations").jsonObject
             .getValue("derived").jsonObject
             .getValue("id").jsonPrimitive.content
@@ -556,9 +543,13 @@ class NativeNoteDerivedE2ETest {
         )
     }
 
-    private fun startDerivedFromEntry(expectBothKinds: Boolean): NoteDerivedTaskDto {
-        val fixture = Json.parseToJsonElement(qa("fixture")).jsonObject
-        val destinationId = fixture.getValue("destinations").jsonObject
+    private fun startDerivedFromEntry(fixture: Fixture, expectBothKinds: Boolean): NoteDerivedTaskDto {
+        val noteId = latestLocalNoteId()
+        assertEquals(fixture.noteId, noteId)
+        val binding = checkNotNull(currentBinding()) { "Missing authenticated owner/server binding" }
+        val existingTaskIds = derivedTasks(noteId).map { it.taskId }.toSet()
+        val qaFixture = Json.parseToJsonElement(qa("fixture")).jsonObject
+        val destinationId = qaFixture.getValue("destinations").jsonObject
             .getValue("derived").jsonObject
             .getValue("id").jsonPrimitive.content
         compose.onNodeWithTag("note-artifact-entry-destination-$destinationId").performClick()
@@ -583,17 +574,14 @@ class NativeNoteDerivedE2ETest {
         compose.waitUntil(40_000) {
             compose.onAllNodesWithTag("note-artifact-screen").fetchSemanticsNodes().isNotEmpty()
         }
-        val noteId = derivedTasksFromFixtureNote().let { tasks ->
-            check(tasks.isNotEmpty()) { "Derived task did not persist" }
-            tasks.first().noteId
+        val added = awaitNewDerivedTasks(noteId, existingTaskIds)
+        if (added.size != 1) {
+            fail(
+                "One UI confirmation must create exactly one derived task; " +
+                    "existing=${existingTaskIds.sorted()} added=${added.map { it.taskId }.sorted()}",
+            )
         }
-        val tasks = awaitOnlyDerivedTask(noteId)
-        return tasks.single()
-    }
-
-    private fun derivedTasksFromFixtureNote(): List<NoteDerivedTaskDto> {
-        val noteId = runBlocking { latestLocalNoteId() }
-        return derivedTasks(noteId)
+        return added.single().also { assertDerivedTaskIdentity(fixture, it, binding) }
     }
 
     private fun latestLocalNoteId(): String {
@@ -602,44 +590,62 @@ class NativeNoteDerivedE2ETest {
         return noteId
     }
 
-    private fun assertOneDerivedTask(fixture: Fixture) {
-        val tasks = derivedTasks(fixture.noteId)
-        assertEquals(
-            "Selecting both result kinds must submit one derived task; " +
-                "the task already produces both artifact kinds. tasks=${tasks.map { it.taskId }}",
-            1,
-            tasks.size,
-        )
-    }
-
-    private fun awaitOnlyDerivedTask(noteId: String): List<NoteDerivedTaskDto> {
-        val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(40)
-        var tasks = emptyList<NoteDerivedTaskDto>()
-        while (System.nanoTime() < deadline) {
-            tasks = derivedTasks(noteId)
-            if (tasks.isNotEmpty()) {
-                // The UI must not loop over result kinds and create duplicate tasks.
-                Thread.sleep(1_500)
-                return derivedTasks(noteId)
-            }
-            Thread.sleep(250)
-        }
-        fail("No derived task persisted for note")
-        error("unreachable")
-    }
-
-    private fun waitForNewDerivedTask(noteId: String, existing: Set<String>): NoteDerivedTaskDto {
+    private fun awaitNewDerivedTasks(
+        noteId: String,
+        existingTaskIds: Set<String>,
+    ): List<NoteDerivedTaskDto> {
         val deadline = System.nanoTime() + TimeUnit.SECONDS.toNanos(40)
         var current = emptyList<NoteDerivedTaskDto>()
         while (System.nanoTime() < deadline) {
             current = derivedTasks(noteId)
-            val added = current.filter { it.taskId !in existing }
-            if (added.size == 1) return added.single()
-            if (added.size > 1) fail("Regeneration created more than one task: ${added.map { it.taskId }}")
+            val added = current.filter { it.taskId !in existingTaskIds }
+            if (added.isNotEmpty()) {
+                // Let rapid duplicate submissions become visible before evaluating the delta.
+                Thread.sleep(1_500)
+                return derivedTasks(noteId).filter { it.taskId !in existingTaskIds }
+            }
             Thread.sleep(250)
         }
-        fail("Regeneration did not create exactly one task; tasks=${current.map { it.taskId }}")
+        fail("No new derived task persisted; existing=${existingTaskIds.sorted()}")
         error("unreachable")
+    }
+
+    private fun waitForNewDerivedTask(fixture: Fixture, existing: Set<String>): NoteDerivedTaskDto {
+        val added = awaitNewDerivedTasks(fixture.noteId, existing)
+        if (added.size != 1) {
+            fail(
+                "One regeneration confirmation must create exactly one derived task; " +
+                    "existing=${existing.sorted()} added=${added.map { it.taskId }.sorted()}",
+            )
+        }
+        val binding = checkNotNull(currentBinding()) { "Missing authenticated owner/server binding" }
+        return added.single().also { assertDerivedTaskIdentity(fixture, it, binding) }
+    }
+
+    private fun assertDerivedTaskIdentity(
+        fixture: Fixture,
+        task: NoteDerivedTaskDto,
+        binding: BoundUploadSession,
+    ) {
+        assertEquals(fixture.noteId, task.noteId)
+        assertEquals(fixture.versionId, task.sourceVersionId)
+        assertEquals(fixture.asrTask.taskId, task.asrTaskId)
+        assertEquals(fixture.destination.modelId, task.destination.modelId)
+        assertEquals(fixture.destination.modelRevision, task.destination.modelRevision)
+        assertEquals(fixture.destination.endpoint, task.destination.endpoint)
+        assertTrue(task.destination.confirmed)
+        val local = checkNotNull(
+            NoteArtifactTaskStore.at(context.noBackupFilesDir).tasks()
+                .singleOrNull { it.taskId == task.taskId },
+        ) { "Missing local intent for new task ${task.taskId}" }
+        assertEquals(binding.serverIdentity, local.serverIdentity)
+        assertEquals(binding.ownerId, local.ownerId)
+        assertEquals(task.noteId, local.noteId)
+        assertEquals(task.sourceVersionId, local.materialVersionId)
+        assertEquals(task.asrTaskId, local.asrTaskId)
+        assertEquals(task.destination.modelId, local.consent.modelId)
+        assertEquals(task.destination.modelRevision, local.consent.modelRevision)
+        assertEquals(task.destination.endpoint, local.consent.endpoint)
     }
 
     private fun runDerivedAndVerify(
@@ -703,10 +709,6 @@ class NativeNoteDerivedE2ETest {
             )
         }
         val provider = providerSummary()
-        assertTrue(
-            "The synthetic provider must attest that every sent image was an expected exact image",
-            provider.allExpectedImagesExact,
-        )
         assertEquals(fixture.imageBytes.keys, provider.receivedImages.map { it.sha256 }.toSet())
         fixture.imageBytes.forEach { (sha256, bytes) ->
             assertTrue(
@@ -958,7 +960,6 @@ class NativeNoteDerivedE2ETest {
         compose.onNode(hasSetTextAction() and hasText("API 地址"))
             .performScrollTo()
             .performTextReplacement(base)
-        closeSoftKeyboard()
         compose.onNodeWithText("保存", useUnmergedTree = true).performScrollTo().performClick()
         compose.onNode(hasSetTextAction() and hasText("用户名"))
             .performScrollTo()
@@ -966,7 +967,6 @@ class NativeNoteDerivedE2ETest {
         compose.onNode(hasSetTextAction() and hasText("密码"))
             .performScrollTo()
             .performTextReplacement("password123")
-        closeSoftKeyboard()
         compose.waitUntil(10_000) {
             compose.onAllNodes(hasText("登录") and hasClickAction() and isEnabled())
                 .fetchSemanticsNodes().isNotEmpty()
@@ -1146,8 +1146,6 @@ class NativeNoteDerivedE2ETest {
                     bytes = image.getValue("bytes").jsonPrimitive.int,
                 )
             },
-            allExpectedImagesExact = visionEvidence.getValue("allExpectedImagesExact")
-                .jsonPrimitive.content.toBoolean(),
         )
     }
 

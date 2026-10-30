@@ -224,7 +224,6 @@ class NoteArtifactRepository(
         noteId: String,
         materialVersionId: String,
         asrTaskId: String?,
-        kind: NoteArtifactKind,
         destination: NoteArtifactDestination,
         freshlyConfirmed: Boolean,
     ): String = withContext(Dispatchers.IO) {
@@ -250,7 +249,6 @@ class NoteArtifactRepository(
                     materials.entries().firstOrNull { it.id == materialVersionId }?.createdAtMillis
                 }.getOrNull(),
                 asrTaskId = asrTaskId,
-                kind = kind,
                 inputSha256 = materialDigest(snapshot.inputJson),
                 manifestSha256 = materialDigest(snapshot.manifestJson),
                 consent = destination.asConsent(),
@@ -343,7 +341,7 @@ class NoteArtifactRepository(
     suspend fun regenerate(kind: NoteArtifactKind) = withContext(Dispatchers.IO) {
         initialize()
         val noteId = state.value.noteId ?: return@withContext
-        val latest = state.value.tasks.filter { it.kind == kind }.maxByOrNull { it.updatedAtMillis }
+        val latest = state.value.tasks.filter { it.supports(kind) }.maxByOrNull { it.updatedAtMillis }
         if (latest == null) {
             publish("尚未创建该结果的派生任务，请先明确选择目标并开始生成。")
             return@withContext
@@ -365,7 +363,6 @@ class NoteArtifactRepository(
             noteId = noteId,
             materialVersionId = latest.materialVersionId,
             asrTaskId = latest.asrTaskId,
-            kind = kind,
             destination = destination,
             freshlyConfirmed = true,
         )

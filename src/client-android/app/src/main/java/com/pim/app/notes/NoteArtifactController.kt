@@ -65,7 +65,6 @@ class NoteArtifactController(
         sourceTitle: String = "",
         materialCreatedAtMillis: Long? = null,
         asrTaskId: String? = null,
-        kind: NoteArtifactKind,
         inputSha256: String,
         manifestSha256: String,
         consent: NoteArtifactConsent,
@@ -81,7 +80,9 @@ class NoteArtifactController(
         sourceTitle = sourceTitle,
         materialCreatedAtMillis = materialCreatedAtMillis,
         asrTaskId = asrTaskId,
-        kind = kind,
+        // The current server operation always creates both artifacts; the UI
+        // kind selection is a viewing preference, not a request parameter.
+        kinds = NoteArtifactKind.entries.toSet(),
         inputSha256 = inputSha256,
         manifestSha256 = manifestSha256,
         consent = consent,

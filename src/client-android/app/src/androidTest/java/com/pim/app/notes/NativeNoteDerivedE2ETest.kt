@@ -348,12 +348,11 @@ class NativeNoteDerivedE2ETest {
         val baseline = providerSummary()
         val asrTask = submitAsrAndRun(prepared, baseline)
         openCompletedAsrTask(asrTask.taskId)
-        compose.waitUntil(30_000) {
-            compose.onAllNodesWithTag("note-asr-open-derived-${asrTask.taskId}")
-                .fetchSemanticsNodes().isNotEmpty()
-        }
+        scrollToNodeEventually(
+            "note-asr-detail-${asrTask.taskId}",
+            hasTestTag("note-asr-open-derived-${asrTask.taskId}"),
+        )
         compose.onNodeWithTag("note-asr-open-derived-${asrTask.taskId}")
-            .performScrollTo()
             .assertIsDisplayed()
             .performClick()
         compose.waitUntil(30_000) {
@@ -552,13 +551,23 @@ class NativeNoteDerivedE2ETest {
         val destinationId = qaFixture.getValue("destinations").jsonObject
             .getValue("derived").jsonObject
             .getValue("id").jsonPrimitive.content
-        compose.onNodeWithTag("note-artifact-entry-destination-$destinationId").performClick()
+        scrollToNodeEventually(
+            "note-artifact-entry-list",
+            hasTestTag("note-artifact-entry-kind-FullRecord"),
+        )
         val full = compose.onNodeWithTag("note-artifact-entry-kind-FullRecord")
-        val analysis = compose.onNodeWithTag("note-artifact-entry-kind-Analysis")
+            .assertIsDisplayed()
         if (expectBothKinds) {
             full.assertIsSelected()
-            analysis.assertIsSelected()
+            scrollToNodeEventually(
+                "note-artifact-entry-list",
+                hasTestTag("note-artifact-entry-kind-Analysis"),
+            )
+            compose.onNodeWithTag("note-artifact-entry-kind-Analysis")
+                .assertIsDisplayed()
+                .assertIsSelected()
         } else {
+            val analysis = compose.onNodeWithTag("note-artifact-entry-kind-Analysis")
             if (compose.onAllNodesWithTag("note-artifact-entry-kind-Analysis")
                     .fetchSemanticsNodes().isNotEmpty()
             ) {
@@ -567,8 +576,19 @@ class NativeNoteDerivedE2ETest {
             }
             full.assertIsSelected()
         }
+        scrollToNodeEventually(
+            "note-artifact-entry-list",
+            hasTestTag("note-artifact-entry-destination-$destinationId"),
+        )
+        compose.onNodeWithTag("note-artifact-entry-destination-$destinationId")
+            .assertIsDisplayed()
+            .performClick()
+        scrollToNodeEventually(
+            "note-artifact-entry-list",
+            hasTestTag("note-artifact-entry-confirm"),
+        )
         compose.onNodeWithTag("note-artifact-entry-confirm")
-            .performScrollTo()
+            .assertIsDisplayed()
             .assertIsEnabled()
             .performClick()
         compose.waitUntil(40_000) {
@@ -1168,6 +1188,9 @@ class NativeNoteDerivedE2ETest {
         compose.waitUntil(20_000) {
             runCatching {
                 compose.onNodeWithTag(parentTag).performScrollToNode(matcher)
+                compose.onNode(matcher)
+                    .performScrollTo()
+                    .assertIsDisplayed()
                 true
             }.getOrDefault(false)
         }

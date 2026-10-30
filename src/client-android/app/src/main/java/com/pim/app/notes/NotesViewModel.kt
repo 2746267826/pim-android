@@ -192,6 +192,10 @@ class NotesViewModel @Inject constructor(
         val draft = artifacts.state.value.drafts.firstOrNull {
             it.localDraftId == request.localDraftId && it.kind == request.kind
         } ?: return
+        if (draft.noteId != entry.noteId || draft.materialVersionId != entry.materialVersionId) {
+            tell("本机稿属于其他笔记或固定材料；未发送人工稿到服务端。本机稿保留。")
+            return
+        }
         val artifact = artifacts.state.value.artifactRefs[request.kind] ?: run {
             tell("尚无可保存的服务端结果；本机稿继续保留。")
             return
@@ -204,11 +208,22 @@ class NotesViewModel @Inject constructor(
             tell("服务端尚未确认当前版本；请先在候选列表明确选择此稿，选择成功后再保存人工稿。本机稿保留。")
             return
         }
-        val confirmedHead = artifacts.state.value.versions[request.kind].orEmpty().any {
+        val confirmedHead = artifacts.state.value.versions[request.kind].orEmpty().firstOrNull {
             it.versionId == expectedHeadVersionId && it.isHead
         }
-        if (!confirmedHead) {
+        if (confirmedHead == null ||
+            confirmedHead.sourceVersionId != entry.materialVersionId ||
+            artifact.headVersionId != expectedHeadVersionId
+        ) {
             tell("服务端 head 尚未确认或无匹配版本；请先显式选择此稿并刷新。本机稿保留。")
+            return
+        }
+        val state = artifacts.state.value
+        val scopedBinding = state.taskBinding
+        if (scopedBinding == null || state.noteId != entry.noteId ||
+            state.materialVersionId != entry.materialVersionId || draft.binding != scopedBinding
+        ) {
+            tell("账号、服务器或固定材料上下文已变化；未发送人工稿。本机稿保留。")
             return
         }
         if (draft.dirty) {

@@ -475,6 +475,40 @@ class NoteArtifactRepository(
         contentMarkdown: String,
     ) = withContext(Dispatchers.IO) {
         val target = targetProvider() ?: return@withContext
+        val draft = runCatching { drafts.read(target.binding, localDraftId) }.getOrElse {
+            publish("本机稿不属于当前账号或服务器；未发送人工稿。")
+            return@withContext
+        }
+        val artifact = state.value.artifactRefs[kind]
+        val confirmedHead = expectedHeadVersionId?.let { headVersionId ->
+            state.value.versions[kind].orEmpty().firstOrNull {
+                it.versionId == headVersionId && it.isHead
+            }
+        }
+        val guardProblem = when {
+            state.value.taskBinding != target.binding ||
+                state.value.noteId != draft.noteId ||
+                state.value.materialVersionId != draft.materialVersionId ->
+                "固定材料上下文已变化；未发送人工稿。"
+            draft.kind != kind || draft.localRevision != expectedLocalRevision ->
+                "本机稿回调已过期；未发送人工稿。"
+            draft.dirty || draft.text != contentMarkdown ->
+                "本机稿尚未保存或已变化；未发送人工稿。"
+            artifact == null || artifact.artifactId != artifactId ||
+                artifact.revision != expectedHeadRevision ->
+                "服务端 artifact 或 revision 已变化；未发送人工稿。"
+            expectedHeadVersionId == null || artifact.headVersionId != expectedHeadVersionId ->
+                "服务端 head 尚未确认；未发送人工稿。"
+            confirmedHead == null || confirmedHead.artifactId != artifactId ->
+                "服务端 head 未匹配当前 artifact；未发送人工稿。"
+            confirmedHead.sourceVersionId != draft.materialVersionId ->
+                "服务端 head 属于其他固定材料；未发送人工稿。"
+            else -> null
+        }
+        if (guardProblem != null) {
+            publish(guardProblem)
+            return@withContext
+        }
         val transport = factory.create(target)
         try {
             val receipt = transport.saveManualRevision(

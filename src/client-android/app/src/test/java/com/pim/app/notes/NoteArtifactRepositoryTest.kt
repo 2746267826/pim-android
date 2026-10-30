@@ -56,6 +56,11 @@ class NoteArtifactRepositoryTest {
             completeRef(NoteArtifactKind.FullRecord, "artifact-full", "artifact-rev-1", "head-1"),
             completeRef(NoteArtifactKind.Analysis, "artifact-analysis", "artifact-rev-a", "head-a"),
         )
+        transport.versionFallback = mapOf(
+            "artifact-full" to listOf(
+                version("head-1", NoteArtifactKind.FullRecord, materialVersionId, isHead = true),
+            ),
+        )
         transport.detail = detail(
             partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-1"),
             partialRef(NoteArtifactKind.Analysis, "artifact-analysis", "head-a"),
@@ -69,15 +74,19 @@ class NoteArtifactRepositoryTest {
         val draft = repository.state.value.drafts.single {
             it.kind == NoteArtifactKind.FullRecord && it.materialVersionId == materialVersionId
         }
+        repository.stageText(draft.localDraftId, draft.localRevision, "manual body")
+        val staged = repository.state.value.drafts.single { it.localDraftId == draft.localDraftId }
+        repository.saveLocalDraft(staged.localDraftId, staged.localRevision, "manual body")
+        val savedDraft = repository.state.value.drafts.single { it.localDraftId == draft.localDraftId }
 
         repository.saveManualRevisionToServer(
             kind = NoteArtifactKind.FullRecord,
             artifactId = full.artifactId,
-            localDraftId = draft.localDraftId,
-            expectedLocalRevision = draft.localRevision,
+            localDraftId = savedDraft.localDraftId,
+            expectedLocalRevision = savedDraft.localRevision,
             expectedHeadRevision = requireNotNull(full.revision),
             expectedHeadVersionId = full.headVersionId,
-            contentMarkdown = "manual body",
+            contentMarkdown = savedDraft.text,
         )
         repository.selectCandidate(
             artifactId = full.artifactId,
@@ -88,6 +97,70 @@ class NoteArtifactRepositoryTest {
         assertEquals(listOf("artifact-rev-1"), transport.manualRevisionHeads)
         assertEquals(listOf("head-1"), transport.manualRevisionHeadVersions)
         assertEquals(listOf("artifact-rev-1"), transport.selectHeads)
+    }
+
+    @Test fun manualSaveRejectsDraftWhenConfirmedHeadBelongsToAnotherMaterial() = runBlocking {
+        val task = seedTask()
+        transport.artifactFallback = listOf(
+            completeRef(NoteArtifactKind.FullRecord, "artifact-full", "artifact-revision", "version-b-full"),
+        )
+        transport.versionFallback = mapOf(
+            "artifact-full" to listOf(
+                version("version-b-full", NoteArtifactKind.FullRecord, "55555555-5555-4555-8555-555555555555", true),
+            ),
+        )
+        transport.detail = detail(
+            partialRef(NoteArtifactKind.FullRecord, "artifact-full", "version-b-full"),
+        )
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, task.taskId)
+        val draft = repository.state.value.drafts.single { it.kind == NoteArtifactKind.FullRecord }
+
+        repository.saveManualRevisionToServer(
+            kind = NoteArtifactKind.FullRecord,
+            artifactId = "artifact-full",
+            localDraftId = draft.localDraftId,
+            expectedLocalRevision = draft.localRevision,
+            expectedHeadRevision = "artifact-revision",
+            expectedHeadVersionId = "version-b-full",
+            contentMarkdown = draft.text,
+        )
+
+        assertTrue(transport.manualRevisionHeads.isEmpty())
+        assertTrue(repository.state.value.message.orEmpty().contains("其他固定材料"))
+        assertEquals(draft, repository.state.value.drafts.single { it.localDraftId == draft.localDraftId })
+    }
+
+    @Test fun staleManualSaveCallbackCannotSendDraftToAnotherAccount() = runBlocking {
+        val task = seedTask()
+        transport.artifactFallback = listOf(
+            completeRef(NoteArtifactKind.FullRecord, "artifact-full", "artifact-revision", "head-1"),
+        )
+        transport.versionFallback = mapOf(
+            "artifact-full" to listOf(
+                version("head-1", NoteArtifactKind.FullRecord, materialVersionId, isHead = true),
+            ),
+        )
+        transport.detail = detail(
+            partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-1"),
+        )
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, task.taskId)
+        val draft = repository.state.value.drafts.single { it.kind == NoteArtifactKind.FullRecord }
+
+        activeBinding = otherBinding
+        repository.saveManualRevisionToServer(
+            kind = NoteArtifactKind.FullRecord,
+            artifactId = "artifact-full",
+            localDraftId = draft.localDraftId,
+            expectedLocalRevision = draft.localRevision,
+            expectedHeadRevision = "artifact-revision",
+            expectedHeadVersionId = "head-1",
+            contentMarkdown = draft.text,
+        )
+
+        assertTrue(transport.manualRevisionHeads.isEmpty())
+        assertTrue(repository.state.value.message.orEmpty().contains("当前账号或服务器"))
     }
 
     @Test fun detailHeadChangeRefreshesFormalArtifactMetadataBeforeExposingIt() = runBlocking {

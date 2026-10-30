@@ -35,6 +35,7 @@ data class NoteAsrActions(
     val start: (String, NoteAsrDestinationDto, String) -> Unit = { _, _, _ -> },
     val replayStart: (String) -> Unit = {},
     val replayRetry: (String) -> Unit = {},
+    val openDerived: (versionId: String, noteId: String, asrTaskId: String?) -> Unit = { _, _, _ -> },
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,6 +87,7 @@ internal fun NoteAsrSurface(
                 onRetry = { indexes -> actions.retry(selected.taskId, indexes) },
                 onReplayStart = actions.replayStart,
                 onReplayRetry = actions.replayRetry,
+                onOpenDerived = actions.openDerived,
             )
         }
     }
@@ -312,6 +314,7 @@ private fun NoteAsrTaskDetail(
     onRetry: (List<Int>) -> Unit,
     onReplayStart: (String) -> Unit,
     onReplayRetry: (String) -> Unit,
+    onOpenDerived: (String, String, String?) -> Unit,
 ) {
     val d = PimTheme.dimensions
     val status = record.statusView(currentTarget)
@@ -357,6 +360,15 @@ private fun NoteAsrTaskDetail(
             item {
                 PimStatusBanner("${status.label} · ${status.detail}", statusTone(status.status),
                     Modifier.testTag("note-asr-phase-${record.taskId}"))
+            }
+            if (record.canClaimWholeComplete()) item {
+                Button(
+                    onClick = { onOpenDerived(record.versionId, record.noteId, record.taskId) },
+                    modifier = Modifier.fillMaxWidth()
+                        .testTag("note-asr-open-derived-${record.taskId}"),
+                ) {
+                    Text("生成完整记录与独立分析")
+                }
             }
             state.message?.let { problem ->
                 item { PimStatusBanner(problem, PimStatusTone.Warning) }

@@ -16,6 +16,14 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
     val recordings by model.recordings.state.collectAsStateWithLifecycle()
     val uploads by model.uploads.state.collectAsStateWithLifecycle()
     val asr by model.asr.state.collectAsStateWithLifecycle()
+    val artifacts by model.artifacts.state.collectAsStateWithLifecycle()
+    val artifactEntry by model.artifactEntry.collectAsStateWithLifecycle()
+    val artifactConsentDone by model.artifactConsentDone.collectAsStateWithLifecycle()
+    val artifactStarting by model.artifactStarting.collectAsStateWithLifecycle()
+    val artifactKind by model.artifactKind.collectAsStateWithLifecycle()
+    val artifactPendingSelections by model.artifactPendingSelections.collectAsStateWithLifecycle()
+    val artifactViews by model.artifactViews.collectAsStateWithLifecycle()
+    val artifactContentViews by model.artifactContentViews.collectAsStateWithLifecycle()
     val target = rememberUploadTarget(model.uploads)
     var showAsr by remember { mutableStateOf(false) }
     val asrActions = remember(model) {
@@ -28,6 +36,9 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
             start = model::startAsr,
             replayStart = model::replayAsrStart,
             replayRetry = model::replayAsrRetry,
+            openDerived = { versionId, noteId, asrTaskId ->
+                model.openArtifacts(versionId, noteId, asrTaskId, "")
+            },
         )
     }
     val message by model.message.collectAsStateWithLifecycle()
@@ -50,6 +61,20 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
             onDismiss = { showAsr = false },
             actions = asrActions,
         )
+        artifactEntry?.let { entry ->
+            NoteArtifactOverlay(
+                state = artifacts,
+                entry = entry,
+                consentDone = artifactConsentDone,
+                starting = artifactStarting,
+                selectedKind = artifactKind,
+                pendingSelections = artifactPendingSelections,
+                viewedCandidates = artifactViews,
+                contentViews = artifactContentViews,
+                entryActions = noteArtifactEntryActions(model),
+                screenActions = noteArtifactScreenActions(model),
+            )
+        }
       }
     }
 }

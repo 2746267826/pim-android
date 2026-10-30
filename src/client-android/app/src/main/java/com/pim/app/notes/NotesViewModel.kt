@@ -26,6 +26,7 @@ class NotesViewModel @Inject constructor(
     private val saved: SavedStateHandle,
     val uploads: NoteUploadRepository,
     val asr: NoteAsrRepository,
+    val artifacts: NoteArtifactRepository,
 ) : ViewModel() {
     val selectedId = saved.getStateFlow<String?>("noteId", null)
     private val mutableMessage = MutableStateFlow<String?>(null)
@@ -34,6 +35,21 @@ class NotesViewModel @Inject constructor(
     val busy = mutableBusy.asStateFlow()
     private val mutableCompletion = MutableStateFlow<NoteCompletion?>(null)
     val completion = mutableCompletion.asStateFlow()
+    private val mutableArtifactEntry = MutableStateFlow<NoteArtifactEntry?>(null)
+    val artifactEntry = mutableArtifactEntry.asStateFlow()
+    private val mutableArtifactConsentDone = MutableStateFlow(false)
+    val artifactConsentDone = mutableArtifactConsentDone.asStateFlow()
+    private val mutableArtifactStarting = MutableStateFlow(false)
+    val artifactStarting = mutableArtifactStarting.asStateFlow()
+    private val mutableArtifactKind = MutableStateFlow(NoteArtifactKind.FullRecord)
+    val artifactKind = mutableArtifactKind.asStateFlow()
+    private val mutableArtifactPendingSelections = MutableStateFlow<Map<NoteArtifactKind, String?>>(emptyMap())
+    val artifactPendingSelections = mutableArtifactPendingSelections.asStateFlow()
+    private val mutableArtifactViews = MutableStateFlow<Map<NoteArtifactKind, String?>>(emptyMap())
+    val artifactViews = mutableArtifactViews.asStateFlow()
+    private val mutableArtifactContentViews =
+        MutableStateFlow<Map<NoteArtifactKind, NoteArtifactContentView>>(emptyMap())
+    val artifactContentViews = mutableArtifactContentViews.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -43,6 +59,7 @@ class NotesViewModel @Inject constructor(
             materials.initialize()
             uploads.initialize()
             asr.initialize()
+            artifacts.initialize()
         }
     }
 
@@ -96,6 +113,205 @@ class NotesViewModel @Inject constructor(
     }
     fun replayAsrStart(id: String) { viewModelScope.launch { asr.replayStart(id, true) } }
     fun replayAsrRetry(id: String) { viewModelScope.launch { asr.replayRetry(id, true) } }
+
+    fun openArtifacts(versionId: String, noteId: String, asrTaskId: String?, title: String) {
+        mutableArtifactEntry.value = NoteArtifactEntry(noteId, versionId, asrTaskId, title)
+        mutableArtifactPendingSelections.value = emptyMap()
+        mutableArtifactViews.value = emptyMap()
+        mutableArtifactContentViews.value = emptyMap()
+        viewModelScope.launch {
+            artifacts.refresh(noteId, versionId)
+            mutableArtifactConsentDone.value = artifacts.state.value.tasks.any {
+                it.materialVersionId == versionId && it.noteId == noteId
+            }
+        }
+    }
+
+    fun closeArtifacts() {
+        mutableArtifactEntry.value = null
+        mutableArtifactConsentDone.value = false
+        mutableArtifactStarting.value = false
+        artifacts.clearMessage()
+    }
+
+    fun refreshArtifacts() {
+        val entry = mutableArtifactEntry.value ?: return
+        viewModelScope.launch {
+            artifacts.refresh(
+                noteId = entry.noteId,
+                materialVersionId = entry.materialVersionId,
+                selectedTaskId = artifacts.state.value.selectedTaskId,
+            )
+        }
+    }
+
+    fun confirmArtifactStart(destination: NoteArtifactDestination, kinds: Set<NoteArtifactKind>) {
+        val entry = mutableArtifactEntry.value ?: return
+        if (kinds.isEmpty() || mutableArtifactStarting.value) return
+        mutableArtifactStarting.value = true
+        mutableArtifactKind.value = kinds.minBy { it.ordinal }
+        viewModelScope.launch {
+            try {
+                artifacts.start(
+                    noteId = entry.noteId,
+                    materialVersionId = entry.materialVersionId,
+                    asrTaskId = entry.asrTaskId,
+                    destination = destination,
+                    freshlyConfirmed = true,
+                )
+                mutableArtifactConsentDone.value = true
+                artifacts.refresh(entry.noteId, entry.materialVersionId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                tell(error.message ?: "未能确认派生任务；固定材料与本机稿保留")
+            } finally {
+                mutableArtifactStarting.value = false
+            }
+        }
+    }
+
+    fun selectArtifactKind(kind: NoteArtifactKind) {
+        mutableArtifactKind.value = kind
+    }
+
+    fun stageArtifactText(request: NoteArtifactDraftEditRequest) {
+        viewModelScope.launch {
+            artifacts.stageText(request.localDraftId, request.expectedLocalRevision, request.text)
+        }
+    }
+
+    fun saveArtifactLocalDraft(request: NoteArtifactDraftSaveRequest) {
+        viewModelScope.launch {
+            artifacts.saveLocalDraft(request.localDraftId, request.expectedLocalRevision, request.text)
+        }
+    }
+
+    fun saveArtifactServerRevision(request: NoteArtifactDraftSaveRequest) {
+        val entry = mutableArtifactEntry.value ?: return
+        val draft = artifacts.state.value.drafts.firstOrNull {
+            it.localDraftId == request.localDraftId && it.kind == request.kind
+        } ?: return
+        if (draft.noteId != entry.noteId || draft.materialVersionId != entry.materialVersionId) {
+            tell("本机稿属于其他笔记或固定材料；未发送人工稿到服务端。本机稿保留。")
+            return
+        }
+        val artifact = artifacts.state.value.artifactRefs[request.kind] ?: run {
+            tell("尚无可保存的服务端结果；本机稿继续保留。")
+            return
+        }
+        val expectedHeadRevision = artifact.revision ?: run {
+            tell("尚未读取到服务端当前版本基线；请刷新后再保存，本机稿保留。")
+            return
+        }
+        val expectedHeadVersionId = artifact.headVersionId ?: run {
+            tell("服务端尚未确认当前版本；请先在候选列表明确选择此稿，选择成功后再保存人工稿。本机稿保留。")
+            return
+        }
+        val confirmedHead = artifacts.state.value.versions[request.kind].orEmpty().firstOrNull {
+            it.versionId == expectedHeadVersionId && it.isHead
+        }
+        if (confirmedHead == null ||
+            confirmedHead.sourceVersionId != entry.materialVersionId ||
+            artifact.headVersionId != expectedHeadVersionId
+        ) {
+            tell("服务端 head 尚未确认或无匹配版本；请先显式选择此稿并刷新。本机稿保留。")
+            return
+        }
+        val state = artifacts.state.value
+        val scopedBinding = state.taskBinding
+        if (scopedBinding == null || state.noteId != entry.noteId ||
+            state.materialVersionId != entry.materialVersionId || draft.binding != scopedBinding
+        ) {
+            tell("账号、服务器或固定材料上下文已变化；未发送人工稿。本机稿保留。")
+            return
+        }
+        if (draft.dirty) {
+            tell("请先保存本机稿，再同步服务端；未保存的输入不会被发送。")
+            return
+        }
+        viewModelScope.launch {
+            artifacts.saveManualRevisionToServer(
+                kind = request.kind,
+                artifactId = artifact.artifactId,
+                localDraftId = draft.localDraftId,
+                expectedLocalRevision = draft.localRevision,
+                expectedHeadRevision = expectedHeadRevision,
+                expectedHeadVersionId = expectedHeadVersionId,
+                contentMarkdown = draft.text,
+            )
+            if (artifacts.state.value.noteId == null) artifacts.refresh(entry.noteId, entry.materialVersionId)
+        }
+    }
+
+    fun viewArtifactCandidate(kind: NoteArtifactKind, candidateId: String) {
+        mutableArtifactViews.value = mutableArtifactViews.value + (kind to candidateId)
+        mutableArtifactContentViews.value =
+            mutableArtifactContentViews.value + (kind to NoteArtifactContentView.ServerOriginal)
+    }
+
+    fun changeArtifactContentView(kind: NoteArtifactKind, view: NoteArtifactContentView) {
+        mutableArtifactContentViews.value = mutableArtifactContentViews.value + (kind to view)
+    }
+
+    fun selectArtifactCandidate(kind: NoteArtifactKind, candidateId: String) {
+        if (mutableArtifactPendingSelections.value[kind] != null) return
+        val artifact = artifacts.state.value.artifactRefs[kind] ?: run {
+            tell("尚无可选的服务端结果或完整元数据；请刷新后重试，本机稿保留。")
+            return
+        }
+        val revision = artifact.revision ?: run {
+            tell("尚未读取到服务端当前版本基线；请刷新后重试，本机稿保留。")
+            return
+        }
+        mutableArtifactPendingSelections.value =
+            mutableArtifactPendingSelections.value + (kind to candidateId)
+        viewModelScope.launch {
+            try {
+                artifacts.selectCandidate(artifact.artifactId, revision, candidateId)
+            } finally {
+                mutableArtifactPendingSelections.value =
+                    mutableArtifactPendingSelections.value - kind
+            }
+        }
+    }
+
+    fun regenerateArtifact(kind: NoteArtifactKind) {
+        val entry = mutableArtifactEntry.value ?: return
+        viewModelScope.launch { artifacts.regenerate(kind, entry.materialVersionId) }
+    }
+
+    fun stopArtifact(kind: NoteArtifactKind) {
+        latestArtifactTask(kind)?.let { task ->
+            viewModelScope.launch { artifacts.stop(task.taskId) }
+        }
+    }
+
+    fun recoverArtifact(kind: NoteArtifactKind) {
+        val task = latestArtifactTask(kind) ?: return
+        viewModelScope.launch {
+            when {
+                task.pendingRetry?.requiresExplicitReplay() == true ->
+                    artifacts.replayRetry(task.taskId, freshlyConfirmed = true)
+                task.remote == null && task.localPhase in setOf(
+                    NoteArtifactIntentPhase.Prepared,
+                    NoteArtifactIntentPhase.Submitting,
+                    NoteArtifactIntentPhase.VerificationPending,
+                ) -> artifacts.replayStart(task.taskId, freshlyConfirmed = true)
+                else -> artifacts.verifyTask(task.taskId)
+            }
+        }
+    }
+
+    private fun latestArtifactTask(kind: NoteArtifactKind): NoteArtifactTaskRecord? {
+        val entry = mutableArtifactEntry.value ?: return null
+        return artifacts.state.value.tasks
+            .filter {
+                it.supports(kind) && it.noteId == entry.noteId &&
+                    it.materialVersionId == entry.materialVersionId
+            }
+            .maxByOrNull { it.updatedAtMillis }
+    }
 
     fun prepareMaterial(noteId: String, anchor: NoteInsertion, cameraToken: String? = null) {
         cancelMaterial()

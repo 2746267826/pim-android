@@ -1190,6 +1190,315 @@ data class NoteAsrTaskDtoIReadOnlyListApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.NoteDerivedArtifactDto`（response）。 */
+@Serializable
+data class NoteDerivedArtifactDto(
+    val artifactId: String,
+    val headVersionId: String? = null,
+    val kind: NoteDerivedArtifactKind,
+    val noteId: String,
+    val revision: String,
+    val versions: List<NoteDerivedVersionSummaryDto>,
+)
+
+/** 契约 `components.schemas.NoteDerivedArtifactDtoApiResponse`（response）。 */
+@Serializable
+data class NoteDerivedArtifactDtoApiResponse(
+    val code: Int,
+    val data: NoteDerivedArtifactDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedArtifactDtoIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class NoteDerivedArtifactDtoIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<NoteDerivedArtifactDto>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedArtifactKind`（response）。 */
+/**
+ * 契约枚举 `NoteDerivedArtifactKind`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteDerivedArtifactKind {
+    @SerialName("CompleteRecord")
+    COMPLETERECORD,
+    @SerialName("IndependentAnalysis")
+    INDEPENDENTANALYSIS,
+}
+
+/** 契约 `components.schemas.NoteDerivedArtifactRefDto`（response）。 */
+@Serializable
+data class NoteDerivedArtifactRefDto(
+    val artifactId: String,
+    val headVersionId: String? = null,
+    val kind: NoteDerivedArtifactKind,
+)
+
+/** 契约 `components.schemas.NoteDerivedAttemptDto`（response）。 */
+@Serializable
+data class NoteDerivedAttemptDto(
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+    val logId: String? = null,
+    val requestId: String,
+    val status: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedCoverageDto`（response）。 */
+@Serializable
+data class NoteDerivedCoverageDto(
+    val complete: Boolean,
+    val completedInkPreviews: Int,
+    val completedPhotos: Int,
+    val completedTranscriptSegments: Int,
+    val completedVisionBatches: Int,
+    val inkPreviews: Int,
+    val issues: List<NoteDerivedIssueDto>,
+    val photos: Int,
+    val textBlocks: Int,
+    val transcriptSegments: Int,
+    val visionBatches: Int,
+)
+
+/** 契约 `components.schemas.NoteDerivedDestinationDto`（response）。 */
+@Serializable
+data class NoteDerivedDestinationDto(
+    val backgroundProcessingAvailable: Boolean,
+    val capabilities: List<String>,
+    val displayName: String,
+    val endpoint: String,
+    val model: String,
+    val modelId: String,
+    val modelRevision: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedDestinationsDto`（response）。 */
+@Serializable
+data class NoteDerivedDestinationsDto(
+    val items: List<NoteDerivedDestinationDto>,
+    val total: Int,
+)
+
+/** 契约 `components.schemas.NoteDerivedDestinationsDtoApiResponse`（response）。 */
+@Serializable
+data class NoteDerivedDestinationsDtoApiResponse(
+    val code: Int,
+    val data: NoteDerivedDestinationsDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedGenerationConsent`（request+response）。 */
+@Serializable
+data class NoteDerivedGenerationConsent(
+    val confirmed: Boolean,
+    val endpoint: String,
+    val modelId: String,
+    val modelRevision: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedIssueDto`（response）。 */
+@Serializable
+data class NoteDerivedIssueDto(
+    val blockId: String? = null,
+    val code: String,
+    val message: String,
+    val sourcePath: String? = null,
+    val stepKey: String? = null,
+)
+
+/** 契约 `components.schemas.NoteDerivedLimitsDto`（response）。 */
+@Serializable
+data class NoteDerivedLimitsDto(
+    val maxDerivedContentCharacters: Int,
+    val maxEvidenceCharsPerStep: Int,
+    val maxEvidenceSteps: Int,
+    val maxImageBytes: Int,
+    val maxImages: Int,
+    val maxImagesPerVisionCall: Int,
+    val maxSynthesisInputChars: Int,
+    val maxVisionCallBytes: Int,
+    val maxVisionCalls: Int,
+)
+
+/** 契约 `components.schemas.NoteDerivedLimitsDtoApiResponse`（response）。 */
+@Serializable
+data class NoteDerivedLimitsDtoApiResponse(
+    val code: Int,
+    val data: NoteDerivedLimitsDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedMutationDto`（response）。 */
+@Serializable
+data class NoteDerivedMutationDto(
+    val artifact: NoteDerivedArtifactDto,
+    val hasConflict: Boolean,
+    val isHead: Boolean,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedMutationDtoApiResponse`（response）。 */
+@Serializable
+data class NoteDerivedMutationDtoApiResponse(
+    val code: Int,
+    val data: NoteDerivedMutationDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedStepDto`（response）。 */
+@Serializable
+data class NoteDerivedStepDto(
+    val attempts: List<NoteDerivedAttemptDto>,
+    val key: String,
+    val kind: NoteDerivedStepKind,
+    val status: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedStepKind`（response）。 */
+/**
+ * 契约枚举 `NoteDerivedStepKind`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteDerivedStepKind {
+    @SerialName("ImageEvidence")
+    IMAGEEVIDENCE,
+    @SerialName("RecordSynthesis")
+    RECORDSYNTHESIS,
+    @SerialName("AnalysisSynthesis")
+    ANALYSISSYNTHESIS,
+}
+
+/** 契约 `components.schemas.NoteDerivedStepsDto`（response）。 */
+@Serializable
+data class NoteDerivedStepsDto(
+    val items: List<NoteDerivedStepDto>,
+    val offset: Int,
+    val total: Int,
+)
+
+/** 契约 `components.schemas.NoteDerivedStepsDtoApiResponse`（response）。 */
+@Serializable
+data class NoteDerivedStepsDtoApiResponse(
+    val code: Int,
+    val data: NoteDerivedStepsDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedTaskDto`（response）。 */
+@Serializable
+data class NoteDerivedTaskDto(
+    val artifacts: List<NoteDerivedArtifactRefDto>,
+    val asrRevision: String? = null,
+    val asrTaskId: String? = null,
+    val backgroundProcessingAvailable: Boolean? = null,
+    val coverage: NoteDerivedCoverageDto,
+    val createdAt: String,
+    val destination: NoteDerivedGenerationConsent,
+    val inputSha256: String,
+    val issues: List<NoteDerivedIssueDto>,
+    val manifestSha256: String,
+    val noteId: String,
+    val phase: String,
+    val planVersion: String,
+    val revision: String,
+    val sourceVersionId: String,
+    val steps: List<NoteDerivedStepDto>,
+    val stopRequested: Boolean,
+    val taskId: String,
+    val updatedAt: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedTaskDtoApiResponse`（response）。 */
+@Serializable
+data class NoteDerivedTaskDtoApiResponse(
+    val code: Int,
+    val data: NoteDerivedTaskDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedTaskDtoIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class NoteDerivedTaskDtoIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<NoteDerivedTaskDto>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedVersionAuthor`（response）。 */
+/**
+ * 契约枚举 `NoteDerivedVersionAuthor`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteDerivedVersionAuthor {
+    @SerialName("Model")
+    MODEL,
+    @SerialName("User")
+    USER,
+}
+
+/** 契约 `components.schemas.NoteDerivedVersionDto`（response）。 */
+@Serializable
+data class NoteDerivedVersionDto(
+    val aiCallLogId: String? = null,
+    val artifactId: String,
+    val author: NoteDerivedVersionAuthor,
+    val contentMarkdown: String,
+    val contentSha256: String,
+    val coverage: NoteDerivedCoverageDto? = null,
+    val createdAt: String,
+    val generationTaskId: String? = null,
+    val hasConflict: Boolean,
+    val inputSha256: String,
+    val isHead: Boolean,
+    val kind: NoteDerivedArtifactKind,
+    val manifestSha256: String,
+    val modelEndpoint: String? = null,
+    val modelProfileId: String? = null,
+    val modelRevision: String? = null,
+    val observedHeadVersionId: String? = null,
+    val parentVersionId: String? = null,
+    val planVersion: String,
+    val promptVersion: String,
+    val sourceCompleteRecordVersionId: String? = null,
+    val sourceVersionId: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedVersionDtoApiResponse`（response）。 */
+@Serializable
+data class NoteDerivedVersionDtoApiResponse(
+    val code: Int,
+    val data: NoteDerivedVersionDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteDerivedVersionSummaryDto`（response）。 */
+@Serializable
+data class NoteDerivedVersionSummaryDto(
+    val author: NoteDerivedVersionAuthor,
+    val contentSha256: String,
+    val createdAt: String,
+    val generationTaskId: String? = null,
+    val hasConflict: Boolean,
+    val isHead: Boolean,
+    val parentVersionId: String? = null,
+    val sourceCompleteRecordVersionId: String? = null,
+    val sourceVersionId: String,
+    val versionId: String,
+)
+
 /** 契约 `components.schemas.NoteMaterialUploadDto`（response）。 */
 @Serializable
 data class NoteMaterialUploadDto(
@@ -1364,6 +1673,26 @@ data class RetryNoteAsrRequest(
     val segmentIndexes: List<Int>,
 )
 
+/** 契约 `components.schemas.RetryNoteDerivedTaskRequest`（request）。 */
+@Serializable
+data class RetryNoteDerivedTaskRequest(
+    val acknowledgePossibleDuplicateCharge: Boolean,
+    val consent: NoteDerivedGenerationConsent,
+    val expectedRevision: String,
+    val expectedUserId: String,
+    val retryId: String,
+    val stepKeys: List<String>,
+)
+
+/** 契约 `components.schemas.SaveNoteDerivedManualRevisionRequest`（request）。 */
+@Serializable
+data class SaveNoteDerivedManualRevisionRequest(
+    val contentMarkdown: String,
+    val expectedHeadRevision: String,
+    val expectedHeadVersionId: String? = null,
+    val revisionId: String,
+)
+
 /** 契约 `components.schemas.SearchResult`（response）。 */
 @Serializable
 data class SearchResult(
@@ -1394,12 +1723,29 @@ data class SearchResultPagedResultApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.SelectNoteDerivedVersionRequest`（request）。 */
+@Serializable
+data class SelectNoteDerivedVersionRequest(
+    val expectedHeadRevision: String,
+    val versionId: String,
+)
+
 /** 契约 `components.schemas.StartNoteAsrRequest`（request）。 */
 @Serializable
 data class StartNoteAsrRequest(
     val consent: AiAsrDestinationConsent,
     val expectedUserId: String,
     val language: String? = null,
+    val taskId: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.StartNoteDerivedTaskRequest`（request）。 */
+@Serializable
+data class StartNoteDerivedTaskRequest(
+    val asrTaskId: String? = null,
+    val consent: NoteDerivedGenerationConsent,
+    val expectedUserId: String,
     val taskId: String,
     val versionId: String,
 )

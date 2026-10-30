@@ -8,8 +8,21 @@ import com.pim.core.contract.NoteAsrSegmentsDtoApiResponse
 import com.pim.core.contract.NoteAsrSourcesDtoApiResponse
 import com.pim.core.contract.NoteAsrTaskDtoApiResponse
 import com.pim.core.contract.NoteAsrTaskDtoIReadOnlyListApiResponse
+import com.pim.core.contract.NoteDerivedArtifactDtoApiResponse
+import com.pim.core.contract.NoteDerivedArtifactDtoIReadOnlyListApiResponse
+import com.pim.core.contract.NoteDerivedDestinationsDtoApiResponse
+import com.pim.core.contract.NoteDerivedLimitsDtoApiResponse
+import com.pim.core.contract.NoteDerivedMutationDtoApiResponse
+import com.pim.core.contract.NoteDerivedStepsDtoApiResponse
+import com.pim.core.contract.NoteDerivedTaskDtoApiResponse
+import com.pim.core.contract.NoteDerivedTaskDtoIReadOnlyListApiResponse
+import com.pim.core.contract.NoteDerivedVersionDtoApiResponse
 import com.pim.core.contract.RetryNoteAsrRequest
+import com.pim.core.contract.RetryNoteDerivedTaskRequest
+import com.pim.core.contract.SaveNoteDerivedManualRevisionRequest
+import com.pim.core.contract.SelectNoteDerivedVersionRequest
 import com.pim.core.contract.StartNoteAsrRequest
+import com.pim.core.contract.StartNoteDerivedTaskRequest
 
 import com.pim.core.contract.AuthResponseApiResponse
 import com.pim.core.contract.CalendarOperationResultApiResponse
@@ -131,6 +144,68 @@ interface ApiService {
         @Path("taskId") taskId: String,
         @Body request: RetryNoteAsrRequest
     ): NoteAsrTaskDtoApiResponse
+
+    // Fixed native-note derived artifacts. The same bound owner/server route family covers these calls.
+    @GET("native-notes/derived-tasks/limits")
+    suspend fun getNoteDerivedLimits(): NoteDerivedLimitsDtoApiResponse
+
+    @GET("native-notes/derived-tasks/destinations")
+    suspend fun getNoteDerivedDestinations(): NoteDerivedDestinationsDtoApiResponse
+
+    @GET("native-notes/derived-tasks/sources")
+    suspend fun getNoteDerivedSources(
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 20
+    ): NoteAsrSourcesDtoApiResponse
+
+    @GET("native-notes/derived-tasks")
+    suspend fun getNoteDerivedTasks(@Query("noteId") noteId: String? = null): NoteDerivedTaskDtoIReadOnlyListApiResponse
+
+    @POST("native-notes/derived-tasks")
+    suspend fun startNoteDerivedTask(@Body request: StartNoteDerivedTaskRequest): NoteDerivedTaskDtoApiResponse
+
+    @GET("native-notes/derived-tasks/{taskId}")
+    suspend fun getNoteDerivedTask(@Path("taskId") taskId: String): NoteDerivedTaskDtoApiResponse
+
+    @GET("native-notes/derived-tasks/{taskId}/steps")
+    suspend fun getNoteDerivedSteps(
+        @Path("taskId") taskId: String,
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 10
+    ): NoteDerivedStepsDtoApiResponse
+
+    @POST("native-notes/derived-tasks/{taskId}/stop")
+    suspend fun stopNoteDerivedTask(@Path("taskId") taskId: String): NoteDerivedTaskDtoApiResponse
+
+    @POST("native-notes/derived-tasks/{taskId}/retry")
+    suspend fun retryNoteDerivedTask(
+        @Path("taskId") taskId: String,
+        @Body request: RetryNoteDerivedTaskRequest
+    ): NoteDerivedTaskDtoApiResponse
+
+    @GET("native-notes/derived-artifacts")
+    suspend fun getNoteDerivedArtifacts(@Query("noteId") noteId: String): NoteDerivedArtifactDtoIReadOnlyListApiResponse
+
+    @GET("native-notes/derived-artifacts/{artifactId}")
+    suspend fun getNoteDerivedArtifact(@Path("artifactId") artifactId: String): NoteDerivedArtifactDtoApiResponse
+
+    @GET("native-notes/derived-artifacts/{artifactId}/versions/{versionId}")
+    suspend fun getNoteDerivedVersion(
+        @Path("artifactId") artifactId: String,
+        @Path("versionId") versionId: String
+    ): NoteDerivedVersionDtoApiResponse
+
+    @POST("native-notes/derived-artifacts/{artifactId}/manual-revisions")
+    suspend fun saveNoteDerivedManualRevision(
+        @Path("artifactId") artifactId: String,
+        @Body request: SaveNoteDerivedManualRevisionRequest
+    ): NoteDerivedMutationDtoApiResponse
+
+    @POST("native-notes/derived-artifacts/{artifactId}/select")
+    suspend fun selectNoteDerivedVersion(
+        @Path("artifactId") artifactId: String,
+        @Body request: SelectNoteDerivedVersionRequest
+    ): NoteDerivedArtifactDtoApiResponse
 
     // Auth
     @POST("auth/login")

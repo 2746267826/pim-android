@@ -47,6 +47,7 @@ fun NativeNotesScreen(
     onUpload: (String, NoteUploadTarget) -> Unit = { _, _ -> }, onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
     asr: NoteAsrRepositoryState = NoteAsrRepositoryState(), asrActions: NoteAsrActions = NoteAsrActions(),
     initialAsr: Boolean = false,
+    artifactOverlay: @Composable () -> Unit = {},
 ) {
     val d = PimTheme.dimensions
     val note = state.documents[selectedId]
@@ -238,6 +239,7 @@ fun NativeNotesScreen(
                 onDismiss = { showAsr = false },
                 actions = asrActions,
             )
+            artifactOverlay()
         }
     }
 }

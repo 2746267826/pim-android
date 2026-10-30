@@ -740,6 +740,8 @@ class NativeNoteDerivedE2ETest {
 
     private fun saveHumanThroughUi(kind: NoteArtifactKind, text: String): NoteDerivedVersionDto {
         compose.onNodeWithTag("note-artifact-kind-${kind.name}").performClick()
+        // API-driven completion does not mutate Compose state; refresh the real screen first.
+        refreshArtifactScreen()
         selectModelCandidateForManualRevision(kind)
         enterDraftText(kind, text)
         saveLocalDraftThroughUi(kind)

@@ -257,6 +257,7 @@ class NativeNoteDerivedE2ETest {
         captureCaseEvidence("unknown-start-recovery") {
             val fixture = prepareAsrAndOpenDerived("unknown")
             qa("faults/arm?kind=derived-start-response")
+            qa("faults/arm?kind=derived-task-response")
             val providerBefore = providerSummary()
             val task = startDerivedFromEntry(fixture, expectBothKinds = false)
             val localTask = NoteArtifactTaskStore.at(context.noBackupFilesDir)
@@ -515,11 +516,10 @@ class NativeNoteDerivedE2ETest {
     private fun openCompletedAsrTask(taskId: String) {
         waitForEnabledTag("note-asr-refresh")
         compose.onNodeWithTag("note-asr-refresh").performClick()
-        compose.waitUntil(30_000) {
-            compose.onAllNodesWithTag("note-asr-task-open-$taskId").fetchSemanticsNodes().isNotEmpty()
-        }
         scrollToNodeEventually("note-asr-tasks", hasTestTag("note-asr-task-open-$taskId"))
-        compose.onNodeWithTag("note-asr-task-open-$taskId").performClick()
+        compose.onNodeWithTag("note-asr-task-open-$taskId")
+            .assertIsDisplayed()
+            .performClick()
         compose.waitUntil(30_000) {
             compose.onAllNodesWithTag("note-asr-detail-$taskId").fetchSemanticsNodes().isNotEmpty()
         }

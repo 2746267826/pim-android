@@ -18,21 +18,12 @@ import com.pim.app.data.MobileAppMetadataEntity
 import com.pim.app.data.MobileSyncStatus
 import com.pim.app.data.MobileUsageEventEntity
 import com.pim.app.data.PimDatabaseMigrations
-import com.pim.app.mobile.logs.StructuredLogRepository
-import com.pim.app.mobile.usage.AppMetadataCollector
-import com.pim.app.mobile.usage.UsageEventCollector
-import com.pim.app.mobile.usage.UsageAccessChecker
 import com.pim.app.ui.components.LegacyOutboxClaimDialog
 import com.pim.app.ui.theme.PimTheme
 import com.pim.core.auth.TokenManager
-import com.pim.core.network.ApiClientProvider
-import com.pim.core.network.ApiService
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
-import dagger.hilt.EntryPoint
-import dagger.hilt.InstallIn
 import dagger.hilt.android.EntryPointAccessors
-import dagger.hilt.components.SingletonComponent
 import java.time.Instant
 import java.util.Collections
 import java.util.concurrent.atomic.AtomicBoolean
@@ -746,23 +737,4 @@ class MobileSyncUpgradeE2ETest {
         private const val V3_EVENT_TIME_UTC = 1_790_000_000_000L
         private const val SYNC_PREFS_NAME = "pim_mobile_sync_state"
     }
-}
-
-@EntryPoint
-@InstallIn(SingletonComponent::class)
-internal interface SyncDepsEntryPoint {
-    fun apiService(): ApiService
-    fun apiClientProvider(): ApiClientProvider
-    fun tokenManager(): TokenManager
-    fun usageAccessChecker(): UsageAccessChecker
-    fun usageEventCollector(): UsageEventCollector
-    fun appMetadataCollector(): AppMetadataCollector
-    fun structuredLogRepository(): StructuredLogRepository
-    fun mobileHeartbeatReporter(): MobileHeartbeatReporter
-    fun serverSettingsStore(): ServerSettingsStore
-    fun locationUploadCoordinator(): LocationUploadCoordinator
-    fun forensicUploadCoordinator(): com.pim.app.forensics.ForensicUploadCoordinator
-    fun wakeHeartbeatRecorder(): com.pim.app.forensics.WakeHeartbeatRecorder
-    fun mobileSyncScheduler(): MobileSyncScheduler
-    fun deviceIdentityProvider(): DeviceIdentityProvider
 }

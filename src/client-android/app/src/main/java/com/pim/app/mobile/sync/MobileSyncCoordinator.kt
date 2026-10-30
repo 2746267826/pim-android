@@ -1273,7 +1273,11 @@ class MobileSyncCoordinator @Inject constructor(
         maxBatchesPerRun: Int = MAX_USAGE_BATCHES_PER_RUN,
         maxDurationMs: Long = MAX_USAGE_BATCH_DURATION_MS
     ): MobileSyncState? {
-        val initialBatch = loadPendingUsageBatch(mobileDataDao, USAGE_BATCH_LIMIT)
+        val initialBatch = try {
+            loadPendingUsageBatch(mobileDataDao, USAGE_BATCH_LIMIT)
+        } catch (ex: UsageWindowOverflowException) {
+            return blockedUsageWindowState(attemptedAt)
+        }
         if (initialBatch.totalCount == 0) return null
 
         var batchCount = 0
@@ -1284,7 +1288,15 @@ class MobileSyncCoordinator @Inject constructor(
             (SystemClock.elapsedRealtime() - startTime) < maxDurationMs
         ) {
             currentCoroutineContext().ensureActive()
-            val batch = if (batchCount == 0) initialBatch else loadPendingUsageBatch(mobileDataDao, USAGE_BATCH_LIMIT)
+            val batch = try {
+                if (batchCount == 0) {
+                    initialBatch
+                } else {
+                    loadPendingUsageBatch(mobileDataDao, USAGE_BATCH_LIMIT)
+                }
+            } catch (ex: UsageWindowOverflowException) {
+                return blockedUsageWindowState(attemptedAt)
+            }
             if (batch.totalCount == 0) break
             batchCount++
 
@@ -1399,6 +1411,29 @@ class MobileSyncCoordinator @Inject constructor(
         }
 
         return accumulatedState
+    }
+
+    private suspend fun blockedUsageWindowState(attemptedAt: String): MobileSyncState {
+        val pending = pendingUsageRemaining(mobileDataDao)
+        val message = "usage-timestamp-cannot-form-half-open-window"
+        val blocked = state(
+            phase = "upload-blocked",
+            progressText = "本地存在无法表示为半开窗口的毫秒时间戳，已停止上传并保留 pending 数据。",
+            outcome = MobileSyncOutcome.BLOCKED,
+            failedCount = pending,
+            lastError = message,
+            lastErrorDetail = message,
+            lastBatchStatus = "local-window-blocked",
+            pendingQueueCount = pending,
+            lastAttemptedUploadAt = attemptedAt
+        )
+        logs.warn(
+            "mobile-sync",
+            "本地使用记录无法形成半开窗口，已阻止上传且未删除 pending 数据。",
+            mapOf("reason" to message)
+        )
+        persistState(blocked)
+        return blocked
     }
 
     private fun usageBatchRecoveryBinding(payloadFingerprint: String): UsageBatchRecoveryBinding {
@@ -2172,7 +2207,11 @@ internal suspend fun loadPendingUsageBatch(
 
 internal fun MobileUsageSummaryEntity.hasSupportedUsageBatchWindow(): Boolean {
     if (windowEndUtc <= windowStartUtc) return false
-    return windowEndUtc - windowStartUtc <= USAGE_BATCH_MAX_WINDOW_MS
+    return try {
+        usageWindowSpan(windowStartUtc, windowEndUtc) <= USAGE_BATCH_MAX_WINDOW_MS
+    } catch (_: UsageWindowOverflowException) {
+        false
+    }
 }
 
 /**
@@ -2229,6 +2268,8 @@ private enum class UsageQueueKind(val order: Int) {
     App(2)
 }
 
+internal class UsageWindowOverflowException(message: String) : IllegalArgumentException(message)
+
 private sealed class UsageQueueEntry(
     val kind: UsageQueueKind,
     val startUtc: Long,
@@ -2242,7 +2283,7 @@ private sealed class UsageQueueEntry(
     class Event(val row: MobileUsageEventEntity) : UsageQueueEntry(
         kind = UsageQueueKind.Event,
         startUtc = row.eventTimeUtc,
-        endUtc = row.eventTimeUtc,
+        endUtc = pointExclusiveEnd(row.eventTimeUtc),
         syncStatus = row.syncStatus,
         stableKey = row.id.toString()
     )
@@ -2258,10 +2299,28 @@ private sealed class UsageQueueEntry(
     class App(val row: MobileAppMetadataEntity) : UsageQueueEntry(
         kind = UsageQueueKind.App,
         startUtc = row.collectedAtUtc,
-        endUtc = row.collectedAtUtc,
+        endUtc = pointExclusiveEnd(row.collectedAtUtc),
         syncStatus = row.syncStatus,
         stableKey = "${row.packageName}@${row.versionCode}"
     )
+}
+
+private fun pointExclusiveEnd(timestampUtc: Long): Long {
+    if (timestampUtc == Long.MAX_VALUE) {
+        throw UsageWindowOverflowException(
+            "timestamp cannot be represented as a half-open window end"
+        )
+    }
+    return timestampUtc + 1L
+}
+
+private fun usageWindowSpan(startUtc: Long, endUtc: Long): Long {
+    if (endUtc <= startUtc) return 0L
+    return try {
+        Math.subtractExact(endUtc, startUtc)
+    } catch (_: ArithmeticException) {
+        throw UsageWindowOverflowException("window span exceeds representable Long range")
+    }
 }
 
 private class MutableUsageBatch(
@@ -2282,8 +2341,9 @@ private class MutableUsageBatch(
         val currentEnd = windowEndUtc ?: return true
         val nextStart = minOf(currentStart, entry.startUtc)
         val nextEnd = maxOf(currentEnd, entry.endUtc)
-        val nextSpan = (nextEnd - nextStart).coerceAtLeast(1)
-        val currentSpan = (currentEnd - currentStart).coerceAtLeast(1)
+        val nextSpan = usageWindowSpan(nextStart, nextEnd)
+        if (nextSpan > USAGE_BATCH_MAX_WINDOW_MS) return false
+        val currentSpan = usageWindowSpan(currentStart, currentEnd)
         return nextSpan <= targetWindowMs || nextSpan <= currentSpan
     }
 
@@ -2301,7 +2361,7 @@ private class MutableUsageBatch(
         val start = windowStartUtc
         val rawEnd = windowEndUtc
         val end = if (start != null && rawEnd != null) {
-            maxOf(rawEnd, start + 1)
+            if (rawEnd > start) rawEnd else pointExclusiveEnd(start)
         } else {
             rawEnd
         }

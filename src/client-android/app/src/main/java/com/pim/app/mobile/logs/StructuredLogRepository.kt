@@ -31,6 +31,11 @@ data class StructuredLogFileSnapshot(
     val content: String
 )
 
+internal data class StructuredLogFileRef(
+    val fileName: String,
+    val lengthBytes: Long
+)
+
 @Singleton
 class StructuredLogRepository internal constructor(
     @ApplicationContext private val context: Context,
@@ -147,6 +152,22 @@ class StructuredLogRepository internal constructor(
                 ?.filter { it.isFile && it.name.startsWith("mobile-") && it.name.endsWith(".jsonl") }
                 ?.sortedBy { it.name }
                 ?.map { StructuredLogFileSnapshot(it.name, it.readText(Charsets.UTF_8)) }
+                ?: emptyList()
+        }
+    }
+
+    /**
+     * Captures append-only log prefixes without reading file bodies.
+     * Newest files are first because the total export budget is finite.
+     */
+    internal suspend fun snapshotFileRefs(): List<StructuredLogFileRef> = withContext(Dispatchers.IO) {
+        mutex.withLock {
+            val logDir = File(context.filesDir, "logs")
+            if (!logDir.isDirectory) return@withLock emptyList()
+            logDir.listFiles()
+                ?.filter { it.isFile && it.name.startsWith("mobile-") && it.name.endsWith(".jsonl") }
+                ?.sortedByDescending { it.name }
+                ?.map { StructuredLogFileRef(it.name, it.length()) }
                 ?: emptyList()
         }
     }

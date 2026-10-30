@@ -878,7 +878,11 @@ private fun DiagnosticsSection(
         }
 
         exportState.feedback?.let { feedback ->
-            ExportFeedbackSurface(feedback, exportState.coordinateCount)
+            ExportFeedbackSurface(
+                feedback = feedback,
+                coordinateCount = exportState.coordinateCount,
+                partialSummary = exportState.partialSummary
+            )
         }
 
         exportState.exportedFile?.takeIf { !exportState.isExporting }?.let { file ->
@@ -899,14 +903,23 @@ private fun DiagnosticsSection(
 @Composable
 private fun ExportFeedbackSurface(
     feedback: DiagnosticExportFeedback,
-    coordinateCount: Int
+    coordinateCount: Int,
+    partialSummary: String
 ) {
+    val partialText = partialSummary.ifBlank {
+        "诊断包已生成，但日志导出不完整；详见 manifest.json"
+    }
     val text = when (feedback) {
         DiagnosticExportFeedback.PackageReady -> "诊断包已生成"
         DiagnosticExportFeedback.PackageReadyWithLocations ->
             "诊断包已生成，包含 ${coordinateCount} 条原始位置记录"
-        DiagnosticExportFeedback.ShareOpened -> "已打开系统分享"
-        DiagnosticExportFeedback.ShareUnavailable -> "无法打开系统分享"
+        DiagnosticExportFeedback.PackageReadyPartial -> partialText
+        DiagnosticExportFeedback.PackageReadyPartialWithLocations ->
+            "诊断包已生成，包含 ${coordinateCount} 条原始位置记录。$partialText"
+        DiagnosticExportFeedback.ShareOpened ->
+            "已打开系统分享" + partialSummary.takeIf { it.isNotBlank() }?.let { "。$it" }.orEmpty()
+        DiagnosticExportFeedback.ShareUnavailable ->
+            "无法打开系统分享" + partialSummary.takeIf { it.isNotBlank() }?.let { "。$it" }.orEmpty()
         DiagnosticExportFeedback.InsufficientStorage -> "存储空间不足，无法生成诊断包"
         DiagnosticExportFeedback.ExportFailed -> "导出失败，请重试"
     }

@@ -294,6 +294,27 @@ class MobileSyncQueuedUploadTest {
     }
 
     @Test
+    fun `unrepresentable Long MAX point blocks upload and preserves pending row`() = runTest {
+        val eventId = db.mobileDataDao().insertUsageEvents(
+            listOf(usageEvent(Long.MAX_VALUE, "com.max.timestamp"))
+        ).single()
+
+        val state = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "max-timestamp-device",
+                attemptedAt = "2026-10-29T00:00:00Z",
+                manualRecoveryRetry = false
+            )
+        )
+
+        assertEquals("upload-blocked", state.phase)
+        assertEquals(MobileSyncOutcome.BLOCKED, state.outcome)
+        assertEquals(1, pendingUsageRemaining(db.mobileDataDao()))
+        assertEquals(0, uploadInterceptor.requests.size)
+        assertEquals(eventId, db.mobileDataDao().getUsageEventsBySyncStatus().single().id)
+    }
+
+    @Test
     fun `bound session change blocks binding and keeps pending without false acknowledgement`() = runTest {
         val eventId = db.mobileDataDao().insertUsageEvents(
             listOf(usageEvent(1_750_000_000_000L, "com.session.changed"))

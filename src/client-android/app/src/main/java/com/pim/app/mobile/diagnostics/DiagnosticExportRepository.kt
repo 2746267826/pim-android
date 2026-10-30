@@ -8,6 +8,7 @@ import com.pim.app.data.AppDatabase
 import com.pim.app.location.PolicyTransitionWriteFailure
 import com.pim.app.location.PolicyTransitionWriteFailureSource
 import com.pim.app.location.service.ForegroundLocationRuntimeState
+import com.pim.app.mobile.logs.StructuredLogFileRef
 import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.permissions.PermissionStatusRepository
 import com.pim.app.schedule.ScheduleCacheFreshness
@@ -20,14 +21,20 @@ import com.pim.app.status.PermissionStatusSnapshot
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.currentCoroutineContext
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import org.json.JSONArray
 import org.json.JSONObject
+import java.io.BufferedInputStream
 import java.io.BufferedOutputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
+import java.io.FileNotFoundException
+import java.io.InputStream
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
@@ -45,7 +52,9 @@ interface DiagnosticOperations {
 
 data class DiagnosticExportResult(
     val file: File,
-    val coordinateCount: Int
+    val coordinateCount: Int,
+    val isPartial: Boolean = false,
+    val summary: String = ""
 )
 
 class DiagnosticExportException(
@@ -53,6 +62,76 @@ class DiagnosticExportException(
     override val message: String,
     override val cause: Throwable? = null
 ) : Exception(message, cause)
+
+private data class LogFileExport(
+    val name: String,
+    val originalBytes: Long,
+    val includedBytes: Long,
+    val exportedBytes: Long,
+    val oversizedLineCount: Int,
+    val reasons: Set<String>
+) {
+    val suppressedBytes: Long get() = (originalBytes - includedBytes).coerceAtLeast(0L)
+}
+
+private data class OmittedLogFile(
+    val name: String,
+    val originalBytes: Long,
+    val reason: String
+)
+
+private data class LogFileWriteResult(
+    val readBytes: Long,
+    val file: LogFileExport
+)
+
+private data class LogExportSummary(
+    val files: MutableList<LogFileExport> = mutableListOf(),
+    val omittedFiles: MutableList<OmittedLogFile> = mutableListOf()
+) {
+    fun add(file: LogFileExport) {
+        files += file
+    }
+
+    fun omitFile(ref: StructuredLogFileRef, reason: String) {
+        omittedFiles += OmittedLogFile("logs/${ref.fileName}", ref.lengthBytes, reason)
+    }
+
+    fun toSummary(maxLineBytes: Int, maxFileBytes: Long, maxTotalBytes: Long) = LogExportView(
+        limits = LogExportLimits(maxLineBytes, maxFileBytes, maxTotalBytes),
+        files = files.toList(),
+        omittedFiles = omittedFiles.toList()
+    )
+}
+
+private data class LogExportLimits(
+    val maxLineBytes: Int,
+    val maxFileBytes: Long,
+    val maxTotalBytes: Long
+)
+
+private data class LogExportView(
+    val limits: LogExportLimits,
+    val files: List<LogFileExport>,
+    val omittedFiles: List<OmittedLogFile>
+) {
+    val includedBytes: Long = files.sumOf { it.includedBytes }
+    val suppressedBytes: Long = files.sumOf { it.suppressedBytes } +
+        omittedFiles.sumOf { it.originalBytes }
+    val oversizedLineCount: Int = files.sumOf { it.oversizedLineCount }
+    val reasons: Set<String> = buildSet {
+        files.forEach { addAll(it.reasons) }
+        omittedFiles.forEach { add(it.reason) }
+    }
+    val isPartial: Boolean get() = suppressedBytes > 0L || omittedFiles.isNotEmpty()
+    val userSummary: String
+        get() = if (isPartial) {
+            "日志导出不完整：省略 $suppressedBytes 字节、${omittedFiles.size} 个文件、" +
+                "$oversizedLineCount 条超长行；详见 manifest.json"
+        } else {
+            "日志完整导出"
+        }
+}
 
 @Singleton
 class DiagnosticExportRepository internal constructor(
@@ -67,6 +146,9 @@ class DiagnosticExportRepository internal constructor(
     private val dispatcher: CoroutineDispatcher = Dispatchers.IO,
     private val clearProbe: () -> Boolean = { connectionProbeStore.clear() },
     private val nowMillis: () -> Long = System::currentTimeMillis,
+    private val maxLogLineBytes: Int = DEFAULT_MAX_LOG_LINE_BYTES,
+    private val maxLogFileBytes: Long = DEFAULT_MAX_LOG_FILE_BYTES,
+    private val maxLogTotalBytes: Long = DEFAULT_MAX_LOG_TOTAL_BYTES,
     private val availableBytes: () -> Long = {
         File(context.filesDir, "diagnostics/exports").mkdirs()
         StatFs(File(context.filesDir, "diagnostics/exports").path).availableBytes
@@ -138,108 +220,134 @@ class DiagnosticExportRepository internal constructor(
             val finalFile = File(exportDir, "pim-diagnostics-$exportNow.zip")
 
             try {
-                val entries = mutableMapOf<String, String>()
-
-                entries["status.json"] = buildStatus(exportNow, dao).toString()
-                entries["settings.json"] = buildSettings().toString()
-                entries["database-counts.json"] = buildDatabaseCounts(dao).toString()
-                entries["sync-history.json"] = buildSyncHistory(dao).toString()
-                // REQ-9 / AC-9.1：丢弃原因明细进诊断包（时刻 / 原因 / 准确度 / provider / 策略档）。
-                // 明细不设条数上限（R4-P3），条数由 30 天时间清理决定，因此清理后导出包只会变小（AC-9.3）。
-                entries["dropped-locations.jsonl"] = buildDroppedLocationDetails().toString()
-                // REQ-1 ~ REQ-4：进程退出原因台账与存活心跳，供需求方在真机上核对死因。
-                entries["forensics.jsonl"] = buildForensicEvents(exportNow).toString()
-
-                val logEntryNames = mutableListOf<String>()
-                val logSnapshots = structuredLogRepository.snapshotFiles()
-                for (snapshot in logSnapshots) {
-                    val entryName = "logs/${snapshot.fileName}"
-                    require(isValidLogName(entryName)) { "Invalid log entry name: $entryName" }
-                    require(!redactor.isUnsafeEntryName(entryName)) { "Unsafe entry name: $entryName" }
-                    val redactedLines = snapshot.content.lines()
-                        .filter { it.isNotBlank() }
-                        .joinToString("\n") { line -> redactor.redactJsonLine(line) }
-                    entries[entryName] = redactedLines
-                    logEntryNames.add(entryName)
-                }
+                val coreEntries = linkedMapOf<String, String>()
+                coreEntries["status.json"] = buildStatus(exportNow, dao).toString()
+                coreEntries["settings.json"] = buildSettings().toString()
+                coreEntries["database-counts.json"] = buildDatabaseCounts(dao).toString()
+                coreEntries["sync-history.json"] = buildSyncHistory(dao).toString()
+                coreEntries["dropped-locations.jsonl"] = buildDroppedLocationDetails()
+                coreEntries["forensics.jsonl"] = buildForensicEvents(exportNow)
 
                 var coordinateCount = 0
                 if (includeRecentLocations) {
-                    val from = exportNow - 24L * 3600_000L
-                    val to = exportNow
-                    val locations = dao.diagnosticLocations(from, to)
+                    val locations = dao.diagnosticLocations(
+                        exportNow - 24L * 3600_000L,
+                        exportNow
+                    )
                     coordinateCount = locations.size
-                    val lines = locations.joinToString("\n") { loc -> locationToJson(loc).toString() }
-                    entries["locations.jsonl"] = lines
-                }
-
-                entries["manifest.json"] = buildManifest(
-                    includeRecentLocations = includeRecentLocations,
-                    exportNow = exportNow,
-                    coordinateCount = coordinateCount,
-                    logEntryNames = logEntryNames
-                ).toString()
-
-                for ((name, content) in entries.toList()) {
-                    val redacted = content.lines().joinToString("\n") { line ->
-                        redactor.redactJsonLine(line)
+                    coreEntries["locations.jsonl"] = locations.joinToString("\n") { loc ->
+                        locationToJson(loc).toString()
                     }
-                    entries[name] = redacted
                 }
 
-                val expectedNames = buildExpectedEntrySet(
-                    validatedLogEntryNames = logEntryNames,
-                    includeRecentLocations = includeRecentLocations
-                )
-                for ((name, content) in entries) {
-                    require(!redactor.isUnsafeEntryName(name)) { "Unsafe entry name: $name" }
-                    require(name in expectedNames) { "Unexpected entry: $name" }
-                    val leaks = redactor.findCredentialLeaks(content)
-                    require(leaks.isEmpty()) { "Credential leak in $name: $leaks" }
-                }
-
-                val estimatedBytes = entries.entries.sumOf { (name, content) ->
+                val logRefs = structuredLogRepository.snapshotFileRefs()
+                val selectedLogBytes = selectedLogInputBytes(logRefs)
+                val coreBytes = coreEntries.entries.sumOf { (name, content) ->
                     name.toByteArray(Charsets.UTF_8).size.toLong() +
                         content.toByteArray(Charsets.UTF_8).size.toLong()
-                } + 1_048_576L
-
-                val avail = availableBytes()
-                if (estimatedBytes > avail) {
+                }
+                if (coreBytes + selectedLogBytes + 1_048_576L > availableBytes()) {
                     throw DiagnosticExportException(
                         "INSUFFICIENT_STORAGE",
                         "Not enough storage space for export"
                     )
                 }
 
+                val logSummary = LogExportSummary()
+                val writtenNames = linkedSetOf<String>()
                 BufferedOutputStream(tmpFile.outputStream()).use { bos ->
                     ZipOutputStream(bos).use { zos ->
-                        for ((name, content) in entries) {
-                            zos.putNextEntry(ZipEntry(name))
-                            zos.write(content.toByteArray(Charsets.UTF_8))
-                            zos.closeEntry()
+                        for ((name, content) in coreEntries) {
+                            writeRedactedEntry(zos, name, content)
+                            writtenNames.add(name)
                         }
+
+                        var totalReadBytes = 0L
+                        for (ref in logRefs) {
+                            val entryName = "logs/${ref.fileName}"
+                            require(isValidLogName(entryName)) { "Invalid log entry name: $entryName" }
+                            require(!redactor.isUnsafeEntryName(entryName)) { "Unsafe entry name: $entryName" }
+
+                            if (ref.lengthBytes <= 0L) continue
+                            val remainingTotal = maxLogTotalBytes - totalReadBytes
+                            val readBudget = minOf(
+                                ref.lengthBytes,
+                                maxLogFileBytes,
+                                remainingTotal
+                            )
+                            if (readBudget <= 0L) {
+                                logSummary.omitFile(ref, "total-limit")
+                                continue
+                            }
+
+                            val logFile = File(context.filesDir, "logs/${ref.fileName}")
+                            val result = try {
+                                writeLogEntry(
+                                    zos = zos,
+                                    file = logFile,
+                                    entryName = entryName,
+                                    originalBytes = ref.lengthBytes,
+                                    readBudget = readBudget,
+                                    totalBudget = remainingTotal
+                                )
+                            } catch (e: CancellationException) {
+                                throw e
+                            } catch (_: FileNotFoundException) {
+                                logSummary.omitFile(
+                                    ref,
+                                    if (logFile.exists()) "unreadable-file" else "missing-file"
+                                )
+                                continue
+                            }
+                            totalReadBytes += result.readBytes
+                            logSummary.add(result.file)
+                            writtenNames.add(entryName)
+                        }
+
+                        val summary = logSummary.toSummary(
+                            maxLineBytes = maxLogLineBytes,
+                            maxFileBytes = maxLogFileBytes,
+                            maxTotalBytes = maxLogTotalBytes
+                        )
+                        val manifest = buildManifest(
+                            includeRecentLocations = includeRecentLocations,
+                            exportNow = exportNow,
+                            coordinateCount = coordinateCount,
+                            entries = writtenNames + "manifest.json",
+                            logExport = summary
+                        ).toString()
+                        writeRedactedEntry(zos, "manifest.json", manifest)
+                        writtenNames.add("manifest.json")
                     }
                 }
 
+                val expectedNames = writtenNames.toSet()
                 ZipFile(tmpFile).use { zip ->
                     val actualNames = mutableSetOf<String>()
                     for (entry in zip.entries().asSequence()) {
                         val name = entry.name
-                        require(!actualNames.contains(name)) { "Duplicate entry: $name" }
-                        actualNames.add(name)
+                        require(actualNames.add(name)) { "Duplicate entry: $name" }
                         require(!redactor.isUnsafeEntryName(name)) { "Unsafe entry name after write: $name" }
                         require(name in expectedNames) { "Unexpected entry after write: $name" }
-                        val content = zip.getInputStream(entry).bufferedReader(Charsets.UTF_8).readText()
-                        val leaks = redactor.findCredentialLeaks(content)
-                        require(leaks.isEmpty()) { "Credential leak after write in $name: $leaks" }
                     }
                     require(actualNames == expectedNames) {
                         "ZIP entry mismatch: expected $expectedNames, got $actualNames"
                     }
                 }
 
+                currentCoroutineContext().ensureActive()
                 publish(tmpFile, finalFile)
-                DiagnosticExportResult(finalFile, coordinateCount)
+                val summary = logSummary.toSummary(
+                    maxLineBytes = maxLogLineBytes,
+                    maxFileBytes = maxLogFileBytes,
+                    maxTotalBytes = maxLogTotalBytes
+                )
+                DiagnosticExportResult(
+                    file = finalFile,
+                    coordinateCount = coordinateCount,
+                    isPartial = summary.isPartial,
+                    summary = summary.userSummary
+                )
             } catch (e: CancellationException) {
                 tmpFile.delete()
                 throw e
@@ -256,7 +364,6 @@ class DiagnosticExportRepository internal constructor(
             }
         }
     }
-
     override suspend fun clearDiagnostics() = withContext(dispatcher) {
         mutex.withLock {
             var probeFailed = false
@@ -319,11 +426,155 @@ class DiagnosticExportRepository internal constructor(
         }
     }
 
+    private fun selectedLogInputBytes(refs: List<StructuredLogFileRef>): Long {
+        var selected = 0L
+        for (ref in refs) {
+            val remaining = maxLogTotalBytes - selected
+            if (remaining <= 0L) break
+            selected += minOf(ref.lengthBytes, maxLogFileBytes, remaining)
+        }
+        return selected
+    }
+
+    private fun writeRedactedEntry(zos: ZipOutputStream, name: String, content: String) {
+        require(!redactor.isUnsafeEntryName(name)) { "Unsafe entry name: $name" }
+        val redacted = content.lines()
+            .filter { it.isNotBlank() }
+            .joinToString("\n") { line -> redactor.redactJsonLine(line) }
+        require(redactor.findCredentialLeaks(redacted).isEmpty()) { "Credential leak in $name" }
+        zos.putNextEntry(ZipEntry(name))
+        zos.write(redacted.toByteArray(Charsets.UTF_8))
+        zos.closeEntry()
+    }
+
+    private suspend fun writeLogEntry(
+        zos: ZipOutputStream,
+        file: File,
+        entryName: String,
+        originalBytes: Long,
+        readBudget: Long,
+        totalBudget: Long
+    ): LogFileWriteResult {
+        val reasons = linkedSetOf<String>()
+        if (originalBytes > maxLogFileBytes) reasons.add("file-limit")
+        if (originalBytes > totalBudget) reasons.add("total-limit")
+
+        var actualReadBytes = 0L
+        var representedBytes = 0L
+        var oversizedLineCount = 0
+        var exportedBytes = 0L
+        var lineBytes = 0L
+        var oversizedLine = false
+        val lineBuffer = ByteArrayOutputStream(minOf(maxLogLineBytes, 8192))
+
+        BoundedInputStream(BufferedInputStream(file.inputStream()), readBudget).use { input ->
+            zos.putNextEntry(ZipEntry(entryName))
+            val chunk = ByteArray(8192)
+
+            fun writeText(text: String) {
+                val encoded = text.toByteArray(Charsets.UTF_8)
+                zos.write(encoded)
+                exportedBytes += encoded.size.toLong()
+            }
+
+            fun resetLine() {
+                lineBytes = 0L
+                oversizedLine = false
+                lineBuffer.reset()
+            }
+
+            while (true) {
+                currentCoroutineContext().ensureActive()
+                val read = input.read(chunk)
+                if (read < 0) break
+                for (index in 0 until read) {
+                    val value = chunk[index]
+                    if (value == '\n'.code.toByte()) {
+                        if (oversizedLine) {
+                            oversizedLineCount++
+                            reasons.add("line-limit")
+                            writeText(
+                                omissionLine("line-limit", lineBytes + 1L) + "\n"
+                            )
+                        } else {
+                            representedBytes += lineBytes + 1L
+                            if (lineBytes > 0L) {
+                                val raw = lineBuffer.toByteArray()
+                                val end = if (raw.lastOrNull() == '\r'.code.toByte()) {
+                                    raw.size - 1
+                                } else {
+                                    raw.size
+                                }
+                                val line = String(raw, 0, end, Charsets.UTF_8)
+                                if (line.isNotBlank()) {
+                                    val redacted = redactor.redactJsonLine(line)
+                                    require(redactor.findCredentialLeaks(redacted).isEmpty()) {
+                                        "Credential leak in $entryName"
+                                    }
+                                    writeText(redacted + "\n")
+                                }
+                            }
+                        }
+                        resetLine()
+                    } else {
+                        lineBytes++
+                        if (!oversizedLine && lineBytes > maxLogLineBytes) {
+                            oversizedLine = true
+                            lineBuffer.reset()
+                        } else if (!oversizedLine) {
+                            lineBuffer.write(value.toInt())
+                        }
+                    }
+                }
+            }
+
+            if (lineBytes > 0L || oversizedLine) {
+                reasons.add("incomplete-line")
+                writeText(omissionLine("incomplete-line", lineBytes) + "\n")
+            }
+            actualReadBytes = input.bytesRead
+            zos.closeEntry()
+        }
+
+        if (actualReadBytes < minOf(originalBytes, readBudget)) {
+            reasons.add("file-changed")
+        }
+        if (originalBytes > readBudget && reasons.isEmpty()) {
+            reasons.add(if (readBudget == maxLogFileBytes) "file-limit" else "total-limit")
+        }
+        val summary = LogFileExport(
+            name = entryName,
+            originalBytes = originalBytes,
+            includedBytes = representedBytes,
+            exportedBytes = exportedBytes,
+            oversizedLineCount = oversizedLineCount,
+            reasons = reasons
+        )
+        if (summary.suppressedBytes > 0L && summary.reasons.isEmpty()) {
+            reasons.add("incomplete-line")
+        }
+        return LogFileWriteResult(
+            readBytes = actualReadBytes,
+            file = summary.copy(reasons = reasons.toSet())
+        )
+    }
+
+    private fun omissionLine(reason: String, originalBytes: Long): String =
+        JSONObject()
+            .put(
+                "exportOmission",
+                JSONObject()
+                    .put("reason", reason)
+                    .put("originalBytes", originalBytes)
+            )
+            .toString()
+
     private fun buildManifest(
         includeRecentLocations: Boolean,
         exportNow: Long,
         coordinateCount: Int,
-        logEntryNames: List<String>
+        entries: Set<String>,
+        logExport: LogExportView
     ): JSONObject {
         val pInfo = runCatching {
             context.packageManager.getPackageInfo(context.packageName, 0)
@@ -338,9 +589,6 @@ class DiagnosticExportRepository internal constructor(
             }
         } else 0L
 
-        val entries = buildExpectedEntrySet(logEntryNames, includeRecentLocations)
-            .toList().sorted()
-
         val result = JSONObject()
             .put("formatVersion", 1)
             .put("createdAtUtc", exportNow)
@@ -348,22 +596,63 @@ class DiagnosticExportRepository internal constructor(
             .put("appVersionCode", versionCode)
             .put("includeRecentLocations", includeRecentLocations)
             .put("coordinateCount", coordinateCount)
+            .put("entries", JSONArray(entries.sorted()))
+            .put("logExport", logExport.toJson())
 
         if (includeRecentLocations) {
-            val from = exportNow - 24L * 3600_000L
-            val to = exportNow
-            result.put("coordinateRangeStartUtc", from)
-            result.put("coordinateRangeEndUtc", to)
+            result.put("coordinateRangeStartUtc", exportNow - 24L * 3600_000L)
+            result.put("coordinateRangeEndUtc", exportNow)
         } else {
             result.put("coordinateRangeStartUtc", JSONObject.NULL)
             result.put("coordinateRangeEndUtc", JSONObject.NULL)
         }
-
-        result.put("entries", JSONArray(entries))
         return result
     }
 
+    private fun LogExportView.toJson(): JSONObject = JSONObject()
+        .put("completeness", if (isPartial) "partial" else "complete")
+        .put(
+            "limits",
+            JSONObject()
+                .put("maxLineBytes", limits.maxLineBytes)
+                .put("maxFileBytes", limits.maxFileBytes)
+                .put("maxTotalBytes", limits.maxTotalBytes)
+        )
+        .put("includedBytes", includedBytes)
+        .put("suppressedBytes", suppressedBytes)
+        .put("omittedFileCount", omittedFiles.size)
+        .put("oversizedLineCount", oversizedLineCount)
+        .put("suppressionReasons", JSONArray(reasons.sorted()))
+        .put(
+            "files",
+            JSONArray(
+                files.map { file ->
+                    JSONObject()
+                        .put("name", file.name)
+                        .put("originalBytes", file.originalBytes)
+                        .put("includedBytes", file.includedBytes)
+                        .put("exportedBytes", file.exportedBytes)
+                        .put("suppressedBytes", file.suppressedBytes)
+                        .put("oversizedLineCount", file.oversizedLineCount)
+                        .put("suppressionReasons", JSONArray(file.reasons.sorted()))
+                }
+            )
+        )
+        .put(
+            "omittedFiles",
+            JSONArray(
+                omittedFiles.map { file ->
+                    JSONObject()
+                        .put("name", file.name)
+                        .put("originalBytes", file.originalBytes)
+                        .put("reason", file.reason)
+                }
+            )
+        )
     companion object {
+        private const val DEFAULT_MAX_LOG_LINE_BYTES = 64 * 1024
+        private const val DEFAULT_MAX_LOG_FILE_BYTES = 8L * 1024 * 1024
+        private const val DEFAULT_MAX_LOG_TOTAL_BYTES = 24L * 1024 * 1024
         private val LOG_NAME_PATTERN = Regex("""^logs/mobile-\d{4}-\d{2}-\d{2}\.jsonl$""")
         private val EXPORT_FILE_PATTERN = Regex("""^pim-diagnostics-\d+\.zip(?:\.tmp)?$""")
         private val CORE_ENTRIES = setOf(
@@ -583,4 +872,29 @@ class DiagnosticExportRepository internal constructor(
             .put("motionState", loc.motionState ?: JSONObject.NULL)
             .put("syncStatus", loc.syncStatus)
     }
+}
+
+private class BoundedInputStream(
+    private val delegate: InputStream,
+    private val limit: Long
+) : InputStream() {
+    var bytesRead: Long = 0L
+        private set
+
+    override fun read(): Int {
+        if (bytesRead >= limit) return -1
+        val value = delegate.read()
+        if (value >= 0) bytesRead++
+        return value
+    }
+
+    override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+        if (bytesRead >= limit) return -1
+        val allowed = minOf(length.toLong(), limit - bytesRead).toInt()
+        val read = delegate.read(buffer, offset, allowed)
+        if (read > 0) bytesRead += read
+        return read
+    }
+
+    override fun close() = delegate.close()
 }

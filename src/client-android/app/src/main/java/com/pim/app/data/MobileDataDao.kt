@@ -406,17 +406,42 @@ interface MobileDataDao {
 
     @Query(
         """
-        SELECT latitude, longitude, altitude_meters AS altitudeMeters,
+        SELECT id, latitude, longitude, altitude_meters AS altitudeMeters,
                accuracy_meters AS accuracyMeters, speed_meters_per_second AS speedMetersPerSecond,
                bearing_degrees AS bearingDegrees, provider, recorded_at_utc AS recordedAtUtc,
                source, policy_mode AS policyMode, schedule_low_frequency AS scheduleLowFrequency,
                motion_state AS motionState, sync_status AS syncStatus
         FROM mobile_location_points
         WHERE recorded_at_utc >= :from AND recorded_at_utc <= :to
-        ORDER BY recorded_at_utc ASC
+        ORDER BY recorded_at_utc ASC, id ASC
         """
     )
     suspend fun diagnosticLocations(from: Long, to: Long): List<DiagnosticLocationRow>
+
+    @Query(
+        """
+        SELECT id, latitude, longitude, altitude_meters AS altitudeMeters,
+               accuracy_meters AS accuracyMeters, speed_meters_per_second AS speedMetersPerSecond,
+               bearing_degrees AS bearingDegrees, provider, recorded_at_utc AS recordedAtUtc,
+               source, policy_mode AS policyMode, schedule_low_frequency AS scheduleLowFrequency,
+               motion_state AS motionState, sync_status AS syncStatus
+        FROM mobile_location_points
+        WHERE recorded_at_utc >= :from AND recorded_at_utc <= :to
+          AND (
+              recorded_at_utc > :afterRecordedAtUtc
+              OR (recorded_at_utc = :afterRecordedAtUtc AND id > :afterId)
+          )
+        ORDER BY recorded_at_utc ASC, id ASC
+        LIMIT :pageSize
+        """
+    )
+    suspend fun diagnosticLocationPage(
+        from: Long,
+        to: Long,
+        afterRecordedAtUtc: Long,
+        afterId: Long,
+        pageSize: Int
+    ): List<DiagnosticLocationRow>
 
     /**
      * 丢弃原因明细（REQ-9 / AC-9.1）：时刻 / 原因 / 准确度 / provider / 策略档。
@@ -424,13 +449,32 @@ interface MobileDataDao {
      */
     @Query(
         """
-        SELECT recorded_at_utc AS recordedAtUtc, reason, accuracy_meters AS accuracyMeters,
+        SELECT id, recorded_at_utc AS recordedAtUtc, reason, accuracy_meters AS accuracyMeters,
                provider, policy_mode AS policyMode
         FROM mobile_location_dropped_diagnostics
-        ORDER BY recorded_at_utc ASC
+        ORDER BY recorded_at_utc ASC, id ASC
         """
     )
     suspend fun diagnosticDroppedDetailRows(): List<DiagnosticDroppedDetailRow>
+
+    @Query(
+        """
+        SELECT id, recorded_at_utc AS recordedAtUtc, reason, accuracy_meters AS accuracyMeters,
+               provider, policy_mode AS policyMode
+        FROM mobile_location_dropped_diagnostics
+        WHERE (
+            recorded_at_utc > :afterRecordedAtUtc
+            OR (recorded_at_utc = :afterRecordedAtUtc AND id > :afterId)
+        )
+        ORDER BY recorded_at_utc ASC, id ASC
+        LIMIT :pageSize
+        """
+    )
+    suspend fun diagnosticDroppedDetailPage(
+        afterRecordedAtUtc: Long,
+        afterId: Long,
+        pageSize: Int
+    ): List<DiagnosticDroppedDetailRow>
 
     @Query("DELETE FROM mobile_logs")
     suspend fun deleteAllMobileLogs(): Int

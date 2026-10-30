@@ -293,6 +293,7 @@ class NativeNoteDerivedE2ETest {
             val beforeRun = providerSummary()
             runDerivedAndVerify(fixture, task.taskId, beforeRun)
             refreshArtifactScreen()
+            waitForCoverageVisibleComplete()
             assertCoverageVisibleComplete()
             shot("unknown-start-recovered")
         }
@@ -362,10 +363,6 @@ class NativeNoteDerivedE2ETest {
             reader().getNoteDerivedDestinations().data?.items
                 ?.singleOrNull { it.modelId == prepared.destinationId }
         } ?: error("The ordinary account did not receive the expected derived destination")
-        compose.waitUntil(30_000) {
-            compose.onAllNodesWithTag("note-artifact-entry-destination-${destination.modelId}")
-                .fetchSemanticsNodes().isNotEmpty()
-        }
         scrollToNodeEventually(
             "note-artifact-entry-list",
             hasTestTag("note-artifact-entry-charge-notice"),
@@ -375,6 +372,8 @@ class NativeNoteDerivedE2ETest {
             "note-artifact-entry-list",
             hasTestTag("note-artifact-entry-destination-${destination.modelId}"),
         )
+        compose.onNodeWithTag("note-artifact-entry-destination-${destination.modelId}")
+            .assertIsDisplayed()
         assertTargetConsentVisible(destination)
         return Fixture(
             prepared.model,
@@ -938,6 +937,17 @@ class NativeNoteDerivedE2ETest {
         scrollToNodeEventually("note-artifact-list", hasTestTag("note-artifact-coverage"))
         compose.onNodeWithTag("note-artifact-coverage")
             .assertTextContains("材料完整覆盖，无已知缺口。", substring = true)
+    }
+
+    private fun waitForCoverageVisibleComplete() {
+        scrollToNodeEventually("note-artifact-list", hasTestTag("note-artifact-coverage"))
+        compose.waitUntil(30_000) {
+            runCatching {
+                compose.onNodeWithTag("note-artifact-coverage")
+                    .assertTextContains("材料完整覆盖，无已知缺口。", substring = true)
+                true
+            }.getOrDefault(false)
+        }
     }
 
     private fun mustArtifact(noteId: String, kind: NoteArtifactKind): NoteDerivedArtifactDto {

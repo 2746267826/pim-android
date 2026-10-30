@@ -905,8 +905,11 @@ class NativeNoteDerivedE2ETest {
     }
 
     private fun regenerateThroughUi(kind: NoteArtifactKind) {
-        compose.onNodeWithTag("note-artifact-regenerate-${kind.name}")
+        val regenerateTag = "note-artifact-regenerate-${kind.name}"
+        scrollToNodeEventually("note-artifact-list", hasTestTag(regenerateTag))
+        compose.onNodeWithTag(regenerateTag)
             .performScrollTo()
+            .assertIsDisplayed()
             .assertIsEnabled()
             .performClick()
         compose.waitUntil(10_000) {

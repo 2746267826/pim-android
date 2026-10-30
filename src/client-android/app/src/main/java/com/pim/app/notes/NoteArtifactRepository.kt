@@ -153,13 +153,23 @@ class NoteArtifactRepository(
             }
             var detail: NoteArtifactTaskDetail? = null
             var detailProblem: String? = null
+            var displayedTasks = currentTasks
             if (chosen != null) {
                 try {
                     detail = transport.detail(chosen.taskId)
+                    val persisted = tasks.recordRemote(chosen.taskId, detail.view)
+                    displayedTasks = currentTasks.map {
+                        if (it.taskId == persisted.taskId) persisted else it
+                    }
                 } catch (error: CancellationException) {
                     throw error
                 } catch (error: Exception) {
-                    detailProblem = describe(error, "读取任务步骤与覆盖")
+                    detailProblem = if (detail != null) {
+                        "服务端任务详情已读取，但无法持久化最新状态；保留原 TaskId 与本地旧状态，" +
+                            "不宣称已完成。"
+                    } else {
+                        describe(error, "读取任务步骤与覆盖")
+                    }
                 }
             }
             val partialRefs = detail?.artifacts.orEmpty()
@@ -215,7 +225,7 @@ class NoteArtifactRepository(
                     noteId = noteId,
                     materialVersionId = fixedVersionId,
                     taskBinding = target.binding,
-                    tasks = currentTasks,
+                    tasks = displayedTasks,
                     drafts = loadedDrafts,
                     destinations = destinations,
                     destinationProblem = destinationProblem,

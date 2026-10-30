@@ -184,6 +184,109 @@ class NoteArtifactRepositoryTest {
         assertEquals(2, transport.artifactCalls)
     }
 
+    @Test fun refreshPersistsSucceededDetailAndReopenKeepsRegenerationAvailable() = runBlocking {
+        val task = seedTask()
+        tasks.recordRemote(
+            task.taskId,
+            NoteArtifactRemoteTaskView("local-queued", "Queued", observedAtMillis = 1_000),
+            nowMillis = 1_000,
+        )
+        val retry = NoteArtifactRetryIntent(
+            retryId = "99999999-9999-4999-8999-999999999999",
+            expectedServerRevision = "server-succeeded",
+            stepKeys = listOf("record-synthesis"),
+            phase = NoteArtifactIntentPhase.VerificationPending,
+            createdAtMillis = 1_100,
+        )
+        tasks.update(task.taskId, nowMillis = 1_100) {
+            it.copy(
+                stopPhase = NoteArtifactIntentPhase.VerificationPending,
+                pendingRetry = retry,
+            )
+        }
+        val otherVersionTask = tasks.createIntent(
+            binding = binding,
+            noteId = noteId,
+            materialVersionId = "55555555-5555-4555-8555-555555555555",
+            kinds = setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis),
+            inputSha256 = "d".repeat(64),
+            manifestSha256 = "e".repeat(64),
+            consent = consent,
+            ownerName = "alice",
+            nowMillis = 3_000,
+        )
+        tasks.update(otherVersionTask.taskId, nowMillis = 3_100) {
+            it.copy(
+                localPhase = NoteArtifactIntentPhase.VerificationPending,
+                lastProblem = "other material unknown",
+            )
+        }
+        val succeeded = NoteArtifactRemoteTaskView(
+            revision = "server-succeeded",
+            phase = "Succeeded",
+            stopRequested = false,
+            observedAtMillis = 2_000,
+        )
+        transport.details[task.taskId] = detailView(succeeded)
+        val repository = repository()
+
+        repository.refresh(noteId, materialVersionId, task.taskId)
+
+        val refreshed = repository.state.value.tasks.single()
+        assertEquals(task.taskId, repository.state.value.selectedTaskId)
+        assertEquals("Succeeded", refreshed.remote?.phase)
+        assertEquals(NoteArtifactIntentPhase.VerificationPending, refreshed.stopPhase)
+        assertEquals(retry, refreshed.pendingRetry)
+        assertFalse(repository.state.value.tasks.any { it.taskId == otherVersionTask.taskId })
+        assertEquals(
+            NoteArtifactIntentPhase.VerificationPending,
+            tasks.read(otherVersionTask.taskId).localPhase,
+        )
+        assertEquals(NoteArtifactWorkPhase.Ready, repository.state.value.toUiState(
+            entry = NoteArtifactEntry(noteId, materialVersionId),
+            selectedKind = NoteArtifactKind.FullRecord,
+        ).fullRecord.workPhase)
+        assertEquals("Succeeded", tasks.read(task.taskId).remote?.phase)
+
+        transport.detailError = IOException("detail unavailable after reopen")
+        val reopened = repository()
+        reopened.refresh(noteId, materialVersionId)
+
+        val reopenedTask = reopened.state.value.tasks.single()
+        assertEquals("Succeeded", reopenedTask.remote?.phase)
+        assertNotNull(reopened.state.value.message)
+        val reopenedUi = reopened.state.value.toUiState(
+            entry = NoteArtifactEntry(noteId, materialVersionId),
+            selectedKind = NoteArtifactKind.FullRecord,
+        )
+        assertEquals(NoteArtifactWorkPhase.Ready, reopenedUi.fullRecord.workPhase)
+        assertTrue(reopenedUi.fullRecord.canRegenerate)
+    }
+
+    @Test fun detailReadFailureKeepsQueuedTaskAndDoesNotFakeCompletion() = runBlocking {
+        val task = seedTask()
+        tasks.recordRemote(
+            task.taskId,
+            NoteArtifactRemoteTaskView("local-queued", "Queued", observedAtMillis = 1_000),
+            nowMillis = 1_000,
+        )
+        transport.detailError = IOException("detail read failed")
+        val repository = repository()
+
+        repository.refresh(noteId, materialVersionId, task.taskId)
+
+        val retained = repository.state.value.tasks.single()
+        assertEquals("Queued", retained.remote?.phase)
+        assertNotNull(repository.state.value.message)
+        val ui = repository.state.value.toUiState(
+            entry = NoteArtifactEntry(noteId, materialVersionId),
+            selectedKind = NoteArtifactKind.FullRecord,
+        )
+        assertEquals(NoteArtifactWorkPhase.Running, ui.fullRecord.workPhase)
+        assertFalse(ui.fullRecord.canRegenerate)
+        assertEquals("Queued", tasks.read(task.taskId).remote?.phase)
+    }
+
     @Test fun metadataFailurePreservesFullRefsAndDirtyDraft() = runBlocking {
         seedTask()
         transport.artifactResponses += listOf(
@@ -580,12 +683,20 @@ class NoteArtifactRepositoryTest {
         isHead = isHead,
     )
 
-    private fun detail(vararg artifacts: NoteArtifactArtifactRefProjection) = NoteArtifactTaskDetail(
-        view = NoteArtifactRemoteTaskView(
+    private fun detail(vararg artifacts: NoteArtifactArtifactRefProjection) = detailView(
+        NoteArtifactRemoteTaskView(
             revision = "task-rev",
             phase = "Completed",
             observedAtMillis = 1_000,
         ),
+        *artifacts,
+    )
+
+    private fun detailView(
+        view: NoteArtifactRemoteTaskView,
+        vararg artifacts: NoteArtifactArtifactRefProjection,
+    ) = NoteArtifactTaskDetail(
+        view = view,
         coverage = NoteArtifactCoverageProjection(
             textBlocks = 0,
             transcriptSegments = 0,
@@ -617,6 +728,7 @@ class NoteArtifactRepositoryTest {
         var artifactFallback: List<NoteArtifactArtifactRefProjection> = emptyList()
         var versionFallback: Map<String, List<NoteArtifactVersionProjection>> = emptyMap()
         var detail: NoteArtifactTaskDetail? = null
+        var detailError: Throwable? = null
 
         override suspend fun destinations(): List<NoteArtifactDestination> = listOf(
             NoteArtifactDestination(
@@ -646,6 +758,7 @@ class NoteArtifactRepositoryTest {
 
         override suspend fun detail(taskId: String): NoteArtifactTaskDetail {
             detailCalls += taskId
+            detailError?.let { throw it }
             return details[taskId] ?: requireNotNull(detail) { "detail is not configured" }
         }
 

@@ -923,8 +923,9 @@ class MobileSyncCoordinator @Inject constructor(
             if (ex is CancellationException) throw ex
             val failureNotBefore = try {
                 resolveMobileUsageNotBefore(
-                    attemptResponseObserver.snapshot(),
-                    nowUtcMillis()
+                    metadata = attemptResponseObserver.snapshot(),
+                    ingest = null,
+                    nowUtcMillis = nowUtcMillis()
                 )
             } finally {
                 attemptResponseObserver.reset()
@@ -1033,7 +1034,11 @@ class MobileSyncCoordinator @Inject constructor(
         val responseMetadata = attemptResponseObserver.snapshot()
         attemptResponseObserver.reset()
         val notBeforeDeadline =
-            resolveMobileUsageNotBefore(responseMetadata, nowUtcMillis())
+            resolveMobileUsageNotBefore(
+                metadata = responseMetadata,
+                ingest = ingest,
+                nowUtcMillis = nowUtcMillis()
+            )
         if (notBeforeDeadline != null) {
             val persisted = usageNotBeforeStore.recordDeadline(
                 notBeforeBinding,
@@ -1077,7 +1082,7 @@ class MobileSyncCoordinator @Inject constructor(
                 currentSummaryCount = summaries.size,
                 currentAppMetadataCount = apps.size,
                 lastBatchId = batchId,
-                lastBatchStatus = "server-processing",
+                lastBatchStatus = processingStateStatus(ingest?.processingState),
                 pendingQueueCount = pendingQueueCount()
             )
         }

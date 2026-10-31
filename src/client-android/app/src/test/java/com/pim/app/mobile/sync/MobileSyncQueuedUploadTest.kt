@@ -367,6 +367,142 @@ class MobileSyncQueuedUploadTest {
     }
 
     @Test
+    fun `body signals and terminal 200 follow the contract without shortening the deadline`() = runTest {
+        val eventId = db.mobileDataDao().insertUsageEvents(
+            listOf(usageEvent(1_750_000_000_000L, "com.processing.body"))
+        ).single()
+        usageServer.responses += RecordingUsageServer.ServerResponse(
+            httpStatus = 202,
+            body = """
+                {
+                  "code": 0,
+                  "message": "Batch is already being processed.",
+                  "data": {
+                    "batchId": "body-envelope-batch",
+                    "acceptedCount": 0,
+                    "skippedCount": 0,
+                    "rejectedCount": 0,
+                    "failedCount": 1,
+                    "itemResults": [],
+                    "processingState": "retry-scheduled",
+                    "retryAfterSeconds": 90,
+                    "leaseUntilUtc": null,
+                    "retryAtUtc": "2026-10-30T04:01:50Z"
+                  },
+                  "timestamp": "2026-10-30T04:00:20Z"
+                }
+            """.trimIndent(),
+            retryAfter = "15"
+        )
+        usageServer.responses += RecordingUsageServer.terminal200
+
+        val processing = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "body-device",
+                attemptedAt = "2026-10-30T04:00:20Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, processing.outcome)
+        assertEquals("waiting-not-before", processing.phase)
+        assertEquals("server-retry-scheduled", processing.lastBatchStatus)
+        assertEquals(eventId, db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).single().id)
+        val firstBatchId = usageServer.requests.single().clientBatchId
+
+        // The body hint (90s) outlives the header (15s): retrying after 16s must still
+        // be blocked by the persisted deadline and keep the same batch id.
+        testNowMillis += 16_000L
+        val earlyRetry = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "body-device",
+                attemptedAt = "2026-10-30T04:00:36Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, earlyRetry.outcome)
+        assertEquals("waiting-not-before", earlyRetry.phase)
+        assertEquals(1, usageServer.requests.size)
+        assertEquals(firstBatchId, earlyRetry.lastBatchId)
+
+        testNowMillis += 75_000L
+        val terminal = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "body-device",
+                attemptedAt = "2026-10-30T04:01:51Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.SUCCESS, terminal.outcome)
+        assertEquals(2, usageServer.requests.size)
+        assertEquals(0, pendingUsageRemaining(db.mobileDataDao()))
+    }
+
+    @Test
+    fun `unknown processing state stays deferred and never acks`() = runTest {
+        val eventId = db.mobileDataDao().insertUsageEvents(
+            listOf(usageEvent(1_750_000_000_000L, "com.processing.unknown.state"))
+        ).single()
+        usageServer.responses += RecordingUsageServer.ServerResponse(
+            httpStatus = 202,
+            body = """
+                {
+                  "code": 0,
+                  "message": "Accepted with unknown future state.",
+                  "data": {
+                    "batchId": "unknown-state-batch",
+                    "acceptedCount": 1,
+                    "skippedCount": 0,
+                    "rejectedCount": 0,
+                    "failedCount": 0,
+                    "itemResults": [],
+                    "processingState": "future-state",
+                    "retryAfterSeconds": 60,
+                    "leaseUntilUtc": null,
+                    "retryAtUtc": null
+                  },
+                  "timestamp": "2026-10-30T04:00:20Z"
+                }
+            """.trimIndent(),
+            retryAfter = "15"
+        )
+        usageServer.responses += RecordingUsageServer.terminal200
+
+        val processing = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "unknown-state-device",
+                attemptedAt = "2026-10-30T04:00:20Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, processing.outcome)
+        assertEquals("server-processing-unknown", processing.lastBatchStatus)
+        assertEquals(eventId, db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).single().id)
+        assertEquals(1, usageServer.requests.size)
+
+        testNowMillis += 61_000L
+        val terminal = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "unknown-state-device",
+                attemptedAt = "2026-10-30T04:01:21Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.SUCCESS, terminal.outcome)
+        assertEquals(2, usageServer.requests.size)
+        assertEquals(0, pendingUsageRemaining(db.mobileDataDao()))
+    }
+
+    @Test
     fun `HTTP 202 empty body is classified BLOCKED and keeps the local pending row`() = runTest {
         val eventId = db.mobileDataDao().insertUsageEvents(
             listOf(usageEvent(1_750_000_300_000L, "com.processing.empty.body"))

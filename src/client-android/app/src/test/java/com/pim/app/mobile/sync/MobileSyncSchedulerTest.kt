@@ -129,6 +129,37 @@ class MobileSyncSchedulerTest {
         assertEquals(1, active.size)
     }
 
+    @Test
+    fun enqueueNotBeforeUsesItsOwnUniqueWorkWithPositiveDelay() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<android.content.Context>()
+        val store = TrackingSettingsStore(
+            context.getSharedPreferences("scheduler_test", Context.MODE_PRIVATE)
+        )
+        val scheduler = MobileSyncScheduler(context, store)
+
+        scheduler.enqueueNotBefore(delaySeconds = 20L)
+
+        val workInfos = WorkManager.getInstance(context)
+            .getWorkInfosForUniqueWork(MobileSyncScheduler.NOT_BEFORE_NAME).get()
+        val active = workInfos.filter { it.state == WorkInfo.State.ENQUEUED }
+        assertEquals(1, active.size)
+        val request = MobileSyncScheduler.buildImmediateRequest(
+            networkType = NetworkType.CONNECTED,
+            allowMeteredOnce = false,
+            initialDelaySeconds = 20L
+        )
+        assertEquals(20_000L, request.workSpec.initialDelay)
+
+        // A second deadline replaces the pending one instead of stacking runs.
+        scheduler.enqueueNotBefore(delaySeconds = 30L)
+        assertEquals(
+            1,
+            WorkManager.getInstance(context)
+                .getWorkInfosForUniqueWork(MobileSyncScheduler.NOT_BEFORE_NAME).get()
+                .count { it.state == WorkInfo.State.ENQUEUED }
+        )
+    }
+
     // --- buildPeriodicRequest ---
 
     @Test

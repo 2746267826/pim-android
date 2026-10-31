@@ -42,7 +42,11 @@ internal fun parseRetryAfterDeadline(value: String, nowUtcMillis: Long): Long {
             .toInstant()
             .toEpochMilli()
     }.getOrElse {
-        safeAdd(nowUtcMillis, DEFAULT_USAGE_NOT_BEFORE_DELAY_MS)
+        if (trimmed.all { it.isDigit() }) {
+            safeAdd(nowUtcMillis, MAX_USAGE_NOT_BEFORE_DELAY_MS)
+        } else {
+            safeAdd(nowUtcMillis, DEFAULT_USAGE_NOT_BEFORE_DELAY_MS)
+        }
     }
 }
 

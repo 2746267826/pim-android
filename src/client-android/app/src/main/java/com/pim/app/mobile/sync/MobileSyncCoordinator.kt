@@ -124,6 +124,8 @@ class MobileSyncCoordinator @Inject constructor(
     private val syncScheduler: Provider<MobileSyncScheduler>,
     private val deviceIdentityProvider: DeviceIdentityProvider
 ) {
+    // Injectable for tests only; Hilt never sees the lambda as a dependency.
+    internal var nowUtcMillis: () -> Long = { System.currentTimeMillis() }
     private val mobileDataDao = database.mobileDataDao()
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val usageNotBeforeStore = MobileUsageNotBeforeStore(prefs)
@@ -846,7 +848,7 @@ class MobileSyncCoordinator @Inject constructor(
             batchId = batchId
         )
         val remainingNotBeforeMillis =
-            usageNotBeforeStore.remainingDelayMillis(notBeforeBinding, System.currentTimeMillis())
+            usageNotBeforeStore.remainingDelayMillis(notBeforeBinding, nowUtcMillis())
         if (remainingNotBeforeMillis > 0L) {
             scheduleUsageNotBeforeWake(remainingNotBeforeMillis)
             val message = "usage-batch-not-before-active"
@@ -922,17 +924,28 @@ class MobileSyncCoordinator @Inject constructor(
             val failureNotBefore = try {
                 resolveMobileUsageNotBefore(
                     attemptResponseObserver.snapshot(),
-                    System.currentTimeMillis()
+                    nowUtcMillis()
                 )
             } finally {
                 attemptResponseObserver.reset()
             }
             if (failureNotBefore != null) {
-                usageNotBeforeStore.recordDeadline(notBeforeBinding, failureNotBefore)
+                val persisted = usageNotBeforeStore.recordDeadline(
+                    notBeforeBinding,
+                    failureNotBefore,
+                    nowUtcMillis()
+                )
+                if (!persisted) {
+                    logs.warn(
+                        "mobile-sync",
+                        "not-before 截止时间持久化失败，后续重启后可能提前重试该批次。",
+                        mapOf("batchId" to batchId)
+                    )
+                }
                 scheduleUsageNotBeforeWake(
                     usageNotBeforeStore.remainingDelayMillis(
                         notBeforeBinding,
-                        System.currentTimeMillis()
+                        nowUtcMillis()
                     )
                 )
                 val message = "server-processing-202-malformed"
@@ -1020,15 +1033,26 @@ class MobileSyncCoordinator @Inject constructor(
         val responseMetadata = attemptResponseObserver.snapshot()
         attemptResponseObserver.reset()
         val notBeforeDeadline =
-            resolveMobileUsageNotBefore(responseMetadata, System.currentTimeMillis())
+            resolveMobileUsageNotBefore(responseMetadata, nowUtcMillis())
         if (notBeforeDeadline != null) {
-            usageNotBeforeStore.recordDeadline(notBeforeBinding, notBeforeDeadline)
+            val persisted = usageNotBeforeStore.recordDeadline(
+                notBeforeBinding,
+                notBeforeDeadline,
+                nowUtcMillis()
+            )
+            if (!persisted) {
+                logs.warn(
+                    "mobile-sync",
+                    "not-before 截止时间持久化失败，后续重启后可能提前重试该批次。",
+                    mapOf("batchId" to batchId)
+                )
+            }
         }
         if (responseMetadata?.httpStatus == 202) {
             scheduleUsageNotBeforeWake(
                 usageNotBeforeStore.remainingDelayMillis(
                     notBeforeBinding,
-                    System.currentTimeMillis()
+                    nowUtcMillis()
                 )
             )
             val message = "server-processing-202"
@@ -1041,7 +1065,7 @@ class MobileSyncCoordinator @Inject constructor(
                 )
             )
             return state(
-                phase = "upload-failed",
+                phase = "waiting-not-before",
                 progressText = "服务端仍在处理该批次，本地数据保留待重试。",
                 outcome = MobileSyncOutcome.DEFERRED,
                 failedCount = sentItems.size,
@@ -1117,10 +1141,19 @@ class MobileSyncCoordinator @Inject constructor(
         )
     }
 
-    private fun scheduleUsageNotBeforeWake(remainingMillis: Long) {
+    private suspend fun scheduleUsageNotBeforeWake(remainingMillis: Long) {
         val delaySeconds = retryDelaySecondsForRemainingMillis(remainingMillis)
         if (delaySeconds > 0L) {
-            syncScheduler.get().enqueueNotBefore(delaySeconds)
+            // The persisted deadline stays authoritative even if WorkManager
+            // scheduling fails here (e.g. uninitialized in unit tests).
+            runCatching { syncScheduler.get().enqueueNotBefore(delaySeconds) }
+                .onFailure { ex ->
+                    logs.warn(
+                        "mobile-sync",
+                        "not-before 延迟任务调度失败，将依赖持久化截止时间在下次同步时拦截。",
+                        mapOf("message" to (ex.message ?: ex::class.java.simpleName))
+                    )
+                }
         }
     }
 
@@ -1501,10 +1534,15 @@ class MobileSyncCoordinator @Inject constructor(
                 val failedState = accumulatedState.copy(
                     phase = when (uploadState.phase) {
                         "upload-blocked",
-                        "usage-outbox-binding-blocked" -> uploadState.phase
+                        "usage-outbox-binding-blocked",
+                        "waiting-not-before" -> uploadState.phase
                         else -> "old-queue-upload-failed"
                     },
-                    progressText = uploadState.lastError ?: "旧队列上传失败，已安排重试。",
+                    progressText = if (uploadState.outcome == MobileSyncOutcome.DEFERRED) {
+                        uploadState.progressText
+                    } else {
+                        uploadState.lastError ?: "旧队列上传失败，已安排重试。"
+                    },
                     outcome = uploadState.outcome,
                     pendingQueueCount = pendingQueueCount(),
                     lastAttemptedUploadAt = attemptedAt
@@ -1939,8 +1977,8 @@ internal fun MobileSyncState.merge(other: MobileSyncState): MobileSyncState {
 
 internal fun sortedMergeOutcome(a: MobileSyncOutcome, b: MobileSyncOutcome): MobileSyncOutcome {
     return when {
-        a == MobileSyncOutcome.BLOCKED || b == MobileSyncOutcome.BLOCKED -> MobileSyncOutcome.BLOCKED
         a == MobileSyncOutcome.RETRY || b == MobileSyncOutcome.RETRY -> MobileSyncOutcome.RETRY
+        a == MobileSyncOutcome.BLOCKED || b == MobileSyncOutcome.BLOCKED -> MobileSyncOutcome.BLOCKED
         a == MobileSyncOutcome.DEFERRED || b == MobileSyncOutcome.DEFERRED -> MobileSyncOutcome.DEFERRED
         else -> MobileSyncOutcome.SUCCESS
     }

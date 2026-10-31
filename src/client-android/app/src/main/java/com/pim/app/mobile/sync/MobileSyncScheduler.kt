@@ -70,7 +70,7 @@ class MobileSyncScheduler @Inject constructor(
         )
         // A replacement prevents expired 202 responses from building an unbounded chain.
         WorkManager.getInstance(context)
-            .enqueueUniqueWork(NOW_NAME, ExistingWorkPolicy.REPLACE, request)
+            .enqueueUniqueWork(NOT_BEFORE_NAME, ExistingWorkPolicy.REPLACE, request)
     }
 
     fun cancelOldWork() {
@@ -84,6 +84,7 @@ class MobileSyncScheduler @Inject constructor(
     companion object {
         const val PERIODIC_NAME = "pim_mobile_sync_periodic"
         const val NOW_NAME = "pim_mobile_sync_now"
+        const val NOT_BEFORE_NAME = "pim_mobile_sync_not_before"
         const val USAGE_NOT_BEFORE_MAX_DELAY_SECONDS = 24L * 60L * 60L
 
         fun resolvePeriodicNetworkType(settings: TrackingSettings): NetworkType {

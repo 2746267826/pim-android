@@ -64,6 +64,7 @@ class MobileSyncQueuedUploadTest {
     private lateinit var db: AppDatabase
     private lateinit var coordinator: MobileSyncCoordinator
     private lateinit var usageServer: RecordingUsageServer
+    private var testNowMillis: Long = 1_750_000_000_000L
 
     @Before
     fun setUp() {
@@ -144,6 +145,7 @@ class MobileSyncQueuedUploadTest {
             syncScheduler = { MobileSyncScheduler(context, trackSettings) },
             deviceIdentityProvider = deviceIdentityProvider
         )
+        coordinator.nowUtcMillis = { testNowMillis }
     }
 
     @After
@@ -245,9 +247,10 @@ class MobileSyncQueuedUploadTest {
             )
         )
 
-        assertEquals(MobileSyncOutcome.RETRY, processing.outcome)
-        assertEquals("completed-with-errors", processing.lastBatchStatus)
-        assertEquals("server-ack-ambiguous", processing.lastError)
+        assertEquals(MobileSyncOutcome.DEFERRED, processing.outcome)
+        assertEquals("waiting-not-before", processing.phase)
+        assertEquals("server-processing", processing.lastBatchStatus)
+        assertEquals("server-processing-202", processing.lastError)
         assertEquals(2, processing.failedCount)
         assertEquals(1, usageServer.requests.size)
         val firstBatchId = usageServer.requests.single().clientBatchId
@@ -257,11 +260,12 @@ class MobileSyncQueuedUploadTest {
             db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).map { it.id }
         )
         assertEquals(
-            listOf("server-ack-ambiguous", "server-ack-ambiguous"),
+            listOf(null, null),
             db.mobileDataDao().getUsageEventsBySyncStatus().map { it.lastError }
         )
         assertEquals(2, pendingUsageRemaining(db.mobileDataDao()))
 
+        testNowMillis += 60_000L
         val terminal = checkNotNull(
             coordinator.uploadQueuedUsage(
                 deviceId = "processing-client-device",
@@ -297,9 +301,9 @@ class MobileSyncQueuedUploadTest {
             )
         )
 
-        assertEquals(MobileSyncOutcome.RETRY, state.outcome)
-        assertEquals("old-queue-upload-failed", state.phase)
-        assertEquals("accepted without data", state.lastError)
+        assertEquals(MobileSyncOutcome.DEFERRED, state.outcome)
+        assertEquals("waiting-not-before", state.phase)
+        assertEquals("server-processing-202", state.lastError)
         assertEquals(eventId, db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).single().id)
         assertEquals(1, pendingUsageRemaining(db.mobileDataDao()))
     }
@@ -320,11 +324,11 @@ class MobileSyncQueuedUploadTest {
             )
         )
 
-        assertEquals(MobileSyncOutcome.BLOCKED, state.outcome)
-        assertEquals("old-queue-upload-failed", state.phase)
+        assertEquals(MobileSyncOutcome.DEFERRED, state.outcome)
+        assertEquals("waiting-not-before", state.phase)
         assertTrue(
-            "empty-body classification must retain the decoding failure",
-            state.lastErrorDetail.orEmpty().contains("JsonDecodingException")
+            "empty-body 202 must retain the Retry-After deadline via the transport signal",
+            state.lastErrorDetail.orEmpty().contains("server-processing-202-malformed")
         )
         assertEquals(eventId, db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).single().id)
         assertEquals(1, pendingUsageRemaining(db.mobileDataDao()))

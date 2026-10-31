@@ -23,37 +23,57 @@ internal class MobileUsageNotBeforeStore(
         context.getSharedPreferences("pim_mobile_sync_state", Context.MODE_PRIVATE)
     )
 
-    fun readDeadline(binding: MobileUsageDeadlineBinding): Long? {
+    fun readDeadline(binding: MobileUsageDeadlineBinding, nowUtcMillis: Long): Long? {
         if (!binding.isValid()) return null
         val key = storageKey(binding)
         if (preferences.getString("${key}_binding", null) != bindingSignature(binding)) {
             return null
         }
         val deadline = preferences.getLong("${key}_deadline", 0L)
+        val recordedAt = preferences.getLong("${key}_recorded_at", 0L)
         if (deadline <= 0L) {
             clear(binding)
             return null
         }
-        return deadline
-    }
-
-    fun readDeadline(binding: MobileUsageDeadlineBinding, nowUtcMillis: Long): Long? {
-        val deadline = readDeadline(binding) ?: return null
-        if (nowUtcMillis > 0L && deadline < nowUtcMillis - MAX_CLOCK_ROLLBACK_TOLERANCE_MS) {
+        if (nowUtcMillis <= 0L || recordedAt <= 0L) return deadline
+        val remainingMillis = (deadline - recordedAt).coerceIn(1L, MAX_USAGE_NOT_BEFORE_DELAY_MS)
+        if (nowUtcMillis < safeAdd(recordedAt, -MAX_CLOCK_ROLLBACK_TOLERANCE_MS)) {
+            // Hard clock rollback: rebase on the bounded remaining delay instead of
+            // letting the absolute deadline wait for months or years.
+            val rebasedDeadline = safeAdd(nowUtcMillis, remainingMillis)
+            val writeSucceeded = preferences.edit()
+                .putString("${key}_binding", bindingSignature(binding))
+                .putLong("${key}_deadline", rebasedDeadline)
+                .putLong("${key}_recorded_at", nowUtcMillis)
+                .commit()
+            if (!writeSucceeded) return null
+            return rebasedDeadline
+        }
+        if (deadline < safeAdd(nowUtcMillis, -MAX_CLOCK_ROLLBACK_TOLERANCE_MS)) {
             clear(binding)
             return null
         }
         return deadline
     }
 
-    fun recordDeadline(binding: MobileUsageDeadlineBinding, deadlineUtcMillis: Long) {
-        if (!binding.isValid() || deadlineUtcMillis <= 0L) return
+    fun recordDeadline(
+        binding: MobileUsageDeadlineBinding,
+        deadlineUtcMillis: Long,
+        nowUtcMillis: Long
+    ): Boolean {
+        if (!binding.isValid() || deadlineUtcMillis <= 0L || nowUtcMillis <= 0L) return false
         val key = storageKey(binding)
-        val existing = readDeadline(binding) ?: 0L
-        val effective = maxOf(existing, deadlineUtcMillis)
-        preferences.edit()
+        val existingDeadline = readDeadline(binding, nowUtcMillis)
+        val existingRemaining = existingDeadline
+            ?.let { (it - nowUtcMillis).coerceIn(0L, MAX_USAGE_NOT_BEFORE_DELAY_MS) }
+            ?: 0L
+        val remainingMillis = (deadlineUtcMillis - nowUtcMillis)
+            .coerceIn(1L, MAX_USAGE_NOT_BEFORE_DELAY_MS)
+            .coerceAtLeast(existingRemaining)
+        return preferences.edit()
             .putString("${key}_binding", bindingSignature(binding))
-            .putLong("${key}_deadline", effective)
+            .putLong("${key}_deadline", safeAdd(nowUtcMillis, remainingMillis))
+            .putLong("${key}_recorded_at", nowUtcMillis)
             .commit()
     }
 

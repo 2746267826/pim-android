@@ -201,6 +201,7 @@ class MobileSyncUsageQueueTest {
         assertEquals(MobileSyncOutcome.DEFERRED, sortedMergeOutcome(MobileSyncOutcome.DEFERRED, MobileSyncOutcome.SUCCESS))
         assertEquals(MobileSyncOutcome.RETRY, sortedMergeOutcome(MobileSyncOutcome.RETRY, MobileSyncOutcome.DEFERRED))
         assertEquals(MobileSyncOutcome.BLOCKED, sortedMergeOutcome(MobileSyncOutcome.BLOCKED, MobileSyncOutcome.DEFERRED))
+        assertEquals(MobileSyncOutcome.RETRY, sortedMergeOutcome(MobileSyncOutcome.RETRY, MobileSyncOutcome.BLOCKED))
     }
 
     @Test

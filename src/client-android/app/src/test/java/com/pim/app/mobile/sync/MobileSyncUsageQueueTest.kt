@@ -197,6 +197,13 @@ class MobileSyncUsageQueueTest {
     }
 
     @Test
+    fun `sortedMergeOutcome DEFERRED beats SUCCESS and keeps RETRY and BLOCKED priorities`() {
+        assertEquals(MobileSyncOutcome.DEFERRED, sortedMergeOutcome(MobileSyncOutcome.DEFERRED, MobileSyncOutcome.SUCCESS))
+        assertEquals(MobileSyncOutcome.RETRY, sortedMergeOutcome(MobileSyncOutcome.RETRY, MobileSyncOutcome.DEFERRED))
+        assertEquals(MobileSyncOutcome.BLOCKED, sortedMergeOutcome(MobileSyncOutcome.BLOCKED, MobileSyncOutcome.DEFERRED))
+    }
+
+    @Test
     fun `multi batch constants match requirements`() {
         assertEquals(10, MAX_USAGE_BATCHES_PER_RUN)
         assertEquals(120_000L, MAX_USAGE_BATCH_DURATION_MS)

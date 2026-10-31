@@ -38,16 +38,26 @@ class ApiClientProvider @Inject constructor(
      * Mobile usage ingestion is bound to the owner/server that owns the local outbox.
      * It can call only POST /api/v1/mobile/usage/events and rechecks identity at header injection.
      */
-    fun mobileUsageUploadApiService(binding: BoundUploadSession): ApiService =
-        boundUploadApiService(binding, BoundUploadRoute.MobileUsage)
+    fun mobileUsageUploadApiService(
+        binding: BoundUploadSession,
+        responseObserver: MobileUsageResponseObserver? = null
+    ): ApiService = boundUploadApiService(
+        binding = binding,
+        route = BoundUploadRoute.MobileUsage,
+        usageResponseObserver = responseObserver
+    )
 
     private fun boundUploadApiService(
         binding: BoundUploadSession,
-        route: BoundUploadRoute
+        route: BoundUploadRoute,
+        usageResponseObserver: MobileUsageResponseObserver? = null
     ): ApiService {
         val client = okHttpClient.newBuilder().apply {
             // It must run before AuthInterceptor so identity is checked at every actual header attachment/retry.
             interceptors().add(0, BoundUploadTagInterceptor(binding, route))
+            if (usageResponseObserver != null) {
+                interceptors().add(0, MobileUsageResponseInterceptor(usageResponseObserver))
+            }
         }.followRedirects(false).followSslRedirects(false).build()
         return createApiService(PimServerEndpoints.apiBaseUrlForTrustedOrigin(binding.serverIdentity).toString(), client)
     }

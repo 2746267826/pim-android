@@ -31,12 +31,50 @@ class MobileUsageNotBeforeStoreTest {
     fun `deadline survives a restart for the same binding only`() {
         val now = 1_000_000L
         assertTrue(store.recordDeadline(binding, now + 15_000L, now))
-        assertEquals(now + 15_000L, store.readDeadline(binding, now + 1_000L))
-        assertEquals(14_000L, store.remainingDelayMillis(binding, now + 1_000L))
+
+        // A fresh store instance models the process restart; SharedPreferences is the
+        // only state that survives.
+        val restarted = MobileUsageNotBeforeStore(preferences)
+        assertEquals(now + 15_000L, restarted.readDeadline(binding, now + 1_000L))
+        assertEquals(14_000L, restarted.remainingDelayMillis(binding, now + 1_000L))
 
         val otherOwner = binding.copy(ownerId = "owner-b")
-        assertNull(store.readDeadline(otherOwner, now + 1_000L))
-        assertEquals(0L, store.remainingDelayMillis(otherOwner, now + 1_000L))
+        assertNull(restarted.readDeadline(otherOwner, now + 1_000L))
+        assertEquals(0L, restarted.remainingDelayMillis(otherOwner, now + 1_000L))
+        assertNull(restarted.readDeadline(binding.copy(deviceId = "device-b"), now + 1_000L))
+        assertNull(restarted.readDeadline(binding.copy(batchId = "batch-b"), now + 1_000L))
+        assertNull(restarted.readDeadline(binding.copy(serverIdentity = "server-b"), now + 1_000L))
+    }
+
+    @Test
+    fun `a later shorter deadline never shortens the conservative maximum`() {
+        val now = 1_000_000L
+        assertTrue(store.recordDeadline(binding, now + 60_000L, now))
+        assertTrue(store.recordDeadline(binding, now + 10_000L, now))
+        assertEquals(now + 60_000L, store.readDeadline(binding, now))
+
+        assertTrue(store.recordDeadline(binding, now + 90_000L, now))
+        assertEquals(now + 90_000L, store.readDeadline(binding, now))
+    }
+
+    @Test
+    fun `forward clock jump beyond tolerance clears the stale deadline`() {
+        val now = 1_000_000L
+        assertTrue(store.recordDeadline(binding, now + 60_000L, now))
+
+        val jumpedNow = now + 2L * 60L * 60L * 1_000L
+        assertNull(store.readDeadline(binding, jumpedNow))
+        assertTrue(preferences.all.isEmpty())
+    }
+
+    @Test
+    fun `clear removes the deadline and its recorded-at metadata`() {
+        val now = 1_000_000L
+        assertTrue(store.recordDeadline(binding, now + 60_000L, now))
+        store.clear(binding)
+
+        assertNull(store.readDeadline(binding, now))
+        assertTrue(preferences.all.isEmpty())
     }
 
     @Test

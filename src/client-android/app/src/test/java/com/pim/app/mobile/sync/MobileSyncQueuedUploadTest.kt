@@ -309,6 +309,64 @@ class MobileSyncQueuedUploadTest {
     }
 
     @Test
+    fun `manual sync does not bypass not-before or rotate the pending batch id`() = runTest {
+        val eventIds = db.mobileDataDao().insertUsageEvents(
+            listOf(
+                usageEvent(1_750_000_000_000L, "com.processing.manual.one"),
+                usageEvent(1_750_000_100_000L, "com.processing.manual.two")
+            )
+        )
+        usageServer.responses += RecordingUsageServer.processing202
+        usageServer.responses += RecordingUsageServer.terminal200
+
+        val processing = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "processing-client-device",
+                attemptedAt = "2026-10-30T04:00:20Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, processing.outcome)
+        assertEquals(1, usageServer.requests.size)
+        val firstBatchId = usageServer.requests.single().clientBatchId
+        assertEquals(eventIds, db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).map { it.id })
+
+        // A manual "sync now" must still honor the persisted server deadline and must not
+        // touch the network or rotate the batch id of the in-flight server batch.
+        val stillWaiting = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "processing-client-device",
+                attemptedAt = "2026-10-30T04:00:25Z",
+                manualRecoveryRetry = true,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, stillWaiting.outcome)
+        assertEquals("waiting-not-before", stillWaiting.phase)
+        assertEquals(1, usageServer.requests.size)
+        assertEquals(firstBatchId, stillWaiting.lastBatchId)
+        assertEquals(2, pendingUsageRemaining(db.mobileDataDao()))
+
+        testNowMillis += 16_000L
+        val terminal = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "processing-client-device",
+                attemptedAt = "2026-10-30T04:00:36Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.SUCCESS, terminal.outcome)
+        assertEquals(2, usageServer.requests.size)
+        assertEquals(firstBatchId, usageServer.requests[1].clientBatchId)
+        assertEquals(0, pendingUsageRemaining(db.mobileDataDao()))
+    }
+
+    @Test
     fun `HTTP 202 empty body is classified BLOCKED and keeps the local pending row`() = runTest {
         val eventId = db.mobileDataDao().insertUsageEvents(
             listOf(usageEvent(1_750_000_300_000L, "com.processing.empty.body"))

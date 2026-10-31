@@ -91,6 +91,7 @@ internal class MobileUsageNotBeforeStore(
         preferences.edit()
             .remove("${key}_binding")
             .remove("${key}_deadline")
+            .remove("${key}_recorded_at")
             .commit()
     }
 

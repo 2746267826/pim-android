@@ -8,6 +8,7 @@ import com.pim.app.data.AppDatabase
 import com.pim.app.data.ForensicEventEntity
 import com.pim.app.data.MobileLocationDroppedDiagnosticEntity
 import com.pim.app.data.MobileLocationPointEntity
+import com.pim.app.data.MobileSyncBatchEntity
 import com.pim.app.forensics.ForensicRetention
 import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.mobile.sync.LocationUploadStatusUpdates
@@ -36,6 +37,7 @@ import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.withTimeout
 import kotlinx.serialization.json.Json
+import org.json.JSONArray
 import org.json.JSONObject
 import org.junit.After
 import org.junit.Assert.assertEquals
@@ -163,6 +165,110 @@ class DiagnosticExportCoreStreamingTest {
         }
         assertTrue(result.file.isFile)
         assertNoSpoolOrTmpArtifacts()
+    }
+
+    @Test(timeout = 60_000)
+    fun keysetPaginationPreservesRowsWithIdenticalTimestamps() = runBlocking {
+        val at = now - 90_000L
+        val keys = (0 until 20).map { index -> "tie-$index" }
+        db.withTransaction {
+            keys.forEachIndexed { index, key ->
+                db.mobileDataDao().insertDroppedLocationDiagnostic(
+                    MobileLocationDroppedDiagnosticEntity(
+                        recordedAtUtc = at,
+                        provider = "provider token=secret-token-$index",
+                        accuracyMeters = index.toFloat(),
+                        policyMode = "Active",
+                        reason = key
+                    )
+                )
+                db.forensicEventDao().insertIgnore(
+                    ForensicEventEntity(
+                        eventType = "probe",
+                        occurredAtUtc = at,
+                        clientItemKey = key,
+                        payloadJson = """{"index":$index,"token":"secret-token-$index"}"""
+                    )
+                )
+            }
+        }
+
+        val repository = createRepository(pageSize = 1)
+        val result = repository.export(includeRecentLocations = false)
+
+        ZipFile(result.file).use { zip ->
+            val reasons = mutableListOf<String>()
+            val forensicKeys = mutableListOf<String>()
+            assertEquals(20, zip.scanJsonLines("dropped-locations.jsonl") { row ->
+                reasons += row.getString("reason")
+            })
+            assertEquals(20, zip.scanJsonLines("forensics.jsonl") { row ->
+                forensicKeys += row.getString("clientItemKey")
+            })
+            assertEquals(keys.toSet(), reasons.toSet())
+            assertEquals(keys.toSet(), forensicKeys.toSet())
+            assertEquals(20, reasons.size)
+            assertEquals(20, forensicKeys.size)
+        }
+        assertNoSpoolOrTmpArtifacts()
+    }
+
+    @Test(timeout = 60_000)
+    fun exportIncludesRowsOlderThanRetentionWithoutTruncation() = runBlocking {
+        insertSyntheticRows(
+            count = 3,
+            atMillis = now - 31L * 24L * 3600_000L,
+            locationAtMillis = now - 60_000L,
+            includeOutOfRange = false,
+            forensicPrefix = "stale",
+            reasonPrefix = "stale-reason",
+            latitudeOffset = 0.0
+        )
+
+        val repository = createRepository(pageSize = 2)
+        val result = repository.export(includeRecentLocations = false)
+
+        ZipFile(result.file).use { zip ->
+            val reasons = mutableSetOf<String>()
+            val forensicKeys = mutableSetOf<String>()
+            assertEquals(3, zip.scanJsonLines("dropped-locations.jsonl") { row ->
+                reasons += row.getString("reason")
+            })
+            assertEquals(3, zip.scanJsonLines("forensics.jsonl") { row ->
+                forensicKeys += row.getString("clientItemKey")
+            })
+            assertEquals(
+                setOf("stale-reason-0", "stale-reason-1", "stale-reason-2"),
+                reasons
+            )
+            assertEquals(setOf("stale-0", "stale-1", "stale-2"), forensicKeys)
+        }
+        assertNoSpoolOrTmpArtifacts()
+    }
+
+    @Test(timeout = 60_000)
+    fun syncHistoryEntryIsBoundedToLimit() = runBlocking {
+        db.withTransaction {
+            repeat(103) { index ->
+                db.mobileDataDao().insertSyncBatch(
+                    MobileSyncBatchEntity(
+                        batchId = "batch-$index",
+                        entityType = "location",
+                        rowCount = index,
+                        createdAtUtc = now - 1000L + index
+                    )
+                )
+            }
+        }
+
+        val repository = createRepository(pageSize = 2)
+        val result = repository.export(includeRecentLocations = false)
+
+        ZipFile(result.file).use { zip ->
+            val history = JSONArray(zip.readText("sync-history.json"))
+            assertEquals(100, history.length())
+            assertEquals(102, history.getJSONObject(0).getInt("rowCount"))
+        }
     }
 
     @Test(timeout = 60_000)

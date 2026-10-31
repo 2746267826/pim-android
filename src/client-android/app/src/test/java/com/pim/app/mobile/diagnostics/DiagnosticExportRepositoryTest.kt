@@ -710,12 +710,12 @@ class DiagnosticExportRepositoryTest {
     @Test
     fun clearDiagnostics_structuredLogsCleared() = runTest {
         structuredLogRepo.info("op", "msg")
-        assertTrue(structuredLogRepo.snapshotFiles().isNotEmpty())
+        assertTrue(structuredLogRepo.logFiles().isNotEmpty())
 
         val repo = createRepo()
         repo.clearDiagnostics()
 
-        assertTrue(structuredLogRepo.snapshotFiles().isEmpty())
+        assertTrue(structuredLogRepo.logFiles().isEmpty())
     }
 
     @Test
@@ -733,7 +733,7 @@ class DiagnosticExportRepositoryTest {
             assertEquals("CLEAR_FAILED", e.code)
         }
 
-        assertTrue(structuredLogRepo.snapshotFiles().isEmpty())
+        assertTrue(structuredLogRepo.logFiles().isEmpty())
         val exportDir = File(context.filesDir, "diagnostics/exports")
         val zips = exportDir.listFiles()?.filter { it.name.endsWith(".zip") }.orEmpty()
         assertEquals(0, zips.size)
@@ -770,7 +770,7 @@ class DiagnosticExportRepositoryTest {
             deleteFile = { false }
         )
         failingLogRepo.info("op", "msg")
-        assertTrue(failingLogRepo.snapshotFiles().isNotEmpty())
+        assertTrue(failingLogRepo.logFiles().isNotEmpty())
 
         val repo = createRepo(
             structuredLogRepository = failingLogRepo,
@@ -785,7 +785,7 @@ class DiagnosticExportRepositoryTest {
             assertEquals("CLEAR_FAILED", e.code)
         }
 
-        assertTrue(failingLogRepo.snapshotFiles().isNotEmpty())
+        assertTrue(failingLogRepo.logFiles().isNotEmpty())
         assertFalse(File(exportDir, "pim-diagnostics-99999.zip").exists())
     }
 
@@ -838,7 +838,7 @@ class DiagnosticExportRepositoryTest {
             deleteFile = { throw IOException("simulated clear failure") }
         )
         throwingLogRepo.info("op", "msg")
-        assertTrue(throwingLogRepo.snapshotFiles().isNotEmpty())
+        assertTrue(throwingLogRepo.logFiles().isNotEmpty())
 
         val repo = createRepo(
             structuredLogRepository = throwingLogRepo,
@@ -853,7 +853,7 @@ class DiagnosticExportRepositoryTest {
             assertEquals("CLEAR_FAILED", e.code)
         }
 
-        assertTrue(throwingLogRepo.snapshotFiles().isNotEmpty())
+        assertTrue(throwingLogRepo.logFiles().isNotEmpty())
         assertFalse(File(exportDir, "pim-diagnostics-99999.zip").exists())
     }
 

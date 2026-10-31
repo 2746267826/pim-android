@@ -37,17 +37,16 @@ import com.pim.core.settings.ServerSettingsStore
 import java.lang.reflect.Proxy
 import java.time.Instant
 import java.util.concurrent.CopyOnWriteArrayList
+import java.util.concurrent.atomic.AtomicInteger
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.Json
-import okhttp3.Interceptor
-import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
-import okhttp3.Protocol
-import okhttp3.Response
-import okhttp3.ResponseBody.Companion.toResponseBody
-import okio.Buffer
+import okhttp3.mockwebserver.Dispatcher
+import okhttp3.mockwebserver.MockResponse
+import okhttp3.mockwebserver.MockWebServer
+import okhttp3.mockwebserver.RecordedRequest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -64,7 +63,8 @@ class MobileSyncQueuedUploadTest {
     private lateinit var context: Context
     private lateinit var db: AppDatabase
     private lateinit var coordinator: MobileSyncCoordinator
-    private lateinit var uploadInterceptor: RecordingUsageUploadInterceptor
+    private lateinit var usageServer: RecordingUsageServer
+    private var testNowMillis: Long = 1_750_000_000_000L
 
     @Before
     fun setUp() {
@@ -72,12 +72,12 @@ class MobileSyncQueuedUploadTest {
         db = Room.inMemoryDatabaseBuilder(context, AppDatabase::class.java)
             .allowMainThreadQueries()
             .build()
-        uploadInterceptor = RecordingUsageUploadInterceptor()
+        usageServer = RecordingUsageServer()
 
         val authPreferences = context.getSharedPreferences("queued-upload-auth", Context.MODE_PRIVATE)
         val tokenManager = TokenManager(QueuedUploadSecurePreferencesFactory(authPreferences))
         val serverSettingsStore = ServerSettingsStore(context, tokenManager)
-        val serverUrl = serverSettingsStore.setBaseUrl("https://pim.example/api/v1/")
+        val serverUrl = serverSettingsStore.setBaseUrl(usageServer.baseUrl)
         val serverIdentity = PimServerEndpoints.from(serverUrl).trustedOrigin
         assertTrue(
             tokenManager.saveOwned(
@@ -102,7 +102,10 @@ class MobileSyncQueuedUploadTest {
         val globalApi = unusedApi()
         val json = Json { ignoreUnknownKeys = true }
         val okHttpClient = OkHttpClient.Builder()
-            .addInterceptor(uploadInterceptor)
+            .addInterceptor { chain ->
+                if (usageServer.throwSessionChanged) throw UploadSessionChangedException()
+                chain.proceed(chain.request())
+            }
             .build()
         val apiClientProvider = ApiClientProvider(okHttpClient, json, serverSettingsStore)
         val deviceIdentityProvider = DeviceIdentityProvider(context)
@@ -142,11 +145,13 @@ class MobileSyncQueuedUploadTest {
             syncScheduler = { MobileSyncScheduler(context, trackSettings) },
             deviceIdentityProvider = deviceIdentityProvider
         )
+        coordinator.nowUtcMillis = { testNowMillis }
     }
 
     @After
     fun tearDown() {
         db.close()
+        usageServer.close()
     }
 
     @Test
@@ -198,28 +203,329 @@ class MobileSyncQueuedUploadTest {
         )
 
         assertTrue(state.outcome == MobileSyncOutcome.SUCCESS)
-        assertTrue(uploadInterceptor.requests.size >= 2)
-        assertTrue(uploadInterceptor.requests.all { it.totalCount <= USAGE_BATCH_LIMIT })
+        assertTrue(usageServer.requests.size >= 2)
+        assertTrue(usageServer.requests.all { it.totalCount <= USAGE_BATCH_LIMIT })
         assertEquals(
             expectedKeys,
-            uploadInterceptor.requests.flatMap { it.keys }.toSet()
+            usageServer.requests.flatMap { it.keys }.toSet()
         )
         assertEquals(
             expectedKeys.size,
-            uploadInterceptor.requests.sumOf { it.totalCount }
+            usageServer.requests.sumOf { it.totalCount }
         )
         assertEquals(0, pendingUsageRemaining(db.mobileDataDao()))
-        uploadInterceptor.requests.forEach { request ->
+        usageServer.requests.forEach { request ->
             val span = Instant.parse(request.sourceWindowEndUtc).toEpochMilli() -
                 Instant.parse(request.sourceWindowStartUtc).toEpochMilli()
             assertTrue(span in 1..USAGE_BATCH_MAX_WINDOW_MS)
         }
         assertEquals(
             1,
-            uploadInterceptor.requests.count { request ->
+            usageServer.requests.count { request ->
                 request.fallbackSummaryKeys.contains("$dailySummaryId")
             }
         )
+    }
+
+    @Test
+    fun `HTTP 202 full envelope with four unknown fields keeps Room pending and recovers on same batch`() = runTest {
+        val eventIds = db.mobileDataDao().insertUsageEvents(
+            listOf(
+                usageEvent(1_750_000_000_000L, "com.processing.one"),
+                usageEvent(1_750_000_100_000L, "com.processing.two")
+            )
+        )
+        usageServer.responses += RecordingUsageServer.processing202
+        usageServer.responses += RecordingUsageServer.terminal200
+
+        val processing = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "processing-client-device",
+                attemptedAt = "2026-10-30T04:00:20Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, processing.outcome)
+        assertEquals("waiting-not-before", processing.phase)
+        assertEquals("server-processing", processing.lastBatchStatus)
+        assertEquals("server-processing-202", processing.lastError)
+        assertEquals(2, processing.failedCount)
+        assertEquals(1, usageServer.requests.size)
+        val firstBatchId = usageServer.requests.single().clientBatchId
+        assertEquals(2, usageServer.requests.single().totalCount)
+        assertEquals(
+            eventIds,
+            db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).map { it.id }
+        )
+        assertEquals(
+            listOf(null, null),
+            db.mobileDataDao().getUsageEventsBySyncStatus().map { it.lastError }
+        )
+        assertEquals(2, pendingUsageRemaining(db.mobileDataDao()))
+
+        testNowMillis += 60_000L
+        val terminal = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "processing-client-device",
+                attemptedAt = "2026-10-30T04:00:35Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.SUCCESS, terminal.outcome)
+        assertEquals(0, pendingUsageRemaining(db.mobileDataDao()))
+        assertEquals(2, usageServer.requests.size)
+        assertEquals(firstBatchId, usageServer.requests[1].clientBatchId)
+        assertEquals(
+            usageServer.requests[0].keys,
+            usageServer.requests[1].keys
+        )
+    }
+
+    @Test
+    fun `HTTP 202 envelope with null data is an explicit RETRY and keeps pending row`() = runTest {
+        val eventId = db.mobileDataDao().insertUsageEvents(
+            listOf(usageEvent(1_750_000_200_000L, "com.processing.null.data"))
+        ).single()
+        usageServer.responses += RecordingUsageServer.nullData202
+
+        val state = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "null-data-device",
+                attemptedAt = "2026-10-30T04:00:20Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, state.outcome)
+        assertEquals("waiting-not-before", state.phase)
+        assertEquals("server-processing-202", state.lastError)
+        assertEquals(eventId, db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).single().id)
+        assertEquals(1, pendingUsageRemaining(db.mobileDataDao()))
+    }
+
+    @Test
+    fun `manual sync does not bypass not-before or rotate the pending batch id`() = runTest {
+        val eventIds = db.mobileDataDao().insertUsageEvents(
+            listOf(
+                usageEvent(1_750_000_000_000L, "com.processing.manual.one"),
+                usageEvent(1_750_000_100_000L, "com.processing.manual.two")
+            )
+        )
+        usageServer.responses += RecordingUsageServer.processing202
+        usageServer.responses += RecordingUsageServer.terminal200
+
+        val processing = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "processing-client-device",
+                attemptedAt = "2026-10-30T04:00:20Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, processing.outcome)
+        assertEquals(1, usageServer.requests.size)
+        val firstBatchId = usageServer.requests.single().clientBatchId
+        assertEquals(eventIds, db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).map { it.id })
+
+        // A manual "sync now" must still honor the persisted server deadline and must not
+        // touch the network or rotate the batch id of the in-flight server batch.
+        val stillWaiting = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "processing-client-device",
+                attemptedAt = "2026-10-30T04:00:25Z",
+                manualRecoveryRetry = true,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, stillWaiting.outcome)
+        assertEquals("waiting-not-before", stillWaiting.phase)
+        assertEquals(1, usageServer.requests.size)
+        assertEquals(firstBatchId, stillWaiting.lastBatchId)
+        assertEquals(2, pendingUsageRemaining(db.mobileDataDao()))
+
+        testNowMillis += 16_000L
+        val terminal = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "processing-client-device",
+                attemptedAt = "2026-10-30T04:00:36Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.SUCCESS, terminal.outcome)
+        assertEquals(2, usageServer.requests.size)
+        assertEquals(firstBatchId, usageServer.requests[1].clientBatchId)
+        assertEquals(0, pendingUsageRemaining(db.mobileDataDao()))
+    }
+
+    @Test
+    fun `body signals and terminal 200 follow the contract without shortening the deadline`() = runTest {
+        val eventId = db.mobileDataDao().insertUsageEvents(
+            listOf(usageEvent(1_750_000_000_000L, "com.processing.body"))
+        ).single()
+        usageServer.responses += RecordingUsageServer.ServerResponse(
+            httpStatus = 202,
+            body = """
+                {
+                  "code": 0,
+                  "message": "Batch is already being processed.",
+                  "data": {
+                    "batchId": "body-envelope-batch",
+                    "acceptedCount": 0,
+                    "skippedCount": 0,
+                    "rejectedCount": 0,
+                    "failedCount": 1,
+                    "itemResults": [],
+                    "processingState": "retry-scheduled",
+                    "retryAfterSeconds": 90,
+                    "leaseUntilUtc": null,
+                    "retryAtUtc": "2026-10-30T04:01:50Z"
+                  },
+                  "timestamp": "2026-10-30T04:00:20Z"
+                }
+            """.trimIndent(),
+            retryAfter = "15"
+        )
+        usageServer.responses += RecordingUsageServer.terminal200
+
+        val processing = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "body-device",
+                attemptedAt = "2026-10-30T04:00:20Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, processing.outcome)
+        assertEquals("waiting-not-before", processing.phase)
+        assertEquals("server-retry-scheduled", processing.lastBatchStatus)
+        assertEquals(eventId, db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).single().id)
+        val firstBatchId = usageServer.requests.single().clientBatchId
+
+        // The body hint (90s) outlives the header (15s): retrying after 16s must still
+        // be blocked by the persisted deadline and keep the same batch id.
+        testNowMillis += 16_000L
+        val earlyRetry = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "body-device",
+                attemptedAt = "2026-10-30T04:00:36Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, earlyRetry.outcome)
+        assertEquals("waiting-not-before", earlyRetry.phase)
+        assertEquals(1, usageServer.requests.size)
+        assertEquals(firstBatchId, earlyRetry.lastBatchId)
+
+        testNowMillis += 75_000L
+        val terminal = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "body-device",
+                attemptedAt = "2026-10-30T04:01:51Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.SUCCESS, terminal.outcome)
+        assertEquals(2, usageServer.requests.size)
+        assertEquals(0, pendingUsageRemaining(db.mobileDataDao()))
+    }
+
+    @Test
+    fun `unknown processing state stays deferred and never acks`() = runTest {
+        val eventId = db.mobileDataDao().insertUsageEvents(
+            listOf(usageEvent(1_750_000_000_000L, "com.processing.unknown.state"))
+        ).single()
+        usageServer.responses += RecordingUsageServer.ServerResponse(
+            httpStatus = 202,
+            body = """
+                {
+                  "code": 0,
+                  "message": "Accepted with unknown future state.",
+                  "data": {
+                    "batchId": "unknown-state-batch",
+                    "acceptedCount": 1,
+                    "skippedCount": 0,
+                    "rejectedCount": 0,
+                    "failedCount": 0,
+                    "itemResults": [],
+                    "processingState": "future-state",
+                    "retryAfterSeconds": 60,
+                    "leaseUntilUtc": null,
+                    "retryAtUtc": null
+                  },
+                  "timestamp": "2026-10-30T04:00:20Z"
+                }
+            """.trimIndent(),
+            retryAfter = "15"
+        )
+        usageServer.responses += RecordingUsageServer.terminal200
+
+        val processing = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "unknown-state-device",
+                attemptedAt = "2026-10-30T04:00:20Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, processing.outcome)
+        assertEquals("server-processing-unknown", processing.lastBatchStatus)
+        assertEquals(eventId, db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).single().id)
+        assertEquals(1, usageServer.requests.size)
+
+        testNowMillis += 61_000L
+        val terminal = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "unknown-state-device",
+                attemptedAt = "2026-10-30T04:01:21Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.SUCCESS, terminal.outcome)
+        assertEquals(2, usageServer.requests.size)
+        assertEquals(0, pendingUsageRemaining(db.mobileDataDao()))
+    }
+
+    @Test
+    fun `HTTP 202 empty body is classified BLOCKED and keeps the local pending row`() = runTest {
+        val eventId = db.mobileDataDao().insertUsageEvents(
+            listOf(usageEvent(1_750_000_300_000L, "com.processing.empty.body"))
+        ).single()
+        usageServer.responses += RecordingUsageServer.emptyBody202
+
+        val state = checkNotNull(
+            coordinator.uploadQueuedUsage(
+                deviceId = "empty-body-device",
+                attemptedAt = "2026-10-30T04:00:20Z",
+                manualRecoveryRetry = false,
+                maxBatchesPerRun = 1
+            )
+        )
+
+        assertEquals(MobileSyncOutcome.DEFERRED, state.outcome)
+        assertEquals("waiting-not-before", state.phase)
+        assertTrue(
+            "empty-body 202 must retain the Retry-After deadline via the transport signal",
+            state.lastErrorDetail.orEmpty().contains("server-processing-202-malformed")
+        )
+        assertEquals(eventId, db.mobileDataDao().getUsageEventsBySyncStatus(MobileSyncStatus.PENDING).single().id)
+        assertEquals(1, pendingUsageRemaining(db.mobileDataDao()))
     }
 
     @Test
@@ -227,7 +533,8 @@ class MobileSyncQueuedUploadTest {
         val eventId = db.mobileDataDao().insertUsageEvents(
             listOf(usageEvent(1_750_000_000_000L, "com.lease.lost"))
         ).single()
-        uploadInterceptor.leaseLostOnce = true
+        usageServer.responses += RecordingUsageServer.leaseLost409
+        usageServer.responses += RecordingUsageServer.terminal200
 
         val first = checkNotNull(
             coordinator.uploadQueuedUsage(
@@ -238,8 +545,8 @@ class MobileSyncQueuedUploadTest {
         )
 
         assertEquals(MobileSyncOutcome.RETRY, first.outcome)
-        assertEquals(1, uploadInterceptor.requests.size)
-        val firstBatchId = uploadInterceptor.requests.single().clientBatchId
+        assertEquals(1, usageServer.requests.size)
+        val firstBatchId = usageServer.requests.single().clientBatchId
         assertEquals(1, pendingUsageRemaining(db.mobileDataDao()))
         assertEquals(
             eventId,
@@ -261,8 +568,8 @@ class MobileSyncQueuedUploadTest {
         )
 
         assertEquals(MobileSyncOutcome.SUCCESS, second.outcome)
-        assertEquals(2, uploadInterceptor.requests.size)
-        assertEquals(firstBatchId, uploadInterceptor.requests[1].clientBatchId)
+        assertEquals(2, usageServer.requests.size)
+        assertEquals(firstBatchId, usageServer.requests[1].clientBatchId)
         assertEquals(0, pendingUsageRemaining(db.mobileDataDao()))
     }
 
@@ -286,8 +593,8 @@ class MobileSyncQueuedUploadTest {
             )
         )
 
-        assertEquals(1, uploadInterceptor.requests.size)
-        assertTrue(uploadInterceptor.requests.all { it.totalCount <= USAGE_BATCH_LIMIT })
+        assertEquals(1, usageServer.requests.size)
+        assertTrue(usageServer.requests.all { it.totalCount <= USAGE_BATCH_LIMIT })
         assertEquals(1, pendingUsageRemaining(db.mobileDataDao()))
         assertEquals("catching-up", state.phase)
         assertEquals(MobileSyncOutcome.SUCCESS, state.outcome)
@@ -310,7 +617,7 @@ class MobileSyncQueuedUploadTest {
         assertEquals("upload-blocked", state.phase)
         assertEquals(MobileSyncOutcome.BLOCKED, state.outcome)
         assertEquals(1, pendingUsageRemaining(db.mobileDataDao()))
-        assertEquals(0, uploadInterceptor.requests.size)
+        assertEquals(0, usageServer.requests.size)
         assertEquals(eventId, db.mobileDataDao().getUsageEventsBySyncStatus().single().id)
     }
 
@@ -319,7 +626,7 @@ class MobileSyncQueuedUploadTest {
         val eventId = db.mobileDataDao().insertUsageEvents(
             listOf(usageEvent(1_750_000_000_000L, "com.session.changed"))
         ).single()
-        uploadInterceptor.throwSessionChanged = true
+        usageServer.throwSessionChanged = true
 
         val state = checkNotNull(
             coordinator.uploadQueuedUsage(
@@ -331,7 +638,7 @@ class MobileSyncQueuedUploadTest {
 
         assertEquals("usage-outbox-binding-blocked", state.phase)
         assertEquals(MobileSyncOutcome.BLOCKED, state.outcome)
-        assertEquals(0, uploadInterceptor.requests.size)
+        assertEquals(0, usageServer.requests.size)
         assertEquals(1, pendingUsageRemaining(db.mobileDataDao()))
         assertEquals(
             eventId,
@@ -361,57 +668,67 @@ class MobileSyncQueuedUploadTest {
         ApiService::class.java.classLoader,
         arrayOf(ApiService::class.java)
     ) { proxy, method, args ->
-        when (method.name) {
-            "toString" -> "UnusedApiService"
-            "hashCode" -> System.identityHashCode(proxy)
-            "equals" -> proxy === args?.firstOrNull()
-            else -> error("Unexpected global API call: ${method.name}")
+        if (method.declaringClass == Any::class.java) {
+            when (method.name) {
+                "toString" -> "UnusedApiService"
+                "hashCode" -> System.identityHashCode(proxy)
+                "equals" -> proxy === args?.firstOrNull()
+                else -> error("Unexpected Object call: ${method.name}")
+            }
+        } else {
+            // Bound usage upload always uses the real REST service, never this global proxy.
+            error("Unexpected global API call: ${method.name}")
         }
     } as ApiService
 
-    private class RecordingUsageUploadInterceptor : Interceptor {
+    private class RecordingUsageServer : AutoCloseable {
+        private val server = MockWebServer()
         val requests = CopyOnWriteArrayList<RecordedUsageRequest>()
-        var leaseLostOnce = false
+        val responses = CopyOnWriteArrayList<ServerResponse>()
         var throwSessionChanged = false
         private val json = Json { ignoreUnknownKeys = true }
+        private val sequence = AtomicInteger(0)
 
-        override fun intercept(chain: Interceptor.Chain): Response {
-            val request = chain.request()
-            assertEquals("/api/v1/mobile/usage/events", request.url.encodedPath)
-            assertEquals("POST", request.method)
-            if (throwSessionChanged) {
-                throw UploadSessionChangedException()
-            }
-            val bodyText = Buffer().also { buffer ->
-                checkNotNull(request.body).writeTo(buffer)
-            }.readUtf8()
-            val upload = json.decodeFromString<MobileUsageEventsUploadRequest>(bodyText)
-            requests += RecordedUsageRequest(upload)
-            if (leaseLostOnce) {
-                leaseLostOnce = false
-                return jsonResponse(
-                    request,
-                    409,
-                    """{"code":40904,"message":"lease lost","data":null,"timestamp":"2026-10-29T00:00:00Z"}"""
-                )
-            }
-            val itemResults = buildList {
-                upload.events.forEach { event ->
-                    add(accepted(event.clientItemKey, "usage-event"))
+        val baseUrl: String
+
+        init {
+            server.dispatcher = object : Dispatcher() {
+                override fun dispatch(request: RecordedRequest): MockResponse {
+                    assertEquals("/api/v1/mobile/usage/events", request.requestUrl?.encodedPath)
+                    assertEquals("POST", request.method)
+                    val bodyText = request.body.readUtf8()
+                    val upload = json.decodeFromString<MobileUsageEventsUploadRequest>(bodyText)
+                    requests += RecordedUsageRequest(upload)
+                    val configured = responses.getOrNull(sequence.getAndIncrement())
+                        ?: ServerResponse(200, json.encodeToString(terminal(upload)))
+                    val responseBody = configured.body
+                        ?: if (configured.generateTerminal) json.encodeToString(terminal(upload)) else null
+                    return MockResponse()
+                        .setResponseCode(configured.httpStatus)
+                        .setHeader("Content-Type", "application/json")
+                        .apply {
+                            configured.retryAfter?.let { setHeader("Retry-After", it) }
+                            responseBody?.let(::setBody)
+                        }
                 }
+            }
+            server.start()
+            baseUrl = server.url("/api/v1/").toString()
+        }
+
+        override fun close() = server.shutdown()
+
+        private fun terminal(upload: MobileUsageEventsUploadRequest): MobileUsageIngestResultApiResponse {
+            val itemResults = buildList {
+                upload.events.forEach { event -> add(accepted(event.clientItemKey, "usage-event")) }
                 upload.fallbackSummaries.forEach { summary ->
                     add(accepted(summary.clientItemKey, "usage-summary"))
                 }
                 upload.apps.forEach { app ->
-                    add(
-                        accepted(
-                            "${app.packageName}@${app.versionCode}",
-                            "app-metadata"
-                        )
-                    )
+                    add(accepted("${app.packageName}@${app.versionCode}", "app-metadata"))
                 }
             }
-            val response = MobileUsageIngestResultApiResponse(
+            return MobileUsageIngestResultApiResponse(
                 code = 0,
                 data = MobileUsageIngestResult(
                     acceptedCount = itemResults.size,
@@ -424,7 +741,6 @@ class MobileSyncQueuedUploadTest {
                 message = "ok",
                 timestamp = "2026-10-29T00:00:00Z"
             )
-            return jsonResponse(request, 200, json.encodeToString(response))
         }
 
         private fun accepted(key: String?, entityType: String): MobileIngestItemResult {
@@ -437,18 +753,50 @@ class MobileSyncQueuedUploadTest {
             )
         }
 
-        private fun jsonResponse(
-            request: okhttp3.Request,
-            status: Int,
-            body: String
-        ): Response {
-            return Response.Builder()
-                .request(request)
-                .protocol(Protocol.HTTP_1_1)
-                .code(status)
-                .message(if (status == 200) "OK" else "Conflict")
-                .body(body.toResponseBody("application/json".toMediaType()))
-                .build()
+        data class ServerResponse(
+            val httpStatus: Int,
+            val body: String?,
+            val retryAfter: String? = null,
+            val generateTerminal: Boolean = false
+        )
+
+        companion object {
+            // Intentional future-response compatibility fixture: none of these four fields
+            // is read by or added to the currently generated DTO.
+            val processing202 = ServerResponse(
+                httpStatus = 202,
+                body = """
+                    {
+                      "code": 0,
+                      "message": "Batch is already being processed.",
+                      "data": {
+                        "batchId": "fixture-original",
+                        "acceptedCount": 0,
+                        "skippedCount": 0,
+                        "rejectedCount": 0,
+                        "failedCount": 2,
+                        "itemResults": [],
+                        "processingState": "in-flight",
+                        "retryAfterSeconds": 15,
+                        "leaseUntilUtc": "2026-10-30T04:15:00Z",
+                        "retryAtUtc": null
+                      },
+                      "timestamp": "2026-10-30T04:00:20Z"
+                    }
+                """.trimIndent(),
+                retryAfter = "15"
+            )
+            val terminal200 = ServerResponse(httpStatus = 200, body = null, generateTerminal = true)
+            val nullData202 = ServerResponse(
+                httpStatus = 202,
+                body = """{"code":0,"data":null,"message":"accepted without data","timestamp":"2026-10-30T04:00:20Z"}""",
+                retryAfter = "15"
+            )
+            val emptyBody202 = ServerResponse(httpStatus = 202, body = "", retryAfter = "15")
+            val leaseLost409 = ServerResponse(
+                httpStatus = 409,
+                body = """{"code":40904,"message":"lease lost","data":null,"timestamp":"2026-10-29T00:00:00Z"}"""
+            )
         }
     }
 

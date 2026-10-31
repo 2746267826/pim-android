@@ -341,48 +341,36 @@ class StructuredLogRepositoryTest {
     }
 
     @Test
-    fun snapshotFilesReturnsOnlyLogFilesSorted() = runTest {
+    fun logFilesReturnsOnlyLogFilesSorted() = runTest {
         testLogDir.mkdirs()
         File(testLogDir, "mobile-2024-07-16.jsonl").writeText("a\n")
         File(testLogDir, "mobile-2024-07-14.jsonl").writeText("b\n")
         File(testLogDir, "mobile-2024-07-15.jsonl").writeText("c\n")
         File(testLogDir, "not-a-log.txt").writeText("d\n")
 
-        val snapshots = repository.snapshotFiles()
-        assertEquals(3, snapshots.size)
-        assertEquals("mobile-2024-07-14.jsonl", snapshots[0].fileName)
-        assertEquals("mobile-2024-07-15.jsonl", snapshots[1].fileName)
-        assertEquals("mobile-2024-07-16.jsonl", snapshots[2].fileName)
+        assertEquals(
+            listOf(
+                "mobile-2024-07-14.jsonl",
+                "mobile-2024-07-15.jsonl",
+                "mobile-2024-07-16.jsonl"
+            ),
+            repository.logFiles().map { it.name }
+        )
     }
 
     @Test
-    fun snapshotFilesContentIsSnapshotAtCallTime() = runTest {
-        testLogDir.mkdirs()
-        File(testLogDir, "mobile-2024-07-16.jsonl").writeText("original\n")
-
-        val snapshots = repository.snapshotFiles()
-        assertEquals(1, snapshots.size)
-        assertEquals("original\n", snapshots[0].content)
-
-        File(testLogDir, "mobile-2024-07-16.jsonl").appendText("appended\n")
-
-        assertEquals("original\n", snapshots[0].content)
-    }
-
-    @Test
-    fun snapshotFilesExcludesNonLogFiles() = runTest {
+    fun logFilesExcludesNonLogFiles() = runTest {
         testLogDir.mkdirs()
         File(testLogDir, "mobile-2024-07-16.jsonl").writeText("a\n")
         File(testLogDir, ".hidden").writeText("secret\n")
 
-        val snapshots = repository.snapshotFiles()
-        assertEquals(1, snapshots.size)
-        assertEquals("mobile-2024-07-16.jsonl", snapshots[0].fileName)
+        val files = repository.logFiles()
+        assertEquals(1, files.size)
+        assertEquals("mobile-2024-07-16.jsonl", files.single().name)
     }
 
     @Test
-    fun snapshotFilesEmptyWhenNoLogs() = runTest {
-        val snapshots = repository.snapshotFiles()
-        assertTrue(snapshots.isEmpty())
+    fun logFilesEmptyWhenNoLogs() = runTest {
+        assertTrue(repository.logFiles().isEmpty())
     }
 }

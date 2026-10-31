@@ -11,6 +11,7 @@ import java.net.UnknownHostException
 
 enum class MobileSyncOutcome {
     SUCCESS,
+    DEFERRED,
     RETRY,
     BLOCKED
 }
@@ -38,6 +39,9 @@ internal object MobileSyncErrorClassifier {
 internal fun mapOutcomeToWorkerResult(outcome: MobileSyncOutcome): ListenableWorker.Result {
     return when (outcome) {
         MobileSyncOutcome.SUCCESS -> ListenableWorker.Result.success()
+        // A persisted server deadline is handled by a delayed unique work request,
+        // not WorkManager's 15-second retry loop.
+        MobileSyncOutcome.DEFERRED -> ListenableWorker.Result.success()
         MobileSyncOutcome.RETRY -> ListenableWorker.Result.retry()
         MobileSyncOutcome.BLOCKED -> ListenableWorker.Result.failure()
     }

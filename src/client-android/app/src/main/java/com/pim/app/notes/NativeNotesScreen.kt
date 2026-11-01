@@ -145,7 +145,7 @@ fun NativeNotesScreen(
                                         }
                                         when (state.historyUnavailable[note.id]) {
                                             NoteHistoryUnavailableReason.SnapshotTooLarge -> PimStatusBanner(
-                                                "本篇超过 ${NoteEditHistory.MAX_SNAPSHOT_BYTES / (1024 * 1024)} MiB 的整篇撤销预算，仍会正常保存；为避免内存和磁盘无界，本篇不提供整篇撤销记录。",
+                                                "本篇超过整篇撤销存储预算（源快照最多 ${NoteEditHistory.MAX_SNAPSHOT_BYTES / (1024 * 1024)} MiB、journal 最多 ${NoteEditHistory.MAX_ENCODED_BYTES / (1024 * 1024)} MiB），仍会正常保存；为避免内存和磁盘无界，本篇不提供整篇撤销记录。",
                                                 PimStatusTone.Warning,
                                             )
                                             NoteHistoryUnavailableReason.DamagedJournal -> PimStatusBanner(

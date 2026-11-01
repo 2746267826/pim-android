@@ -146,6 +146,9 @@ class NoteFileStore(private val root: File) {
         val stagingRoot = File(root, ".import-staging")
         check(stagingRoot.isDirectory || stagingRoot.mkdirs()) { "Cannot create import staging directory" }
         recoverAbandonedImports()
+        check(abandonedImportEntries().isEmpty()) {
+            "An earlier interrupted import is still preserved; resolve its recovery data before retrying"
+        }
         check(stagingRoot.usableSpace >= MIN_IMPORT_SPACE_BYTES) { "Insufficient space to import the document package" }
         val staging = File(stagingRoot, id)
         check(staging.mkdirs()) { "Cannot create import staging folder" }

@@ -69,6 +69,7 @@ internal data class NoteEditHistory(
         require(groupAtMillis >= 0)
         require(snapshots.sumOf { it.toByteArray(Charsets.UTF_8).size } <= MAX_HISTORY_BYTES)
         require(snapshots.all { it.toByteArray(Charsets.UTF_8).size <= MAX_SNAPSHOT_BYTES })
+        require(encodedSize(this) <= MAX_ENCODED_BYTES)
     }
 
     companion object {
@@ -86,16 +87,29 @@ internal data class NoteEditHistory(
         fun initialOrNull(note: NoteDocument): NoteEditHistory? =
             if (canStore(note)) initial(note) else null
 
-        fun canStore(note: NoteDocument): Boolean =
-            content(note).toByteArray(Charsets.UTF_8).size <= MAX_SNAPSHOT_BYTES
+        fun canStore(note: NoteDocument): Boolean {
+            val snapshot = content(note)
+            if (snapshot.toByteArray(Charsets.UTF_8).size > MAX_SNAPSHOT_BYTES) return false
+            return encodedSize(NoteEditHistory(note.id, listOf(snapshot), 0, revision = note.revision)) <= MAX_ENCODED_BYTES
+        }
 
         private fun content(note: NoteDocument): String =
             JsonObject(note.source - "revision").toString()
 
+        private val encodedJson = Json { encodeDefaults = true }
+
+        private fun encodedSize(history: NoteEditHistory): Int =
+            encodedJson.encodeToString(history).toByteArray(Charsets.UTF_8).size
+
         private fun bounded(history: NoteEditHistory): NoteEditHistory {
             var items = history.snapshots
             var cursor = history.cursor
-            while (items.size > 1 && (items.size > MAX_SNAPSHOTS || items.sumOf { it.toByteArray(Charsets.UTF_8).size } > MAX_HISTORY_BYTES)) {
+            while (items.size > 1 && (
+                    items.size > MAX_SNAPSHOTS ||
+                        items.sumOf { it.toByteArray(Charsets.UTF_8).size } > MAX_HISTORY_BYTES ||
+                        encodedSize(history.copy(snapshots = items, cursor = cursor)) > MAX_ENCODED_BYTES
+                    )
+            ) {
                 items = items.drop(1)
                 cursor = (cursor - 1).coerceAtLeast(0)
             }

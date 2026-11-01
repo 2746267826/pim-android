@@ -15,6 +15,42 @@ data class LegacyQuickNotePage(
     val totalPages: Int,
 )
 
+data class QuickNoteDraft(
+    val baseline: String,
+    val content: String,
+) {
+    val isDirty: Boolean get() = content != baseline
+
+    fun edit(value: String): QuickNoteDraft = copy(content = value)
+
+    /**
+     * Rebase only when the user has no pending edit, or when the server now
+     * contains exactly the submitted draft. A failed save or an unrelated
+     * refresh must never erase local text.
+     */
+    fun onServerDetailChanged(serverContent: String): QuickNoteDraft = when {
+        content == serverContent -> QuickNoteDraft(serverContent, serverContent)
+        !isDirty -> QuickNoteDraft(serverContent, serverContent)
+        else -> this
+    }
+}
+
+/**
+ * `source=quick-html` is emitted by the legacy quick-note capture path.
+ * `legacyHtml` is also persisted in metadata for older records. The update
+ * contract has only `contentMarkdown`; treating either as plain text would
+ * overwrite the original HTML representation.
+ */
+fun QuickNoteDetailDto.isLegacyQuickNoteHtml(): Boolean =
+    source.trim().lowercase() in setOf("quick-html", "quick_html") ||
+        metadataJson.contains("\"legacyHtml\"", ignoreCase = true) ||
+        attachments.any {
+            it.contentType.equals("text/html", ignoreCase = true) ||
+                it.fileName.endsWith(".html", ignoreCase = true) ||
+                it.fileName.endsWith(".htm", ignoreCase = true)
+        } ||
+        contentMarkdown.trimStart().startsWith("<")
+
 /**
  * Metadata JSON is deliberately not sent through UpdateQuickNoteRequest because
  * the contract has no such field. Existing attachment ids are retained so editing
@@ -24,23 +60,32 @@ fun legacyQuickNoteUpdateRequest(
     detail: QuickNoteDetailDto,
     contentMarkdown: String,
     status: String = detail.status,
-): UpdateQuickNoteRequest = UpdateQuickNoteRequest(
-    attachmentIds = detail.attachments.map { it.id },
-    contentMarkdown = contentMarkdown,
-    status = status,
-)
+): UpdateQuickNoteRequest {
+    require(!detail.isLegacyQuickNoteHtml()) {
+        "旧 HTML 快速记录为只读；可用处理/归档/恢复/删除动作，正文不会转换成纯文本覆盖。"
+    }
+    return UpdateQuickNoteRequest(
+        attachmentIds = detail.attachments.map { it.id },
+        contentMarkdown = contentMarkdown,
+        status = status,
+    )
+}
 
 /**
  * MIG04 / NOTE03 compatibility boundary for old quick HTML notes.
  *
- * The legacy record itself remains authoritative on the server. This client
- * edits text/status through the contract and references existing attachment ids;
- * it never rewrites metadataJson or claims to replace the old HTML record.
+ * The legacy record itself remains authoritative on the server. Ordinary quick
+ * notes edit text/status through the contract and reference existing attachment
+ * ids. Legacy HTML records allow lifecycle actions only, because the update
+ * contract has no HTML/metadata field and would overwrite `contentMarkdown`.
  */
 @Singleton
 class LegacyQuickNoteRepository @Inject constructor(
     private val api: ApiService,
 ) {
+    fun boundTo(boundApi: ApiService): LegacyQuickNoteRepository =
+        LegacyQuickNoteRepository(boundApi)
+
     suspend fun load(search: String? = null): LegacyQuickNotePage {
         val result = api.getQuickNotes(
             search = search?.trim()?.takeIf { it.isNotEmpty() },

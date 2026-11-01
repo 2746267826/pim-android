@@ -47,6 +47,13 @@ class ApiClientProvider @Inject constructor(
         usageResponseObserver = responseObserver
     )
 
+    /**
+     * Native workbench reads/actions must keep using the owner/server that was
+     * visible when the screen loaded, even after a delayed response or retry.
+     */
+    fun workbenchApiService(binding: BoundUploadSession): ApiService =
+        boundUploadApiService(binding, BoundUploadRoute.NativeWorkbench)
+
     private fun boundUploadApiService(
         binding: BoundUploadSession,
         route: BoundUploadRoute,

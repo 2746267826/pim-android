@@ -1,0 +1,126 @@
+package com.pim.app.nativework
+
+import com.pim.app.nativework.quicknotes.LegacyQuickNoteRepository
+import com.pim.core.contract.TaskResponse
+import com.pim.core.contract.TaskResponsePagedResult
+import com.pim.core.contract.TaskResponsePagedResultApiResponse
+import com.pim.core.network.ApiService
+import com.pim.core.network.BoundUploadSession
+import java.lang.reflect.Proxy
+import kotlin.coroutines.Continuation
+import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.test.StandardTestDispatcher
+import kotlinx.coroutines.test.resetMain
+import kotlinx.coroutines.test.runCurrent
+import kotlinx.coroutines.test.runTest
+import kotlinx.coroutines.test.setMain
+import org.junit.Assert.assertTrue
+import org.junit.Test
+
+class NativeWorkbenchViewModelSessionTest {
+    private val ownerA = "11111111-1111-4111-8111-111111111111"
+    private val ownerB = "22222222-2222-4222-8222-222222222222"
+
+    @Test
+    fun delayedOwnerAResponseCannotPopulateAfterOwnerSwitch() = runTest {
+        val mainDispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(mainDispatcher)
+        try {
+            var pendingTasks: Continuation<Any?>? = null
+            val ownerAApi = Proxy.newProxyInstance(
+                ApiService::class.java.classLoader,
+                arrayOf(ApiService::class.java),
+            ) { _, method, args ->
+                when (method.name) {
+                    "getTasksPaged" -> {
+                        pendingTasks = args.last() as Continuation<Any?>
+                        COROUTINE_SUSPENDED
+                    }
+                    else -> error("Unexpected owner-A call ${method.name}")
+                }
+            } as ApiService
+            val transport = ControllableTransport(
+                current = session(ownerA, generation = 1L),
+                api = ownerAApi,
+            )
+            val unusedApi = Proxy.newProxyInstance(
+                ApiService::class.java.classLoader,
+                arrayOf(ApiService::class.java),
+            ) { _, _, _ -> error("Template API must not be called") } as ApiService
+            val viewModel = NativeWorkbenchViewModel(
+                repository = NativeWorkbenchRepository(unusedApi),
+                legacyQuickNotes = LegacyQuickNoteRepository(unusedApi),
+                transport = transport,
+            )
+
+            runCurrent()
+            assertTrue(pendingTasks != null)
+
+            transport.current = session(ownerB, generation = 2L)
+            pendingTasks!!.resumeWith(
+                Result.success(
+                    TaskResponsePagedResultApiResponse(
+                        code = 200,
+                        data = TaskResponsePagedResult(
+                            items = listOf(task()),
+                            page = 1,
+                            pageSize = 100,
+                            totalCount = 1,
+                            totalPages = 1,
+                        ),
+                        message = "ok",
+                        timestamp = "now",
+                    )
+                )
+            )
+            runCurrent()
+
+            assertTrue(viewModel.state.value.tasks.isEmpty())
+            assertTrue(
+                viewModel.state.value.error.orEmpty().contains("账号或服务器已切换")
+            )
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
+    private fun session(ownerId: String, generation: Long) = NativeWorkbenchSession(
+        binding = BoundUploadSession("https://pim.example", ownerId),
+        identityGeneration = generation,
+    )
+
+    private fun task() = TaskResponse(
+        calendarId = "cal-1",
+        description = null,
+        dtStart = null,
+        due = null,
+        estimatedDuration = null,
+        id = "task-a",
+        isInbox = false,
+        minimumSegment = null,
+        percentComplete = 0,
+        plannedEnd = null,
+        priority = 3,
+        sortOrder = 0,
+        status = "NEEDS-ACTION",
+        subTasks = emptyList(),
+        taskBookId = null,
+        title = "Owner A only",
+        uid = "task-uid-a",
+    )
+
+    private class ControllableTransport(
+        var current: NativeWorkbenchSession?,
+        val api: ApiService,
+    ) : NativeWorkbenchTransport {
+        override fun currentSession(): NativeWorkbenchSession? = current
+
+        override fun isCurrent(session: NativeWorkbenchSession): Boolean = current == session
+
+        override fun apiFor(session: NativeWorkbenchSession): ApiService {
+            check(isCurrent(session))
+            return api
+        }
+    }
+}

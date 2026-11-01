@@ -1,14 +1,18 @@
 package com.pim.app.nativework
 
 import com.pim.app.nativework.quicknotes.legacyQuickNoteUpdateRequest
+import com.pim.app.nativework.quicknotes.QuickNoteDraft
+import com.pim.app.nativework.quicknotes.isLegacyQuickNoteHtml
 import com.pim.core.contract.EventAttendeeDto
 import com.pim.core.contract.EventResponse
 import com.pim.core.contract.QuickNoteAttachmentDto
 import com.pim.core.contract.QuickNoteDetailDto
 import com.pim.core.contract.TaskResponse
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
+import org.junit.Assert.assertThrows
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import java.time.LocalDate
@@ -97,13 +101,68 @@ class NativeWorkbenchMappingTest {
 
     @Test
     fun quickNoteEditKeepsAttachmentIdsAndDoesNotInventMetadataField() {
-        val detail = quickNote()
+        val detail = quickNote().copy(
+            attachments = quickNote().attachments.filterNot {
+                it.contentType.equals("text/html", ignoreCase = true)
+            },
+            source = "manual",
+            metadataJson = "{}",
+        )
         val request = legacyQuickNoteUpdateRequest(detail, "新的正文")
 
         assertEquals("新的正文", request.contentMarkdown)
-        assertEquals(listOf("attachment-1", "attachment-2"), request.attachmentIds)
+        assertEquals(listOf("attachment-2"), request.attachmentIds)
         assertEquals("inbox", request.status)
-        assertTrue(detail.metadataJson.contains("legacyHtml"))
+        assertTrue(quickNote().metadataJson.contains("legacyHtml"))
+    }
+
+    @Test
+    fun legacyHtmlQuickNoteIsReadOnlyAndCannotBeOverwrittenAsPlainText() {
+        val detail = quickNote()
+
+        assertTrue(detail.isLegacyQuickNoteHtml())
+        assertThrows(IllegalArgumentException::class.java) {
+            legacyQuickNoteUpdateRequest(
+                detail.copy(metadataJson = "{}"),
+                "plain text"
+            )
+        }
+        assertFalse(
+            detail.copy(
+                attachments = detail.attachments.filterNot {
+                    it.contentType.equals("text/html", ignoreCase = true)
+                },
+                source = "manual",
+                metadataJson = "{}",
+            )
+                .isLegacyQuickNoteHtml()
+        )
+        assertTrue(
+            detail.copy(
+                source = "manual",
+                metadataJson = "{}",
+                contentMarkdown = "  <article>legacy</article>",
+            ).isLegacyQuickNoteHtml()
+        )
+    }
+
+    @Test
+    fun quickNoteDraftSurvivesRefreshAndFailureButRebasesAfterSuccessfulSave() {
+        val initial = QuickNoteDraft("server", "server")
+        val dirty = initial.edit("local draft")
+
+        assertEquals(dirty, dirty.onServerDetailChanged("remote refresh"))
+        assertEquals("local draft", dirty.content)
+        assertTrue(dirty.isDirty)
+
+        val saved = dirty.onServerDetailChanged("local draft")
+        assertEquals("local draft", saved.content)
+        assertEquals("local draft", saved.baseline)
+        assertFalse(saved.isDirty)
+
+        val cleanRefresh = saved.onServerDetailChanged("new server value")
+        assertEquals("new server value", cleanRefresh.content)
+        assertFalse(cleanRefresh.isDirty)
     }
 
     @Test

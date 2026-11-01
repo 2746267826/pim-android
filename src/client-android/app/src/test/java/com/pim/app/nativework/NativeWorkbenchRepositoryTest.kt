@@ -136,27 +136,29 @@ class NativeWorkbenchRepositoryTest {
     }
 
     @Test
-    fun eventTimesAreComparedAsInstantsNotOffsets() = runBlocking {
-        val api = fakeApi { method, _ ->
-            when (method) {
-                "createEvent" -> EventResponseApiResponse(
-                    201,
-                    event().copy(rRule = null),
-                    "ok",
-                    "now"
-                )
-                else -> error("Unexpected $method")
+    fun eventTimesAreComparedAsInstantsNotOffsets() {
+        runBlocking {
+            val api = fakeApi { method, _ ->
+                when (method) {
+                    "createEvent" -> EventResponseApiResponse(
+                        201,
+                        event().copy(rRule = null),
+                        "ok",
+                        "now"
+                    )
+                    else -> error("Unexpected $method")
+                }
             }
-        }
 
-        NativeWorkbenchRepository(api).createEvent(
-            NativeEventDraft(
-                calendarId = "cal-1",
-                title = "跨时区日程",
-                dtStart = "2026-11-02T09:00:00+08:00",
-                dtEnd = "2026-11-02T02:00:00Z",
+            NativeWorkbenchRepository(api).createEvent(
+                NativeEventDraft(
+                    calendarId = "cal-1",
+                    title = "跨时区日程",
+                    dtStart = "2026-11-02T09:00:00+08:00",
+                    dtEnd = "2026-11-02T02:00:00Z",
+                )
             )
-        )
+        }
     }
 
     @Test
@@ -247,7 +249,7 @@ class NativeWorkbenchRepositoryTest {
         var pageArgs: List<Any?>? = null
         var create: CreateQuickNoteRequest? = null
         var update: UpdateQuickNoteRequest? = null
-        val detail = quickNote()
+        val detail = quickNote().copy(source = "manual", metadataJson = "{}")
         val api = fakeApi { method, args ->
             when (method) {
                 "getQuickNotes" -> {
@@ -357,7 +359,7 @@ class NativeWorkbenchRepositoryTest {
     fun reminderActionsCallOnlyTheSelectedContractOperation() = runBlocking {
         val calls = mutableListOf<List<Any?>>()
         val api = fakeApi { method, args ->
-            calls += mutableListOf<Any?>(method).apply { addAll(args) }
+            calls += mutableListOf<Any?>(method).apply { addAll(args.dropLast(1)) }
             when (method) {
                 "dismissReminder", "snoozeReminder" ->
                     ReminderResponseApiResponse(200, reminder(), "ok", "now")
@@ -453,10 +455,10 @@ class NativeWorkbenchRepositoryTest {
     private fun quickNote() = QuickNoteDetailDto(
         attachments = listOf(
             com.pim.core.contract.QuickNoteAttachmentDto(
-                contentType = "text/html",
+                contentType = "image/png",
                 createdAt = "then",
                 downloadUrl = "/a",
-                fileName = "legacy.html",
+                fileName = "receipt.png",
                 id = "attachment-1",
                 sizeBytes = 10,
             )

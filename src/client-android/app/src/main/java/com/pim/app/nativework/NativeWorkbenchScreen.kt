@@ -1,3 +1,5 @@
+@file:OptIn(androidx.compose.material3.ExperimentalMaterial3Api::class)
+
 package com.pim.app.nativework
 
 import androidx.compose.foundation.horizontalScroll
@@ -42,6 +44,7 @@ import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -54,6 +57,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.pim.app.nativework.quicknotes.QuickNoteDraft
+import com.pim.app.nativework.quicknotes.isLegacyQuickNoteHtml
 import com.pim.core.contract.AppKnowledgeAppDto
 import com.pim.core.contract.CategoryTreeNode
 import com.pim.core.contract.DeviceListDto
@@ -64,6 +69,7 @@ import com.pim.core.contract.SaveAppKnowledgeContextRequest
 import com.pim.core.contract.TaskBookDto
 import com.pim.core.contract.TaskResponse
 import java.time.Instant
+import java.time.LocalDate
 import java.time.LocalDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -133,7 +139,6 @@ fun NativeWorkbenchScreen(
             NativeWorkbenchSection.Today -> TodayNativeContent(
                 state = state,
                 onNewTask = { taskEditor = TaskEditorTarget() },
-                onNewTaskBook = { showTaskBookCreate = true },
                 onEditTask = { taskEditor = TaskEditorTarget(it) },
                 onToggleTask = viewModel::toggleTaskCompleted,
                 onNewEvent = { eventEditor = EventEditorTarget() },
@@ -1038,9 +1043,10 @@ private fun TaskCard(
                 )
                 AssistChip(onClick = {}, label = { Text(task.status) })
             }
-            if (!task.description.isNullOrBlank()) {
+            val descriptionText = task.description
+            if (!descriptionText.isNullOrBlank()) {
                 Text(
-                    task.description,
+                    descriptionText,
                     style = MaterialTheme.typography.bodySmall,
                     maxLines = 3,
                     overflow = TextOverflow.Ellipsis
@@ -1558,10 +1564,20 @@ private fun QuickNoteEditorDialog(
     onRestore: () -> Unit,
     onDelete: () -> Unit,
 ) {
-    var content by remember(detail.id, detail.updatedAt) { mutableStateOf(detail.contentMarkdown) }
+    val legacyHtml = detail.isLegacyQuickNoteHtml()
+    var draft by remember(detail.id) {
+        mutableStateOf(QuickNoteDraft(detail.contentMarkdown, detail.contentMarkdown))
+    }
+    LaunchedEffect(detail.id, detail.updatedAt) {
+        draft = draft.onServerDetailChanged(detail.contentMarkdown)
+    }
     var confirmDelete by remember(detail.id) { mutableStateOf(false) }
+    var confirmDiscard by remember(detail.id) { mutableStateOf(false) }
+    val requestClose = {
+        if (draft.isDirty) confirmDiscard = true else onDismiss()
+    }
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = requestClose,
         title = { Text("快速记录 · ${detail.status}") },
         text = {
             Column(
@@ -1573,12 +1589,17 @@ private fun QuickNoteEditorDialog(
                         "${detail.attachments.size} 个附件",
                     style = MaterialTheme.typography.bodySmall
                 )
-                if (detail.metadataJson.isNotBlank()) {
+                if (legacyHtml) {
                     Text(
-                        "旧 HTML/metadata 保留在服务端：${detail.metadataJson.take(240)}",
+                        "旧 HTML 记录正文只读：更新契约只有 contentMarkdown，保存纯文本会覆盖原 HTML。" +
+                            "处理、归档、恢复和删除不会改写正文。",
+                        color = MaterialTheme.colorScheme.error,
                         style = MaterialTheme.typography.bodySmall,
-                        maxLines = 3,
-                        overflow = TextOverflow.Ellipsis
+                    )
+                } else if (detail.metadataJson.isNotBlank()) {
+                    Text(
+                        "扩展 metadata 由服务端维护，原生正文编辑不会改写。",
+                        style = MaterialTheme.typography.bodySmall,
                     )
                 }
                 if (detail.attachments.isNotEmpty()) {
@@ -1588,12 +1609,24 @@ private fun QuickNoteEditorDialog(
                     )
                 }
                 OutlinedTextField(
-                    content,
-                    { content = it },
-                    label = { Text("正文（保存时保留现有附件 ID）") },
+                    draft.content,
+                    { if (!legacyHtml) draft = draft.edit(it) },
+                    label = {
+                        Text(
+                            if (legacyHtml) "旧 HTML 正文（只读）"
+                            else "正文（保存时保留现有附件 ID）"
+                        )
+                    },
+                    readOnly = legacyHtml,
                     minLines = 6,
                     maxLines = 14
                 )
+                if (draft.isDirty) {
+                    Text(
+                        "有未保存修改；刷新或关闭不会静默丢弃。",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                }
                 Row(
                     Modifier.horizontalScroll(rememberScrollState()),
                     horizontalArrangement = Arrangement.spacedBy(2.dp)
@@ -1613,12 +1646,27 @@ private fun QuickNoteEditorDialog(
                         Text("确认删除快速记录")
                     }
                 }
+                if (confirmDiscard) {
+                    Text("正文有未保存修改。确认放弃后才会关闭。")
+                    Button(onClick = onDismiss) { Text("放弃更改并关闭") }
+                }
             }
         },
         confirmButton = {
-            TextButton(onClick = { if (content.isNotBlank()) onSave(content) }) { Text("保存正文") }
+            if (!legacyHtml) {
+                TextButton(
+                    onClick = { if (draft.content.isNotBlank()) onSave(draft.content) },
+                    enabled = draft.isDirty && draft.content.isNotBlank(),
+                ) { Text("保存正文") }
+            } else {
+                TextButton(onClick = { requestClose() }) { Text("关闭") }
+            }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("关闭") } }
+        dismissButton = {
+            if (!legacyHtml) {
+                TextButton(onClick = { requestClose() }) { Text("关闭") }
+            }
+        }
     )
 }
 

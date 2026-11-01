@@ -280,6 +280,41 @@ class BoundUploadSessionTest {
         assertFalse(BoundUploadRoute.MobileUsage.permits(nativeNotes))
     }
 
+    @Test
+    fun nativeWorkbenchRoutePermitsOnlyItsExistingContractFamilies() {
+        fun request(path: String, method: String = "GET") = Request.Builder()
+            .url(server.url(path))
+            .method(method, if (method == "GET") null else "{}".toRequestBody())
+            .build()
+
+        listOf(
+            "/api/v1/status",
+            "/api/v1/mobile/summary?date=2026-11-01",
+            "/api/v1/calendar/tasks?page=1",
+            "/api/v1/calendar/task-books",
+            "/api/v1/calendar/reminders",
+            "/api/v1/mobile/devices/manage",
+            "/api/v1/pc/categories/tree",
+            "/api/v1/pc/app-knowledge/apps",
+            "/api/v1/quick-notes?page=1",
+        ).forEach { path ->
+            assertTrue(
+                path,
+                BoundUploadRoute.NativeWorkbench.permits(request(path))
+            )
+        }
+        assertFalse(
+            BoundUploadRoute.NativeWorkbench.permits(
+                request("/api/v1/native-notes/versions", method = "POST")
+            )
+        )
+        assertFalse(
+            BoundUploadRoute.NativeWorkbench.permits(
+                request("/api/v1/mobile/usage/events", method = "POST")
+            )
+        )
+    }
+
     private fun uploadRequest(): Request = Request.Builder()
         .url(server.url("/api/v1/mobile/usage/events"))
         .post("{}".toRequestBody())

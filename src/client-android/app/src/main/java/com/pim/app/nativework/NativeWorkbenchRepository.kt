@@ -178,6 +178,14 @@ internal fun EventResponse.hasRecurrenceMetadata(): Boolean =
 class NativeWorkbenchRepository @Inject constructor(
     private val api: ApiService,
 ) {
+    /**
+     * A workbench load/action must use the API client bound to its owner/server
+     * epoch. The injected instance is only a stateless template for tests and
+     * graph construction; production calls go through this bound copy.
+     */
+    fun boundTo(boundApi: ApiService): NativeWorkbenchRepository =
+        NativeWorkbenchRepository(boundApi)
+
     suspend fun loadTasks(search: String? = null): NativeTaskPage {
         val result = api.getTasksPaged(
             search = search?.trim()?.takeIf { it.isNotEmpty() },
@@ -396,7 +404,8 @@ class NativeWorkbenchRepository @Inject constructor(
         require(request.patternType.isNotBlank()) { "规则类型不能为空" }
         require(request.patternValue.isNotBlank()) { "规则值不能为空" }
         require(request.processName.isNotBlank()) { "进程名不能为空" }
-        require(request.confidence == null || request.confidence in 0.0..1.0) {
+        val confidence = request.confidence
+        require(confidence == null || confidence in 0.0..1.0) {
             "置信度需在 0-1 之间"
         }
         val result = api.saveAppKnowledgeContext(request)

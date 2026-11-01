@@ -19,12 +19,23 @@ data class BoundUploadSession(val serverIdentity: String, val ownerId: String) {
 
 internal enum class BoundUploadRoute {
     NativeNotes,
-    MobileUsage;
+    MobileUsage,
+    NativeWorkbench;
 
     fun permits(request: Request): Boolean = when (this) {
         NativeNotes -> request.url.encodedPath.startsWith("/api/v1/native-notes/")
         MobileUsage -> request.method == "POST" &&
             request.url.encodedPath == "/api/v1/mobile/usage/events"
+        NativeWorkbench -> {
+            val path = request.url.encodedPath
+            path == "/api/v1/status" ||
+                path == "/api/v1/mobile/summary" ||
+                path.startsWith("/api/v1/calendar/") ||
+                path.startsWith("/api/v1/mobile/devices/") ||
+                path.startsWith("/api/v1/pc/categories") ||
+                path.startsWith("/api/v1/pc/app-knowledge/") ||
+                path.startsWith("/api/v1/quick-notes")
+        }
     }
 }
 

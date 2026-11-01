@@ -61,6 +61,7 @@ class NoteArtifactRepositoryTest {
         transport.versionFallback = mapOf(
             "artifact-full" to listOf(
                 version("head-1", NoteArtifactKind.FullRecord, materialVersionId, isHead = true),
+                version("candidate-version", NoteArtifactKind.FullRecord, materialVersionId, isHead = false),
             ),
         )
         transport.detail = detail(
@@ -80,6 +81,16 @@ class NoteArtifactRepositoryTest {
         val staged = repository.state.value.drafts.single { it.localDraftId == draft.localDraftId }
         repository.saveLocalDraft(staged.localDraftId, staged.localRevision, "manual body")
         val savedDraft = repository.state.value.drafts.single { it.localDraftId == draft.localDraftId }
+        transport.artifactFallback = listOf(
+            completeRef(NoteArtifactKind.FullRecord, "artifact-full", "artifact-rev-1", "head-1"),
+            completeRef(NoteArtifactKind.Analysis, "artifact-analysis", "artifact-rev-a", "head-a"),
+        )
+        transport.versionFallback = mapOf(
+            "artifact-full" to listOf(
+                version("head-1", NoteArtifactKind.FullRecord, materialVersionId, isHead = true),
+                version("candidate-version", NoteArtifactKind.FullRecord, materialVersionId, isHead = false),
+            ),
+        )
 
         repository.saveManualRevisionToServer(
             kind = NoteArtifactKind.FullRecord,
@@ -884,6 +895,99 @@ class NoteArtifactRepositoryTest {
         assertTrue(repository.state.value.tasks.isEmpty())
     }
 
+    @Test fun lateRefreshForPreviousOwnerCannotPublishTasksOrOverwriteCurrentDraftScope() = runBlocking {
+        val taskA = seedTask()
+        tasks.recordRemote(
+            taskA.taskId,
+            NoteArtifactRemoteTaskView("task-a-rev", "Succeeded", observedAtMillis = 1_100),
+            nowMillis = 1_100,
+        )
+        val taskB = tasks.createIntent(
+            binding = otherBinding,
+            noteId = noteId,
+            materialVersionId = materialVersionId,
+            kinds = setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis),
+            inputSha256 = "d".repeat(64),
+            manifestSha256 = "e".repeat(64),
+            consent = consent,
+            ownerName = "bob",
+            nowMillis = 2_000,
+        )
+        tasks.recordRemote(
+            taskB.taskId,
+            NoteArtifactRemoteTaskView("task-b-rev", "Succeeded", observedAtMillis = 2_100),
+            nowMillis = 2_100,
+        )
+        transport.artifactFallback = listOf(
+            completeRef(NoteArtifactKind.FullRecord, "artifact-full", "artifact-rev", "head-a"),
+        )
+        transport.versionFallback = mapOf(
+            "artifact-full" to listOf(
+                version("head-a", NoteArtifactKind.FullRecord, materialVersionId, isHead = true),
+            ),
+        )
+        transport.details[taskA.taskId] = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-a"))
+        transport.details[taskB.taskId] = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-a"))
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, taskA.taskId)
+        val draftA = repository.state.value.drafts.first { it.kind == NoteArtifactKind.FullRecord }
+        repository.stageText(draftA.localDraftId, draftA.localRevision, "dirty owner A")
+        val detailCallsBefore = transport.detailCalls.toList()
+
+        val detailEntered = CompletableDeferred<Unit>()
+        val releaseDetail = CompletableDeferred<Unit>()
+        transport.onDetail = { taskId ->
+            if (taskId == taskA.taskId && !detailEntered.isCompleted) {
+                detailEntered.complete(Unit)
+                releaseDetail.await()
+            }
+        }
+        val staleRefresh = async { repository.refresh(noteId, materialVersionId, taskA.taskId) }
+        detailEntered.await()
+        activeBinding = otherBinding
+        val currentRefresh = async { repository.refresh(noteId, materialVersionId, taskB.taskId) }
+        releaseDetail.complete(Unit)
+        staleRefresh.await()
+        currentRefresh.await()
+
+        val current = repository.state.value
+        assertEquals(otherBinding, current.taskBinding)
+        assertEquals(taskB.taskId, current.selectedTaskId)
+        assertEquals(listOf(taskB.taskId), current.tasks.map { it.taskId })
+        assertTrue(current.drafts.isNotEmpty())
+        assertTrue(current.drafts.all { it.binding == otherBinding })
+        assertEquals(1, transport.detailCalls.drop(detailCallsBefore.size).count { it == taskA.taskId })
+        assertEquals(1, transport.detailCalls.drop(detailCallsBefore.size).count { it == taskB.taskId })
+        assertEquals("Succeeded", tasks.read(taskA.taskId).remote?.phase)
+        assertEquals("dirty owner A", NoteArtifactDraftStore.at(temp.root).read(binding, draftA.localDraftId).text)
+        assertTrue(NoteArtifactDraftStore.at(temp.root).read(binding, draftA.localDraftId).dirty)
+    }
+
+    @Test fun candidateFromAnotherSourceVersionIsRejectedBeforeSelectionRequest() = runBlocking {
+        val task = seedTask()
+        val otherMaterialVersion = "55555555-5555-4555-8555-555555555555"
+        transport.artifactFallback = listOf(
+            completeRef(NoteArtifactKind.FullRecord, "artifact-full", "artifact-rev", "head-current"),
+        )
+        transport.versionFallback = mapOf(
+            "artifact-full" to listOf(
+                version("head-current", NoteArtifactKind.FullRecord, materialVersionId, isHead = true),
+                version("candidate-other-source", NoteArtifactKind.FullRecord, otherMaterialVersion, isHead = false),
+            ),
+        )
+        transport.detail = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-current"))
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, task.taskId)
+        val draft = repository.state.value.drafts.first { it.kind == NoteArtifactKind.FullRecord }
+        repository.stageText(draft.localDraftId, draft.localRevision, "dirty stays local")
+
+        repository.selectCandidate("artifact-full", "artifact-rev", "candidate-other-source")
+
+        assertTrue(transport.selectHeads.isEmpty())
+        assertEquals("dirty stays local", repository.state.value.drafts.single { it.localDraftId == draft.localDraftId }.text)
+        assertTrue(repository.state.value.message.orEmpty().contains("固定材料"))
+    }
+
     private fun repository() = NoteArtifactRepository(
         tasks = tasks,
         drafts = NoteArtifactDraftStore.at(temp.root),
@@ -1020,15 +1124,18 @@ class NoteArtifactRepositoryTest {
         var retryFailure: Throwable? = null
         val detailCalls = mutableListOf<String>()
         val details = mutableMapOf<String, NoteArtifactTaskDetail>()
+        var onDetail: suspend (String) -> Unit = {}
         var artifactCalls = 0
         var artifactError: Throwable? = null
         var artifactFallback: List<NoteArtifactArtifactRefProjection> = emptyList()
         var versionFallback: Map<String, List<NoteArtifactVersionProjection>> = emptyMap()
         var detail: NoteArtifactTaskDetail? = null
         var detailError: Throwable? = null
+        var onDestinations: suspend () -> Unit = {}
 
-        override suspend fun destinations(): List<NoteArtifactDestination> = listOf(
-            NoteArtifactDestination(
+        override suspend fun destinations(): List<NoteArtifactDestination> {
+            onDestinations()
+            return listOf(NoteArtifactDestination(
                 modelId = "66666666-6666-4666-8666-666666666666",
                 modelRevision = "77777777-7777-4777-8777-777777777777",
                 displayName = "测试模型",
@@ -1036,8 +1143,8 @@ class NoteArtifactRepositoryTest {
                 endpoint = "https://model.example/v1/responses",
                 capabilities = listOf("text", "vision"),
                 backgroundProcessingAvailable = true,
-            ),
-        )
+            ))
+        }
 
         override suspend fun start(record: NoteArtifactTaskRecord): NoteArtifactRemoteTaskView {
             starts += record
@@ -1055,6 +1162,7 @@ class NoteArtifactRepositoryTest {
 
         override suspend fun detail(taskId: String): NoteArtifactTaskDetail {
             detailCalls += taskId
+            onDetail(taskId)
             detailError?.let { throw it }
             return details[taskId] ?: requireNotNull(detail) { "detail is not configured" }
         }

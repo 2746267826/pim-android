@@ -1,12 +1,12 @@
 package com.pim.app.nativework
 
 import com.pim.core.contract.OperationConfirmationDto
+import java.time.OffsetDateTime
 
-/** UI-safe projection; raw payload, previews and private object identifiers never escape. */
+/** UI-safe projection; free-form server text and private identifiers never escape. */
 data class NativeOperationConfirmation(
     val id: String,
-    val summary: String,
-    val operationType: String,
+    val actionLabel: String,
     val status: Int,
     val riskLevel: Int,
     val createdAt: String,
@@ -18,35 +18,27 @@ data class NativeOperationConfirmation(
 fun nativeOperationConfirmation(dto: OperationConfirmationDto): NativeOperationConfirmation =
     NativeOperationConfirmation(
         id = dto.id,
-        summary = safeConfirmationSummary(dto.summary),
-        operationType = dto.operationType
-            .replace(Regex("[^A-Za-z0-9_.-]"), "")
-            .take(64)
-            .ifBlank { "unknown" },
+        actionLabel = confirmationActionLabel(dto.operationType),
         status = dto.status,
         riskLevel = dto.riskLevel,
-        createdAt = dto.createdAt,
-        expiresAt = dto.expiresAt,
+        createdAt = safeConfirmationTimestamp(dto.createdAt),
+        expiresAt = safeConfirmationTimestamp(dto.expiresAt),
         requiresSecondLevelConfirmation = dto.requiresSecondLevelConfirmation == true,
         requiresStrictConfirmation = dto.requiresStrictConfirmation == true,
     )
 
-private fun safeConfirmationSummary(raw: String): String = raw
-    .replace(Regex("(?i)\\b(bearer\\s+)\\S+"), "${'$'}1[已隐藏]")
-    .replace(
-        Regex("(?i)\\b(graphEventId|changeKey|access_token|refresh_token|token)\\b\\s*[:=]\\s*[^\\s,;]+"),
-        "${'$'}1=[已隐藏]",
-    )
-    .replace(Regex("(?i)https?://\\S+"), "[链接已隐藏]")
-    .replace(
-        Regex("(?i)\\b[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}\\b"),
-        "[标识符]",
-    )
-    .replace(Regex("\\b[\\w.+-]+@[\\w.-]+\\.[A-Za-z]{2,}\\b"), "[邮箱]")
-    .replace(Regex("\\s+"), " ")
-    .trim()
-    .take(160)
-    .ifBlank { "无可安全显示的摘要" }
+private fun confirmationActionLabel(operationType: String): String = when (operationType) {
+    "outlook.writeback" -> "写入 Outlook 日历"
+    "calendar.outlook.core_diff" -> "处理 Outlook 日历变更"
+    "calendar.ai_placeholder.confirm" -> "确认 AI 日程建议"
+    "outlook.stop_sync" -> "停止 Outlook 同步"
+    "data-center.restore" -> "恢复已审阅的数据"
+    else -> "其他待确认操作"
+}
+
+private fun safeConfirmationTimestamp(raw: String): String =
+    runCatching { OffsetDateTime.parse(raw).toInstant().toString() }
+        .getOrDefault("未知时间")
 
 fun confirmationStatusLabel(status: Int): String = when (status) {
     0 -> "待确认"

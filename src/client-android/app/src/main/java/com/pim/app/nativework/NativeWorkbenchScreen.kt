@@ -403,7 +403,7 @@ fun NativeWorkbenchScreen(
             title = { Text("拒绝这项待确认操作？") },
             text = {
                 Text(
-                    "${confirmation.summary}\n\n" +
+                    "${confirmation.actionLabel}\n\n" +
                         "这会拒绝所选请求，不会执行其操作。原始请求和预览内容不会显示。"
                 )
             },
@@ -836,8 +836,7 @@ private fun ConfirmationsNativeContent(
                             Modifier.padding(14.dp),
                             verticalArrangement = Arrangement.spacedBy(8.dp),
                         ) {
-                            Text(detail.summary, style = MaterialTheme.typography.titleMedium)
-                            Text("操作：${detail.operationType}")
+                            Text(detail.actionLabel, style = MaterialTheme.typography.titleMedium)
                             Text("状态：${confirmationStatusLabel(detail.status)}")
                             Text("风险：${confirmationRiskLabel(detail.riskLevel)}")
                             Text("创建：${detail.createdAt}", style = MaterialTheme.typography.bodySmall)
@@ -872,9 +871,9 @@ private fun ConfirmationsNativeContent(
         items(state.confirmations, key = { it.id }) { confirmation ->
             OutlinedCard(Modifier.fillMaxWidth()) {
                 Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
-                    Text(confirmation.summary, style = MaterialTheme.typography.titleSmall)
+                    Text(confirmation.actionLabel, style = MaterialTheme.typography.titleSmall)
                     Text(
-                        "${confirmation.operationType} · ${confirmationRiskLabel(confirmation.riskLevel)}",
+                        "${confirmationRiskLabel(confirmation.riskLevel)}",
                         style = MaterialTheme.typography.bodySmall,
                         color = MaterialTheme.colorScheme.onSurfaceVariant,
                     )

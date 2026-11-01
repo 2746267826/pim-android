@@ -8,34 +8,46 @@ import java.lang.reflect.Proxy
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class NativeConfirmationTest {
     @Test
-    fun projectionOmitsRawPayloadAndRedactsPrivateSummaryValues() {
+    fun projectionNeverRetainsFreeFormSummaryOrRawPayload() {
         val projected = nativeOperationConfirmation(
             confirmation(
-                summary = "删除对象 graphEventId=graph-secret ChangeKey=change-secret " +
-                    "token=token-secret owner@example.com " +
-                    "https://example.invalid/private/route " +
-                    "11111111-1111-4111-8111-111111111111",
+                summary = """{"graphEventId":"AAMk-private","access_token":"secret-token","mysteryKey":"private-value"}""",
                 payloadJson = "payload-private-value",
                 previewJson = "preview-private-value",
+                operationType = "outlook.writeback",
             )
         )
 
-        assertTrue(projected.summary.startsWith("删除对象"))
+        assertEquals("写入 Outlook 日历", projected.actionLabel)
         listOf(
-            "graph-secret", "change-secret", "token-secret", "owner@example.com",
-            "example.invalid", "11111111-1111-4111-8111-111111111111",
+            "AAMk-private", "secret-token", "private-value", "mysteryKey",
             "payload-private-value", "preview-private-value",
         ).forEach { privateValue ->
             assertFalse(projected.toString().contains(privateValue))
         }
-        assertTrue(projected.summary.contains("[已隐藏]"))
         assertEquals("待确认", confirmationStatusLabel(projected.status))
         assertEquals("L4 批量或破坏性治理", confirmationRiskLabel(projected.riskLevel))
+    }
+
+    @Test
+    fun unknownOperationTypeAndMalformedDatesAreNotRenderedVerbatim() {
+        val projected = nativeOperationConfirmation(
+            confirmation(
+                operationType = "{\"access_token\":\"secret-token\",\"unknownKey\":\"private\"}",
+                createdAt = "private-date-token",
+                expiresAt = "AAMk-private-id",
+            )
+        )
+
+        assertEquals("其他待确认操作", projected.actionLabel)
+        assertEquals("未知时间", projected.createdAt)
+        assertEquals("未知时间", projected.expiresAt)
+        listOf("access_token", "secret-token", "unknownKey", "private", "AAMk-private-id")
+            .forEach { privateValue -> assertFalse(projected.toString().contains(privateValue)) }
     }
 
     @Test
@@ -96,11 +108,14 @@ class NativeConfirmationTest {
         summary: String = "确认测试操作",
         payloadJson: String = "payload-secret",
         previewJson: String = "preview-secret",
+        operationType: String = "DeleteItem",
+        createdAt: String = "2026-11-01T10:00:00Z",
+        expiresAt: String = "2026-11-02T10:00:00Z",
     ) = OperationConfirmationDto(
-        createdAt = "2026-11-01T10:00:00Z",
-        expiresAt = "2026-11-02T10:00:00Z",
+        createdAt = createdAt,
+        expiresAt = expiresAt,
         id = "confirmation-1",
-        operationType = "DeleteItem",
+        operationType = operationType,
         payloadJson = payloadJson,
         previewJson = previewJson,
         riskLevel = 14,

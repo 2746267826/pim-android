@@ -18,6 +18,12 @@ object ForensicPayloads {
             .put("sinceLastHeartbeatMs", snapshot.sinceLastHeartbeatMillis ?: JSONObject.NULL)
             .put("standbyBucket", snapshot.standbyBucket ?: JSONObject.NULL)
             .put("standbyBucketLabel", snapshot.standbyBucketLabel)
+            .put("standbyBucketSource", snapshot.standbyBucketSource)
+            .put("standbyBucketFailureReason", snapshot.standbyBucketFailureReason ?: JSONObject.NULL)
+            .put(
+                "standbyBucketObservedAtUtcMillis",
+                snapshot.standbyBucketObservedAtUtcMillis ?: JSONObject.NULL
+            )
             .put("ignoringBatteryOptimizations", snapshot.ignoringBatteryOptimizations ?: JSONObject.NULL)
             .put("dozeMode", snapshot.dozeMode ?: JSONObject.NULL)
             .put("powerSaveMode", snapshot.powerSaveMode ?: JSONObject.NULL)
@@ -37,6 +43,9 @@ object ForensicPayloads {
         pssKb: Long?,
         rssKb: Long?,
         description: String?,
+        exitTrace: String? = null,
+        exitTraceTruncated: Boolean = false,
+        exitTraceFailureReason: String? = null,
         inference: String?,
         context: ForensicContext
     ): String {
@@ -48,6 +57,13 @@ object ForensicPayloads {
             .put("rssKb", rssKb ?: JSONObject.NULL)
         if (!description.isNullOrBlank()) {
             json.put("description", description)
+        }
+        if (!exitTrace.isNullOrBlank()) {
+            json.put("exitTrace", exitTrace)
+            json.put("exitTraceTruncated", exitTraceTruncated)
+        }
+        if (!exitTraceFailureReason.isNullOrBlank()) {
+            json.put("exitTraceFailureReason", exitTraceFailureReason)
         }
         if (!inference.isNullOrBlank()) {
             json.put("inference", inference)

@@ -9,5 +9,6 @@ data class LocationSnapshot(
     val altitudeMeters: Double?,
     val speedMetersPerSecond: Float?,
     val bearingDegrees: Float?,
-    val timeMillis: Long
+    val timeMillis: Long,
+    val elapsedRealtimeNanos: Long? = null
 )

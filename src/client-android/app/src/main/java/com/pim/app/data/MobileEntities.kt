@@ -8,6 +8,7 @@ import com.pim.app.location.policy.LocationPolicyMode
 import com.pim.app.location.policy.PolicyDecision
 import com.pim.app.location.quality.QualityAcceptedLocation
 import com.pim.app.location.quality.RawLocationFix
+import java.security.MessageDigest
 
 object MobileSyncStatus {
     const val PENDING = "pending"
@@ -153,10 +154,14 @@ data class MobileLocationPointEntity(
 
 @Entity(
     tableName = "mobile_location_dropped_diagnostics",
-    indices = [Index(value = ["recorded_at_utc"])]
+    indices = [
+        Index(value = ["recorded_at_utc"]),
+        Index(value = ["fix_key"], unique = true)
+    ]
 )
 data class MobileLocationDroppedDiagnosticEntity(
     @PrimaryKey(autoGenerate = true) val id: Long = 0,
+    @ColumnInfo(name = "fix_key") val fixKey: String? = null,
     @ColumnInfo(name = "recorded_at_utc") val recordedAtUtc: Long,
     @ColumnInfo(name = "provider") val provider: String?,
     @ColumnInfo(name = "accuracy_meters") val accuracyMeters: Float?,
@@ -171,6 +176,7 @@ data class MobileLocationDroppedDiagnosticEntity(
             createdAtUtc: Long = System.currentTimeMillis()
         ): MobileLocationDroppedDiagnosticEntity {
             return MobileLocationDroppedDiagnosticEntity(
+                fixKey = fix.stableFixKey(reason),
                 recordedAtUtc = fix.recordedAtMillis,
                 provider = fix.provider,
                 accuracyMeters = fix.horizontalAccuracyMeters,
@@ -181,6 +187,42 @@ data class MobileLocationDroppedDiagnosticEntity(
         }
     }
 }
+
+/**
+ * Stable identity for a dropped platform fix.
+ *
+ * Mutable quality/provider/policy metadata is intentionally excluded: the same
+ * fix may be replayed through a different source wrapper or policy state. Exact
+ * timestamp and coordinates plus the drop reason identify the gate observation;
+ * different coordinates at the same millisecond remain distinct.
+ */
+internal fun RawLocationFix.stableFixKey(reason: String): String {
+    val identity = buildString {
+        append("v1|")
+        append(recordedAtMillis)
+        append('|')
+        append(latitude.toBits())
+        append('|')
+        append(longitude.toBits())
+        append('|')
+        append(reason.length)
+        append(':')
+        append(reason)
+    }
+    val digest = MessageDigest.getInstance("SHA-256")
+        .digest(identity.toByteArray(Charsets.UTF_8))
+    return buildString(KEY_PREFIX.length + digest.size * 2) {
+        append(KEY_PREFIX)
+        digest.forEach { byte ->
+            val value = byte.toInt() and 0xFF
+            append(HEX[value ushr 4])
+            append(HEX[value and 0x0F])
+        }
+    }
+}
+
+private const val KEY_PREFIX = "v1:"
+private const val HEX = "0123456789abcdef"
 
 @Entity(
     tableName = "mobile_location_policy_transitions",

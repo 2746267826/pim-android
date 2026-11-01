@@ -109,6 +109,9 @@ data class HeartbeatSnapshot(
     val sinceLastHeartbeatMillis: Long?,
     val standbyBucket: Int?,
     val standbyBucketLabel: String,
+    val standbyBucketSource: String = "unavailable",
+    val standbyBucketFailureReason: String? = null,
+    val standbyBucketObservedAtUtcMillis: Long? = null,
     val ignoringBatteryOptimizations: Boolean?,
     val dozeMode: Boolean?,
     val powerSaveMode: Boolean?,
@@ -130,15 +133,8 @@ class AndroidHeartbeatSnapshotReader @Inject constructor(
         foregroundServiceRunning: Boolean,
         forensicContext: ForensicContext
     ): HeartbeatSnapshot {
-        val bucket = runCatching {
-            if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.P) {
-                val usageStatsManager =
-                    context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-                usageStatsManager?.appStandbyBucket
-            } else {
-                null
-            }
-        }.getOrNull()
+        val standbyReading = StandbyBucketProbe.read(context)
+        val bucket = standbyReading.rawValue
 
         val ignoringBatteryOptimizations = runCatching {
             val powerManager = context.getSystemService(Context.POWER_SERVICE) as? PowerManager
@@ -161,7 +157,10 @@ class AndroidHeartbeatSnapshotReader @Inject constructor(
                 (nowElapsedMillis - last).coerceAtLeast(0L)
             },
             standbyBucket = bucket,
-            standbyBucketLabel = standbyBucketLabel(bucket),
+            standbyBucketLabel = StandbyBucketProbe.label(bucket),
+            standbyBucketSource = standbyReading.source,
+            standbyBucketFailureReason = standbyReading.failureReason,
+            standbyBucketObservedAtUtcMillis = standbyReading.observedAtUtcMillis,
             ignoringBatteryOptimizations = ignoringBatteryOptimizations,
             dozeMode = dozeMode,
             powerSaveMode = powerSaveMode,
@@ -176,16 +175,7 @@ class AndroidHeartbeatSnapshotReader @Inject constructor(
      * 桶号取自 `UsageStatsManager` 的公开取值；`RESTRICTED(45)` / `NEVER(50)` 目前是隐藏常量，
      * 这里用字面量并注明来源，避免为了两个标签引入反射。
      */
-    fun standbyBucketLabel(bucket: Int?): String = when (bucket) {
-        null -> "未知"
-        STANDBY_BUCKET_ACTIVE -> "活跃"
-        STANDBY_BUCKET_WORKING_SET -> "工作集"
-        STANDBY_BUCKET_FREQUENT -> "常用"
-        STANDBY_BUCKET_RARE -> "罕见"
-        STANDBY_BUCKET_RESTRICTED -> "受限"
-        STANDBY_BUCKET_NEVER -> "从未使用"
-        else -> "未知"
-    }
+    fun standbyBucketLabel(bucket: Int?): String = StandbyBucketProbe.label(bucket)
 
     companion object {
         /** `UsageStatsManager.STANDBY_BUCKET_ACTIVE`。 */
@@ -205,6 +195,77 @@ class AndroidHeartbeatSnapshotReader @Inject constructor(
 
         /** `UsageStatsManager.STANDBY_BUCKET_NEVER`（隐藏常量）。 */
         const val STANDBY_BUCKET_NEVER = 50
+    }
+}
+
+data class StandbyBucketReading(
+    val rawValue: Int?,
+    val source: String,
+    val failureReason: String?,
+    val observedAtUtcMillis: Long
+)
+
+/**
+ * Explicit public-platform call for the current app standby bucket.
+ *
+ * Keeping the failure reason distinguishes an unsupported OS, a missing
+ * service, an OEM exception, and a platform value of 0 instead of collapsing
+ * all four into the same "unknown".
+ */
+object StandbyBucketProbe {
+    const val SOURCE_USAGE_STATS_MANAGER = "UsageStatsManager.getAppStandbyBucket"
+    const val SOURCE_UNSUPPORTED = "unsupported-api"
+    const val SOURCE_UNAVAILABLE = "service-unavailable"
+
+    fun read(
+        context: Context,
+        nowMillis: () -> Long = System::currentTimeMillis
+    ): StandbyBucketReading {
+        val observedAt = nowMillis()
+        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+            return StandbyBucketReading(
+                rawValue = null,
+                source = SOURCE_UNSUPPORTED,
+                failureReason = "requires-api-28",
+                observedAtUtcMillis = observedAt
+            )
+        }
+        val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
+            ?: return StandbyBucketReading(
+                rawValue = null,
+                source = SOURCE_UNAVAILABLE,
+                failureReason = "usage-stats-service-missing",
+                observedAtUtcMillis = observedAt
+            )
+        return try {
+            val bucket = manager.getAppStandbyBucket()
+            StandbyBucketReading(
+                rawValue = bucket,
+                source = SOURCE_USAGE_STATS_MANAGER,
+                failureReason = if (bucket == 0) "platform-returned-0" else null,
+                observedAtUtcMillis = observedAt
+            )
+        } catch (ex: Exception) {
+            StandbyBucketReading(
+                rawValue = null,
+                source = SOURCE_USAGE_STATS_MANAGER,
+                failureReason = ex.message?.take(160) ?: ex::class.java.simpleName,
+                observedAtUtcMillis = observedAt
+            )
+        }
+    }
+
+    fun label(bucket: Int?): String = when (bucket) {
+        null -> "未知（读取失败）"
+        0 -> "未知（平台返回 0）"
+        5 -> "豁免"
+        AndroidHeartbeatSnapshotReader.STANDBY_BUCKET_ACTIVE -> "活跃"
+        AndroidHeartbeatSnapshotReader.STANDBY_BUCKET_WORKING_SET -> "工作集"
+        AndroidHeartbeatSnapshotReader.STANDBY_BUCKET_FREQUENT -> "常用"
+        AndroidHeartbeatSnapshotReader.STANDBY_BUCKET_RARE -> "罕见"
+        AndroidHeartbeatSnapshotReader.STANDBY_BUCKET_RESTRICTED -> "受限"
+        AndroidHeartbeatSnapshotReader.STANDBY_BUCKET_NEVER -> "从未使用"
+        else -> "未知（代码 $bucket）"
     }
 }
 

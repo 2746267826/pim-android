@@ -39,6 +39,7 @@ import com.pim.core.settings.ServerSettingsStore
 import com.pim.core.util.toCauseChainMessage
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -46,6 +47,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import retrofit2.HttpException
 import java.net.URI
@@ -176,18 +178,54 @@ class MobileSyncCoordinator @Inject constructor(
             return running
         }
 
-        val resultState = try {
-            runSyncOnOpen(manualRecoveryRetry, legacyOutboxClaim)
+        val historyStartedAtUtc = nowUtcMillis()
+        MobileSyncHistory.failInterrupted(
+            dao = mobileDataDao,
+            logs = logs,
+            nowUtcMillis = historyStartedAtUtc
+        )
+        var historyId: Long? = null
+        var resultState: MobileSyncState? = null
+        try {
+            historyId = MobileSyncHistory.begin(
+                dao = mobileDataDao,
+                logs = logs,
+                nowUtcMillis = historyStartedAtUtc,
+                pendingCount = pendingQueueCount()
+            )
+            resultState = runSyncOnOpen(manualRecoveryRetry, legacyOutboxClaim)
         } finally {
-            syncMutex.unlock()
+            try {
+                withContext(NonCancellable) {
+                    val completed = resultState
+                    if (completed != null) {
+                        MobileSyncHistory.finish(
+                            dao = mobileDataDao,
+                            logs = logs,
+                            historyId = historyId,
+                            state = completed,
+                            nowUtcMillis = nowUtcMillis()
+                        )
+                    } else {
+                        MobileSyncHistory.finishInterrupted(
+                            dao = mobileDataDao,
+                            logs = logs,
+                            historyId = historyId,
+                            nowUtcMillis = nowUtcMillis()
+                        )
+                    }
+                }
+            } finally {
+                syncMutex.unlock()
+            }
         }
-
+        val completedState = checkNotNull(resultState)
         val safeContinuationDepth = continuationDepth.coerceAtLeast(0)
-        if (shouldEnqueueUsageContinuation(resultState, safeContinuationDepth, didWork = true)) {
+        if (shouldEnqueueUsageContinuation(completedState, safeContinuationDepth, didWork = true)) {
             syncScheduler.get().enqueueContinuation(safeContinuationDepth + 1)
         }
 
-        return resultState
+        return completedState
     }
 
     /**

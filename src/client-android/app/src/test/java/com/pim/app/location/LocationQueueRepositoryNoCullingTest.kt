@@ -5,12 +5,15 @@ import androidx.test.core.app.ApplicationProvider
 import android.content.Context
 import com.pim.app.data.AppDatabase
 import com.pim.app.data.MobileDataDao
+import com.pim.app.data.MobileLocationDroppedDiagnosticEntity
 import com.pim.app.data.MobileSyncStatus
+import com.pim.app.data.stableFixKey
 import com.pim.app.location.quality.QualityAcceptedLocation
 import com.pim.app.location.quality.RawLocationFix
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -83,6 +86,90 @@ class LocationQueueRepositoryNoCullingTest {
         assertEquals(2, dao.getLocationPointsBySyncStatus(MobileSyncStatus.PENDING, 10).size)
     }
 
+    @Test
+    fun `同一丢弃 fix 即使策略档变化也只写一行`() = runTest {
+        val first = droppedFix(policyMode = "PowerSavingNormal")
+        val repeatedWithNewPolicy = droppedFix(policyMode = "Walking")
+
+        val firstId = repository.recordDropped(
+            first,
+            reason = "passive-horizontal-accuracy-too-low",
+            createdAtUtc = 1_000L
+        )
+        val replayId = repository.recordDropped(
+            repeatedWithNewPolicy.copy(
+                provider = "gps",
+                horizontalAccuracyMeters = 37f
+            ),
+            reason = "passive-horizontal-accuracy-too-low",
+            createdAtUtc = 2_000L
+        )
+
+        assertEquals("replay must resolve to the original row", firstId, replayId)
+        assertEquals(
+            1,
+            dao.diagnosticDatabaseCounts().mobileLocationDroppedDiagnosticsRowCount
+        )
+    }
+
+    @Test
+    fun `同一毫秒但坐标不同的真实 fix 仍有独立丢弃记录`() = runTest {
+        val first = droppedFix(latitude = 31.230416)
+        val second = droppedFix(latitude = 31.230500)
+
+        repository.recordDropped(first, reason = "horizontal-accuracy-too-low")
+        repository.recordDropped(second, reason = "horizontal-accuracy-too-low")
+
+        assertEquals(
+            2,
+            dao.diagnosticDatabaseCounts().mobileLocationDroppedDiagnosticsRowCount
+        )
+    }
+
+    @Test
+    fun `legacy unkeyed diagnostics remain raw while new replays are idempotent`() = runTest {
+        repeat(2) {
+            dao.insertDroppedLocationDiagnostic(
+                MobileLocationDroppedDiagnosticEntity(
+                    fixKey = null,
+                    recordedAtUtc = 1_000L,
+                    provider = "gps",
+                    accuracyMeters = 30f,
+                    policyMode = "PowerSavingNormal",
+                    reason = "horizontal-accuracy-too-low",
+                    createdAtUtc = 1_000L
+                )
+            )
+        }
+        val fix = droppedFix()
+        repository.recordDropped(fix, reason = "horizontal-accuracy-too-low")
+        repository.recordDropped(fix, reason = "horizontal-accuracy-too-low")
+
+        val stats = dao.droppedDiagnosticStorageStats()
+        assertEquals("raw history must be preserved", 3L, stats.totalRowCount)
+        assertEquals("only post-migration writes have identity", 1L, stats.keyedRowCount)
+        assertEquals("legacy rows are not silently backfilled", 2L, stats.legacyUnkeyedRowCount)
+        assertEquals(1L, stats.distinctKeyedFixCount)
+    }
+
+    @Test
+    fun `durable fix key is deterministic and does not reveal coordinates`() {
+        val fix = droppedFix(
+            latitude = 31.230416,
+            longitude = 121.473701,
+            recordedAtMillis = 1_791_396_035_696L
+        )
+
+        val key = fix.stableFixKey("passive-horizontal-accuracy-too-low")
+
+        assertEquals(
+            "v1:24f9fcd1e4b03e2a105a9112b5f63f3127ae43358e4a8cec5eb6183103ebef45",
+            key
+        )
+        assertFalse(key.contains("31.230416"))
+        assertFalse(key.contains("121.473701"))
+    }
+
     /**
      * AC-15.2：入库路径上不再有聚类判定调用。
      *
@@ -128,6 +215,23 @@ class LocationQueueRepositoryNoCullingTest {
         altitudeMeters = 10.0,
         acceptedAtMillis = recordedAtMillis,
         qualityFlags = emptySet()
+    )
+
+    private fun droppedFix(
+        latitude: Double = 31.230416,
+        longitude: Double = 121.473701,
+        policyMode: String = "PowerSavingNormal",
+        recordedAtMillis: Long = 1_791_396_035_696L
+    ) = RawLocationFix(
+        latitude = latitude,
+        longitude = longitude,
+        horizontalAccuracyMeters = 30f,
+        altitudeMeters = 10.0,
+        provider = "network",
+        recordedAtMillis = recordedAtMillis,
+        policyMode = policyMode,
+        scheduleLowFrequency = false,
+        motionSignal = "Unknown"
     )
 }
 

@@ -32,7 +32,8 @@ open class SelfMotionEvaluator(
     private var lastStepTotal = -1L
     private var signal = MotionSignal.Unknown
 
-    fun accelMagnitude(magnitude: Double) {
+    /** @return true only when a complete sensor window was evaluated. */
+    fun accelMagnitude(magnitude: Double): Boolean {
         magnitudes.addLast(magnitude)
         if (magnitudes.size >= windowSizeSamples) {
             val now = nowElapsedRealtimeMillis()
@@ -42,7 +43,9 @@ open class SelfMotionEvaluator(
             accumulate(raw, windowDuration.coerceAtLeast(0L))
             lastWindowAtMillis = now
             recomputeSignal()
+            return true
         }
+        return false
     }
 
     fun stepCount(total: Long) {

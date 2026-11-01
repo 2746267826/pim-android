@@ -564,9 +564,23 @@ private fun TransportSection(
         ) {
             CountChip("本轮确认", state.acceptedCount.toString(), "status-confirmed", Modifier.weight(1f))
             CountChip("本轮拒绝", state.rejectedCount.toString(), "status-rejected", Modifier.weight(1f))
-            CountChip("永久拒绝", state.permanentRejectedCount.toString(), "status-permanent-rejected", Modifier.weight(1f))
+            CountChip("死信保留", state.permanentRejectedCount.toString(), "status-permanent-rejected", Modifier.weight(1f))
         }
 
+        FactRow(
+            "死信说明",
+            state.terminalUsage.statusText,
+            "status-terminal-usage"
+        )
+        if (state.terminalUsage.reasons.isNotEmpty()) {
+            FactRow(
+                "死信原因",
+                state.terminalUsage.reasons.take(3).joinToString("；") {
+                    "${it.reason}：${it.count}"
+                },
+                "status-terminal-usage-reasons"
+            )
+        }
         FactRow("上次成功", formatRecordedTime(state.lastSuccessfulUploadAt), "status-last-success")
         FactRow("上次尝试", formatRecordedTime(state.lastAttemptedUploadAt), "status-last-attempt")
         FactRow(

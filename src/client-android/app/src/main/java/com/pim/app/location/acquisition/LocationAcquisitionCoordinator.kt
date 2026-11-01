@@ -29,6 +29,7 @@ import kotlinx.serialization.json.Json
 import kotlinx.serialization.json.JsonPrimitive
 import java.util.UUID
 import java.util.concurrent.atomic.AtomicBoolean
+import java.util.concurrent.atomic.AtomicLong
 import java.util.concurrent.atomic.AtomicReference
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -82,6 +83,9 @@ class LocationAcquisitionCoordinator @Inject constructor(
 
     private var sessionJob: Job? = null
     private var streamJob: Job? = null
+    private val streamGeneration = AtomicLong(0L)
+    @Volatile
+    private var streamContext: AcquisitionContext? = null
     // ─── 手动一次性采集 ─────────────────────────────────────────
 
     fun startManualSession(): SessionStartResult {
@@ -149,23 +153,29 @@ class LocationAcquisitionCoordinator @Inject constructor(
             return true
         }
         val current = _streamState.value
-        // 间隔或上下文标注（policyMode/scheduleLowFrequency/motionSignal）任一
-        // 变化都重注册，避免流内 fix 携带过期元数据。
-        // 注意：重注册不做预热（warmUp=false）。这是对设计文档 S3-2"重新
-        // startAutomaticStream（预热 + 新 interval 常驻）"的刻意偏差——流已热
-        // （GPS 保持连接），且运动状态频繁变化时反复预热会中断采集节奏；
-        // 冷启动预热只发生在 startAutomaticStream（active=false → warmUp=true）。
-        if (current.requestIntervalMillis != context.requestIntervalMillis ||
-            current.policyMode != context.policyMode ||
-            current.scheduleLowFrequency != context.scheduleLowFrequency ||
-            current.motionSignal != context.motionSignal
-        ) {
+        // Policy/motion metadata changes annotate subsequent fixes; they must not
+        // tear down a healthy provider registration. Re-registering here creates
+        // an overlap window in which the same platform fix can arrive twice.
+        // Only a real cadence change requires a new provider request.
+        if (current.requestIntervalMillis != context.requestIntervalMillis) {
             startStreamJob(context, warmUp = false)
+        } else {
+            streamContext = context
+            _streamState.update {
+                it.copy(
+                    policyMode = context.policyMode,
+                    scheduleLowFrequency = context.scheduleLowFrequency,
+                    motionSignal = context.motionSignal,
+                    lastError = null
+                )
+            }
         }
         return true
     }
 
     fun stopAutomaticStream() {
+        streamGeneration.incrementAndGet()
+        streamContext = null
         streamJob?.cancel()
         streamJob = null
         _streamState.value = AutomaticStreamState()
@@ -174,6 +184,8 @@ class LocationAcquisitionCoordinator @Inject constructor(
     fun isAutomaticStreamActive(): Boolean = _streamState.value.active
 
     private fun startStreamJob(context: AcquisitionContext, warmUp: Boolean) {
+        val generation = streamGeneration.incrementAndGet()
+        streamContext = context
         streamJob?.cancel()
         lateinit var job: Job
         val newJob = scope.launch(start = CoroutineStart.LAZY) {
@@ -197,7 +209,9 @@ class LocationAcquisitionCoordinator @Inject constructor(
                     durationMillis = 0L
                 )
                 runner.stream(request) { snapshot ->
-                    handleStreamFix(snapshot, context)
+                    val currentContext = streamContext ?: return@stream
+                    if (streamGeneration.get() != generation) return@stream
+                    handleStreamFix(snapshot, currentContext, generation)
                 }
             } catch (e: CancellationException) {
                 throw e
@@ -260,7 +274,12 @@ class LocationAcquisitionCoordinator @Inject constructor(
         }
     }
 
-    private suspend fun handleStreamFix(snapshot: LocationSnapshot, context: AcquisitionContext) {
+    private suspend fun handleStreamFix(
+        snapshot: LocationSnapshot,
+        context: AcquisitionContext,
+        generation: Long
+    ) {
+        if (streamGeneration.get() != generation) return
         // WO-ANDROID-GATE-20260926 REQ-15 / AC-15.1 / AC-15.3：
         // 常规流 2 秒去重已**整体取消**。基线在这里对「与上一条入库 fix 相差 <2s」的
         // 回调直接 `return` —— 既不入库也不留诊断，正是 AC-15.3 禁止的静默丢弃路径。
@@ -270,7 +289,12 @@ class LocationAcquisitionCoordinator @Inject constructor(
         val gate = LocationQualityGate.fromTrackingSettings(trackingSettingsStore.read())
         when (val decision = gate.evaluate(fix, wallClockMillis())) {
             is QualityDecision.AcceptNow -> {
-                enqueueStreamFix(decision.accepted, snapshot, decision.accepted.qualityFlags)
+                enqueueStreamFix(
+                    decision.accepted,
+                    snapshot,
+                    decision.accepted.qualityFlags,
+                    generation
+                )
             }
             is QualityDecision.WaitForAltitude -> {
                 // 流模式不做 15s 等待：缺海拔直接带标记接受（GPS 热态下海拔基本都有）
@@ -282,10 +306,12 @@ class LocationAcquisitionCoordinator @Inject constructor(
                         qualityFlags = setOf(STREAM_ALTITUDE_MISSING_FLAG)
                     ),
                     snapshot,
-                    setOf(STREAM_ALTITUDE_MISSING_FLAG)
+                    setOf(STREAM_ALTITUDE_MISSING_FLAG),
+                    generation
                 )
             }
             is QualityDecision.Drop -> {
+                if (streamGeneration.get() != generation) return
                 recordDrop(decision.fix, decision.reason)
             }
         }
@@ -294,12 +320,15 @@ class LocationAcquisitionCoordinator @Inject constructor(
     private suspend fun enqueueStreamFix(
         accepted: QualityAcceptedLocation,
         snapshot: LocationSnapshot,
-        flags: Set<String>
+        flags: Set<String>,
+        generation: Long
     ) {
+        if (streamGeneration.get() != generation) return
         try {
             val raw = rawJson(accepted, TriggerType.AUTOMATIC.storageSource)
             operations.enqueueAccepted(accepted, raw, TriggerType.AUTOMATIC.storageSource)
             operations.scheduleSync()
+            if (streamGeneration.get() != generation) return
             _streamState.update {
                 it.copy(latestFix = snapshot, latestQualityFlags = flags, lastError = null)
             }

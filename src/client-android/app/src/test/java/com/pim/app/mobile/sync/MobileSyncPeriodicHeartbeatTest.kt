@@ -7,6 +7,7 @@ import androidx.test.core.app.ApplicationProvider
 import com.pim.app.TestPimApp
 import com.pim.app.data.AppDatabase
 import com.pim.app.data.ForensicEventDao
+import com.pim.app.data.MobileSyncStatus
 import com.pim.app.forensics.AndroidHeartbeatSnapshotReader
 import com.pim.app.forensics.ForensicContext
 import com.pim.app.forensics.ForensicContextSource
@@ -33,10 +34,12 @@ import kotlinx.serialization.json.Json
 import okhttp3.OkHttpClient
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
+import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
@@ -153,6 +156,12 @@ class MobileSyncPeriodicHeartbeatTest {
         val rows = heartbeats()
         assertEquals(1, rows.size)
         assertEquals(ForensicEventTypes.HEARTBEAT, rows.single().eventType)
+
+        val history = db.mobileDataDao().diagnosticSyncHistory(limit = 10).single()
+        assertEquals(MobileSyncHistory.ENTITY_TYPE, history.entityType)
+        assertNotNull(history.finishedAtUtc)
+        assertFalse(history.syncStatus in setOf(MobileSyncStatus.PENDING, MobileSyncStatus.SYNCING))
+        assertEquals(0, db.mobileDataDao().pendingSyncBatchCount().first())
     }
 
     @Test

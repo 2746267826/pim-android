@@ -5,6 +5,7 @@ import android.os.Build
 import android.os.StatFs
 import androidx.room.withTransaction
 import com.pim.app.data.AppDatabase
+import com.pim.app.forensics.CrashTraceStore
 import com.pim.app.location.PolicyTransitionWriteFailure
 import com.pim.app.location.PolicyTransitionWriteFailureSource
 import com.pim.app.location.service.ForegroundLocationRuntimeState
@@ -37,9 +38,12 @@ import java.io.FileNotFoundException
 import java.io.IOException
 import java.io.InputStream
 import java.io.OutputStream
+import java.io.RandomAccessFile
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
+import java.nio.file.LinkOption
 import java.nio.file.StandardCopyOption
+import java.nio.file.attribute.BasicFileAttributes
 import java.util.zip.ZipEntry
 import java.util.zip.ZipFile
 import java.util.zip.ZipOutputStream
@@ -68,8 +72,12 @@ class DiagnosticExportException(
 private data class LogFileExport(
     val name: String,
     val originalBytes: Long,
+    val readBytes: Long,
     val includedBytes: Long,
     val exportedBytes: Long,
+    val allocatedBytes: Long,
+    val strategy: String,
+    val omittedMiddleBytes: Long,
     val oversizedLineCount: Int,
     val reasons: Set<String>
 ) {
@@ -85,6 +93,14 @@ private data class OmittedLogFile(
 private data class LogFileWriteResult(
     val readBytes: Long,
     val file: LogFileExport
+)
+
+private data class LogSegmentWriteResult(
+    val readBytes: Long,
+    val representedBytes: Long,
+    val exportedBytes: Long,
+    val oversizedLineCount: Int,
+    val addedReasons: Set<String>
 )
 
 private data class LogExportSummary(
@@ -198,7 +214,10 @@ class DiagnosticExportRepository internal constructor(
      */
     private val policyTransitionWriteFailure: () -> PolicyTransitionWriteFailure = {
         PolicyTransitionWriteFailure.None
-    }
+    },
+    private val usageTerminalLifecycleRepository: UsageTerminalLifecycleRepository? = null,
+    private val crashTraceStore: CrashTraceStore? = null,
+    private val afterLogSnapshot: () -> Unit = {}
 ) : DiagnosticOperations {
     @Inject constructor(
         @ApplicationContext context: Context,
@@ -209,7 +228,9 @@ class DiagnosticExportRepository internal constructor(
         connectionProbeStore: ConnectionProbeStore,
         permissionStatusRepository: PermissionStatusRepository,
         scheduleWindowRepository: ScheduleWindowRepository,
-        policyTransitionWriteFailureSource: PolicyTransitionWriteFailureSource
+        policyTransitionWriteFailureSource: PolicyTransitionWriteFailureSource,
+        usageTerminalLifecycleRepository: UsageTerminalLifecycleRepository,
+        crashTraceStore: CrashTraceStore
     ) : this(
         context = context,
         db = db,
@@ -221,7 +242,9 @@ class DiagnosticExportRepository internal constructor(
         serviceRunning = { com.pim.app.location.service.ForegroundLocationService.isRunning() },
         scheduleSnapshot = { scheduleWindowRepository.snapshot.value },
         runtimeSnapshot = { com.pim.app.location.service.ForegroundLocationService.runtimeState.value },
-        policyTransitionWriteFailure = { policyTransitionWriteFailureSource.state.value }
+        policyTransitionWriteFailure = { policyTransitionWriteFailureSource.state.value },
+        usageTerminalLifecycleRepository = usageTerminalLifecycleRepository,
+        crashTraceStore = crashTraceStore
     )
 
     init {
@@ -244,8 +267,28 @@ class DiagnosticExportRepository internal constructor(
                 fixedCoreEntries["settings.json"] = buildSettings().toString()
                 fixedCoreEntries["database-counts.json"] = buildDatabaseCounts(dao).toString()
                 fixedCoreEntries["sync-history.json"] = buildSyncHistory(dao).toString()
+                fixedCoreEntries["usage-terminal-lifecycle.json"] =
+                    buildUsageTerminalLifecycle(dao).toString()
+                val crashTraceContent = try {
+                    crashTraceStore?.readForExport().orEmpty()
+                } catch (e: CancellationException) {
+                    throw e
+                } catch (e: Exception) {
+                    structuredLogRepository.warn(
+                        "diagnostics-export",
+                        "读取崩溃堆栈文件失败，诊断包继续导出：${e.message ?: e::class.java.simpleName}"
+                    )
+                    ""
+                }
+                fixedCoreEntries["crash-traces.jsonl"] = crashTraceContent
+                val crashTraceCount = crashTraceContent.lineSequence()
+                    .count { it.isNotBlank() }
 
                 val logRefs = structuredLogRepository.snapshotFileRefs()
+                val logFileIdentities = logRefs.associate { ref ->
+                    ref.fileName to fileIdentity(File(context.filesDir, "logs/${ref.fileName}"))
+                }
+                afterLogSnapshot()
                 val selectedLogBytes = selectedLogInputBytes(logRefs)
                 val fixedCoreBytes = fixedCoreEntries.entries.sumOf { (name, content) ->
                     name.toByteArray(Charsets.UTF_8).size.toLong() +
@@ -290,18 +333,14 @@ class DiagnosticExportRepository internal constructor(
                             .rowCount
 
                         var totalReadBytes = 0L
-                        for (ref in logRefs) {
+                        val logBudgets = allocateLogBudgets(logRefs)
+                        for ((index, ref) in logRefs.withIndex()) {
                             val entryName = "logs/${ref.fileName}"
                             require(isValidLogName(entryName)) { "Invalid log entry name: $entryName" }
                             require(!redactor.isUnsafeEntryName(entryName)) { "Unsafe entry name: $entryName" }
 
                             if (ref.lengthBytes <= 0L) continue
-                            val remainingTotal = maxLogTotalBytes - totalReadBytes
-                            val readBudget = minOf(
-                                ref.lengthBytes,
-                                maxLogFileBytes,
-                                remainingTotal
-                            )
+                            val readBudget = logBudgets[index]
                             if (readBudget <= 0L) {
                                 logSummary.omitFile(ref, "total-limit")
                                 continue
@@ -315,7 +354,7 @@ class DiagnosticExportRepository internal constructor(
                                     entryName = entryName,
                                     originalBytes = ref.lengthBytes,
                                     readBudget = readBudget,
-                                    totalBudget = remainingTotal
+                                    snapshotFileIdentity = logFileIdentities[ref.fileName]
                                 )
                             } catch (e: CancellationException) {
                                 throw e
@@ -342,6 +381,7 @@ class DiagnosticExportRepository internal constructor(
                             coordinateCount = coordinateCount,
                             droppedLocationCount = droppedLocationCount,
                             forensicEventCount = forensicEventCount,
+                            crashTraceCount = crashTraceCount,
                             entries = writtenNames + "manifest.json",
                             logExport = summary
                         ).toString()
@@ -480,7 +520,23 @@ class DiagnosticExportRepository internal constructor(
                     }
                 }
             }
-            if (probeFailed || logClearFailed || roomClearFailed || anyDeleteFailed) {
+            var crashTraceClearFailed = false
+            try {
+                if (crashTraceStore?.clear() == false) {
+                    crashTraceClearFailed = true
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                crashTraceClearFailed = true
+            }
+            if (
+                probeFailed ||
+                logClearFailed ||
+                roomClearFailed ||
+                anyDeleteFailed ||
+                crashTraceClearFailed
+            ) {
                 throw DiagnosticExportException(
                     "CLEAR_FAILED",
                     "Failed to clear diagnostics"
@@ -490,13 +546,41 @@ class DiagnosticExportRepository internal constructor(
     }
 
     private fun selectedLogInputBytes(refs: List<StructuredLogFileRef>): Long {
-        var selected = 0L
-        for (ref in refs) {
-            val remaining = maxLogTotalBytes - selected
-            if (remaining <= 0L) break
-            selected += minOf(ref.lengthBytes, maxLogFileBytes, remaining)
+        return allocateLogBudgets(refs).sum()
+    }
+
+    /**
+     * Water-fills the total budget across all current log files. Large/newest
+     * files cannot consume another day's entire allowance; any leftover from a
+     * small file is redistributed to the remaining files.
+     */
+    private fun allocateLogBudgets(refs: List<StructuredLogFileRef>): LongArray {
+        val budgets = LongArray(refs.size)
+        var remaining = maxLogTotalBytes.coerceAtLeast(0L)
+        var active = refs.indices.filter { index ->
+            minOf(refs[index].lengthBytes, maxLogFileBytes) > 0L
         }
-        return selected
+        while (remaining > 0L && active.isNotEmpty()) {
+            val share = (remaining / active.size).coerceAtLeast(1L)
+            var progressed = false
+            for (index in active) {
+                if (remaining <= 0L) break
+                val cap = minOf(refs[index].lengthBytes, maxLogFileBytes)
+                val need = cap - budgets[index]
+                if (need <= 0L) continue
+                val grant = minOf(need, share, remaining)
+                if (grant > 0L) {
+                    budgets[index] += grant
+                    remaining -= grant
+                    progressed = true
+                }
+            }
+            active = active.filter { index ->
+                budgets[index] < minOf(refs[index].lengthBytes, maxLogFileBytes)
+            }
+            if (!progressed) break
+        }
+        return budgets
     }
 
     private fun writeRedactedEntry(zos: ZipOutputStream, name: String, content: String) {
@@ -516,39 +600,206 @@ class DiagnosticExportRepository internal constructor(
         entryName: String,
         originalBytes: Long,
         readBudget: Long,
-        totalBudget: Long
+        snapshotFileIdentity: String?
     ): LogFileWriteResult {
         val reasons = linkedSetOf<String>()
-        if (originalBytes > maxLogFileBytes) reasons.add("file-limit")
-        if (originalBytes > totalBudget) reasons.add("total-limit")
+        val sampled = originalBytes > readBudget
+        if (sampled) {
+            reasons.add("sampled")
+            reasons.add(
+                if (readBudget >= maxLogFileBytes && originalBytes > maxLogFileBytes) {
+                    "file-limit"
+                } else {
+                    "total-limit"
+                }
+            )
+        }
 
         var actualReadBytes = 0L
         var representedBytes = 0L
-        var oversizedLineCount = 0
         var exportedBytes = 0L
+        var oversizedLineCount = 0
+        var omittedMiddleBytes = 0L
+        val strategy: String
+
+        zos.putNextEntry(ZipEntry(entryName))
+        try {
+            if (!sampled) {
+                strategy = "full"
+                val result = writeLogSegment(
+                    zos = zos,
+                    entryName = entryName,
+                    input = file.inputStream(),
+                    readLimit = originalBytes,
+                    trailingOmissionReason = "snapshot-boundary"
+                )
+                actualReadBytes += result.readBytes
+                representedBytes += result.representedBytes
+                exportedBytes += result.exportedBytes
+                oversizedLineCount += result.oversizedLineCount
+                reasons += result.addedReasons
+            } else {
+                strategy = "head-tail"
+                // Reserve every byte up front: head sample, line-alignment scan,
+                // and tail sample together can never exceed the file allocation.
+                val headBudget = (readBudget / 3L).coerceAtLeast(
+                    if (readBudget > 0L) 1L else 0L
+                )
+                val remainingAfterHead = readBudget - headBudget
+                val tailScanBudget = if (remainingAfterHead > 0L) {
+                    maxOf(remainingAfterHead / 2L, 1L)
+                } else {
+                    0L
+                }
+                val tailReadBudget = remainingAfterHead - tailScanBudget
+                val head = writeLogSegment(
+                    zos = zos,
+                    entryName = entryName,
+                    input = file.inputStream(),
+                    readLimit = headBudget,
+                    trailingOmissionReason = "sample-boundary"
+                )
+                actualReadBytes += head.readBytes
+                representedBytes += head.representedBytes
+                exportedBytes += head.exportedBytes
+                oversizedLineCount += head.oversizedLineCount
+                reasons += head.addedReasons
+
+                if (tailScanBudget > 0L || tailReadBudget > 0L) {
+                    val rawTailStart = (
+                        originalBytes - tailScanBudget - tailReadBudget
+                    ).coerceAtLeast(head.readBytes)
+                    val alignment = alignToNextLine(
+                        file = file,
+                        start = rawTailStart,
+                        maxScanBytes = tailScanBudget.coerceAtMost(
+                            (originalBytes - rawTailStart).coerceAtLeast(0L)
+                        )
+                    )
+                    actualReadBytes += alignment.bytesScanned
+                    val alignedStart = if (alignment.foundLineBoundary) {
+                        alignment.alignedStart
+                    } else {
+                        originalBytes
+                    }
+                    val gapBytes = (alignedStart - head.readBytes).coerceAtLeast(0L)
+                    if (gapBytes > 0L) {
+                        omittedMiddleBytes += gapBytes
+                        val marker = omissionBytes("sample-gap", gapBytes)
+                        zos.write(marker)
+                        exportedBytes += marker.size
+                    }
+                    if (alignedStart < originalBytes && tailReadBudget > 0L) {
+                        val tailReadLimit = minOf(
+                            originalBytes - alignedStart,
+                            tailReadBudget
+                        )
+                        val tailInput = java.io.FileInputStream(file).apply {
+                            channel.position(alignedStart)
+                        }
+                        val tail = writeLogSegment(
+                            zos = zos,
+                            entryName = entryName,
+                            input = tailInput,
+                            readLimit = tailReadLimit,
+                            trailingOmissionReason = "snapshot-boundary"
+                        )
+                        actualReadBytes += tail.readBytes
+                        representedBytes += tail.representedBytes
+                        exportedBytes += tail.exportedBytes
+                        oversizedLineCount += tail.oversizedLineCount
+                        reasons += tail.addedReasons
+                    } else if (gapBytes == 0L) {
+                        val marker = omissionBytes("sample-gap", originalBytes - head.readBytes)
+                        zos.write(marker)
+                        exportedBytes += marker.size
+                        omittedMiddleBytes += originalBytes - head.readBytes
+                    }
+                } else {
+                    val remaining = (originalBytes - head.readBytes).coerceAtLeast(0L)
+                    if (remaining > 0L) {
+                        val marker = omissionBytes("sample-gap", remaining)
+                        zos.write(marker)
+                        exportedBytes += marker.size
+                        omittedMiddleBytes += remaining
+                    }
+                }
+            }
+            check(actualReadBytes <= readBudget) {
+                "Log read budget exceeded for $entryName: $actualReadBytes > $readBudget"
+            }
+            zos.closeEntry()
+        } catch (ex: Exception) {
+            runCatching { zos.closeEntry() }
+            throw ex
+        }
+
+        val currentLength = runCatching { file.length() }.getOrDefault(-1L)
+        if (
+            currentLength != originalBytes ||
+            snapshotFileIdentity != fileIdentity(file)
+        ) {
+            reasons.add("file-changed")
+        }
+        if (representedBytes + omittedMiddleBytes > originalBytes) {
+            reasons.add("accounting-anomaly")
+        }
+        val summary = LogFileExport(
+            name = entryName,
+            originalBytes = originalBytes,
+            readBytes = actualReadBytes,
+            includedBytes = representedBytes,
+            exportedBytes = exportedBytes,
+            allocatedBytes = readBudget,
+            strategy = strategy,
+            omittedMiddleBytes = omittedMiddleBytes,
+            oversizedLineCount = oversizedLineCount,
+            reasons = reasons
+        )
+        if (summary.suppressedBytes > 0L && summary.reasons.isEmpty()) {
+            reasons.add("incomplete-line")
+        }
+        return LogFileWriteResult(
+            readBytes = actualReadBytes,
+            file = summary.copy(reasons = reasons.toSet())
+        )
+    }
+
+    private suspend fun writeLogSegment(
+        zos: ZipOutputStream,
+        entryName: String,
+        input: InputStream,
+        readLimit: Long,
+        trailingOmissionReason: String
+    ): LogSegmentWriteResult {
+        var representedBytes = 0L
+        var exportedBytes = 0L
+        var oversizedLineCount = 0
         var lineBytes = 0L
         var oversizedLine = false
+        val reasons = linkedSetOf<String>()
         val lineBuffer = ByteArrayOutputStream(minOf(maxLogLineBytes, 8192))
+        // Bound the raw source before buffering so BufferedInputStream cannot
+        // prefetch bytes beyond the caller's snapshot/read allocation.
+        val boundedInput = boundedBufferedInput(input, readLimit)
 
-        BoundedInputStream(BufferedInputStream(file.inputStream()), readBudget).use { input ->
-            zos.putNextEntry(ZipEntry(entryName))
+        fun writeText(text: String) {
+            val encoded = text.toByteArray(Charsets.UTF_8)
+            zos.write(encoded)
+            exportedBytes += encoded.size.toLong()
+        }
+
+        fun resetLine() {
+            lineBytes = 0L
+            oversizedLine = false
+            lineBuffer.reset()
+        }
+
+        boundedInput.use { stream ->
             val chunk = ByteArray(8192)
-
-            fun writeText(text: String) {
-                val encoded = text.toByteArray(Charsets.UTF_8)
-                zos.write(encoded)
-                exportedBytes += encoded.size.toLong()
-            }
-
-            fun resetLine() {
-                lineBytes = 0L
-                oversizedLine = false
-                lineBuffer.reset()
-            }
-
             while (true) {
                 currentCoroutineContext().ensureActive()
-                val read = input.read(chunk)
+                val read = stream.read(chunk)
                 if (read < 0) break
                 for (index in 0 until read) {
                     val value = chunk[index]
@@ -556,9 +807,7 @@ class DiagnosticExportRepository internal constructor(
                         if (oversizedLine) {
                             oversizedLineCount++
                             reasons.add("line-limit")
-                            writeText(
-                                omissionLine("line-limit", lineBytes + 1L) + "\n"
-                            )
+                            writeText(omissionLine("line-limit", lineBytes + 1L) + "\n")
                         } else {
                             representedBytes += lineBytes + 1L
                             if (lineBytes > 0L) {
@@ -590,37 +839,67 @@ class DiagnosticExportRepository internal constructor(
                     }
                 }
             }
+        }
 
-            if (lineBytes > 0L || oversizedLine) {
-                reasons.add("incomplete-line")
-                writeText(omissionLine("incomplete-line", lineBytes) + "\n")
+        if (lineBytes > 0L || oversizedLine) {
+            reasons.add(trailingOmissionReason)
+            if (oversizedLine) {
+                oversizedLineCount++
+                reasons.add("line-limit")
             }
-            actualReadBytes = input.bytesRead
-            zos.closeEntry()
+            writeText(omissionLine(trailingOmissionReason, lineBytes) + "\n")
         }
-
-        if (actualReadBytes < minOf(originalBytes, readBudget)) {
-            reasons.add("file-changed")
-        }
-        if (originalBytes > readBudget && reasons.isEmpty()) {
-            reasons.add(if (readBudget == maxLogFileBytes) "file-limit" else "total-limit")
-        }
-        val summary = LogFileExport(
-            name = entryName,
-            originalBytes = originalBytes,
-            includedBytes = representedBytes,
+        return LogSegmentWriteResult(
+            readBytes = boundedInput.bytesRead,
+            representedBytes = representedBytes,
             exportedBytes = exportedBytes,
             oversizedLineCount = oversizedLineCount,
-            reasons = reasons
-        )
-        if (summary.suppressedBytes > 0L && summary.reasons.isEmpty()) {
-            reasons.add("incomplete-line")
-        }
-        return LogFileWriteResult(
-            readBytes = actualReadBytes,
-            file = summary.copy(reasons = reasons.toSet())
+            addedReasons = reasons
         )
     }
+
+    private data class LineAlignment(
+        val alignedStart: Long,
+        val bytesScanned: Long,
+        val foundLineBoundary: Boolean
+    )
+
+    private fun alignToNextLine(
+        file: File,
+        start: Long,
+        maxScanBytes: Long
+    ): LineAlignment {
+        if (start <= 0L) return LineAlignment(0L, 0L, foundLineBoundary = true)
+        RandomAccessFile(file, "r").use { raf ->
+            raf.seek(start)
+            var scanned = 0L
+            while (scanned < maxScanBytes) {
+                val value = raf.read()
+                if (value < 0) break
+                scanned++
+                if (value == '\n'.code) {
+                    return LineAlignment(raf.filePointer, scanned, foundLineBoundary = true)
+                }
+            }
+            return LineAlignment(
+                alignedStart = minOf(raf.length(), start + scanned),
+                bytesScanned = scanned,
+                foundLineBoundary = false
+            )
+        }
+    }
+
+    private fun fileIdentity(file: File): String? = runCatching {
+        val attributes = Files.readAttributes(
+            file.toPath(),
+            BasicFileAttributes::class.java,
+            LinkOption.NOFOLLOW_LINKS
+        )
+        "${attributes.fileKey()}|${attributes.creationTime()}|${attributes.lastModifiedTime()}"
+    }.getOrNull()
+
+    private fun omissionBytes(reason: String, originalBytes: Long): ByteArray =
+        (omissionLine(reason, originalBytes) + "\n").toByteArray(Charsets.UTF_8)
 
     private fun omissionLine(reason: String, originalBytes: Long): String =
         JSONObject()
@@ -638,6 +917,7 @@ class DiagnosticExportRepository internal constructor(
         coordinateCount: Int,
         droppedLocationCount: Int,
         forensicEventCount: Int,
+        crashTraceCount: Int,
         entries: Set<String>,
         logExport: LogExportView
     ): JSONObject {
@@ -667,6 +947,7 @@ class DiagnosticExportRepository internal constructor(
                 JSONObject()
                     .put("droppedLocationCount", droppedLocationCount)
                     .put("forensicEventCount", forensicEventCount)
+                    .put("crashTraceCount", crashTraceCount)
                     .put("recentLocationCount", coordinateCount)
                     .put("pageSize", corePageSize)
             )
@@ -703,9 +984,13 @@ class DiagnosticExportRepository internal constructor(
                     JSONObject()
                         .put("name", file.name)
                         .put("originalBytes", file.originalBytes)
+                        .put("readBytes", file.readBytes)
                         .put("includedBytes", file.includedBytes)
                         .put("exportedBytes", file.exportedBytes)
+                        .put("allocatedBytes", file.allocatedBytes)
+                        .put("strategy", file.strategy)
                         .put("suppressedBytes", file.suppressedBytes)
+                        .put("omittedMiddleBytes", file.omittedMiddleBytes)
                         .put("oversizedLineCount", file.oversizedLineCount)
                         .put("suppressionReasons", JSONArray(file.reasons.sorted()))
                 }
@@ -735,7 +1020,8 @@ class DiagnosticExportRepository internal constructor(
             Regex("""^pim-diagnostics-\d+\.zip\.tmp\.spool$""")
         private val CORE_ENTRIES = setOf(
             "manifest.json", "status.json", "settings.json",
-            "database-counts.json", "sync-history.json",
+            "database-counts.json", "sync-history.json", "usage-terminal-lifecycle.json",
+            "crash-traces.jsonl",
             // REQ-9 / REQ-1~REQ-4：取证两件套随包导出（丢弃明细 + 死因台账）。
             "dropped-locations.jsonl", "forensics.jsonl"
         )
@@ -787,6 +1073,26 @@ class DiagnosticExportRepository internal constructor(
         status.put("syncBatchesPendingCount", dao.pendingSyncBatchCount().first())
         status.put("deviceProfilePendingCount", dao.pendingDeviceProfileCount().first())
         status.put("aggregateRejectedCount", dao.aggregateRejectedCount().first())
+        val terminalUsage = usageTerminalLifecycleRepository?.refresh()
+        if (terminalUsage != null) {
+            status.put("rejectedUsageSummaryCount", terminalUsage.rejectedCount)
+            status.put("rejectedUsageSummaryReclaimableCount", terminalUsage.reclaimableCount)
+            status.put("rejectedUsageSummaryRetentionDays", terminalUsage.retentionDays)
+            status.put("rejectedUsageSummaryArchivedCount", terminalUsage.archivedCount)
+            status.put("rejectedUsageSummaryLastError", terminalUsage.lastError ?: JSONObject.NULL)
+        }
+        status.put(
+            "crashTraceCount",
+            try {
+                crashTraceStore?.count() ?: 0
+            } catch (e: Exception) {
+                structuredLogRepository.warn(
+                    "diagnostics-export",
+                    "读取崩溃堆栈计数失败：${e.message ?: e::class.java.simpleName}"
+                )
+                0
+            }
+        )
 
         val sched = scheduleSnapshot()
         status.put("scheduleFreshness", sched.freshness.name)
@@ -1128,9 +1434,85 @@ class DiagnosticExportRepository internal constructor(
                 .put("finishedAtUtc", row.finishedAtUtc ?: JSONObject.NULL)
                 .put("syncStatus", row.syncStatus)
                 .put("createdAtUtc", row.createdAtUtc)
+            if (!row.failureReason.isNullOrBlank()) {
+                obj.put("failureReason", redactor.redactText(row.failureReason).take(240))
+            }
             arr.put(obj)
         }
         return arr
+    }
+
+    private suspend fun buildUsageTerminalLifecycle(
+        dao: com.pim.app.data.MobileDataDao
+    ): JSONObject {
+        val snapshot = usageTerminalLifecycleRepository?.refresh()
+        val now = nowMillis()
+        val retentionDays = snapshot?.retentionDays
+            ?: UsageTerminalLifecycleRepository.DEFAULT_RETENTION_DAYS
+        val cutoff = now - retentionDays.toLong() * 24L * 60L * 60L * 1_000L
+        val currentStats = dao.rejectedUsageSummaryStats(
+            limit = UsageTerminalLifecycleRepository.MAX_REASONS
+        )
+        val reclaimableStats = dao.rejectedUsageSummaryStatsOlderThan(
+            cutoffUtc = cutoff,
+            limit = UsageTerminalLifecycleRepository.MAX_REASONS
+        )
+        val archiveHistory = snapshot?.archiveHistory.orEmpty()
+            .takeLast(UsageTerminalLifecycleRepository.MAX_ARCHIVE_HISTORY)
+        return JSONObject()
+            .put("generatedAtUtc", now)
+            .put("status", snapshot?.statusText ?: "读取失败")
+            .put(
+                "rejectedCount",
+                snapshot?.rejectedCount ?: dao.countUsageSummariesBySyncStatus(
+                    com.pim.app.data.MobileSyncStatus.REJECTED
+                )
+            )
+            .put("reclaimableCount", dao.countRejectedUsageSummariesOlderThan(cutoff))
+            .put("retentionDays", retentionDays)
+            .put("nextEligibleAtUtc", snapshot?.nextEligibleAtUtc ?: JSONObject.NULL)
+            .put("reasons", statsJson(currentStats))
+            .put("reclaimableReasons", statsJson(reclaimableStats))
+            .put("archivedCount", snapshot?.archivedCount ?: 0L)
+            .put("lastReclaimedAtUtc", snapshot?.lastReclaimedAtUtc ?: JSONObject.NULL)
+            .put("lastReclaimedCount", snapshot?.lastReclaimedCount ?: 0L)
+            .put("lastReclaimedReasons", terminalReasonsJson(snapshot?.lastReclaimedReasons.orEmpty()))
+            .put("archiveHistory", terminalArchiveJson(archiveHistory))
+            .put("lastError", snapshot?.lastError ?: JSONObject.NULL)
+    }
+
+    private fun terminalReasonsJson(reasons: List<TerminalReasonCount>): JSONArray = JSONArray().apply {
+        reasons.take(UsageTerminalLifecycleRepository.MAX_REASONS).forEach { item ->
+            put(JSONObject().put("reason", item.reason).put("count", item.count))
+        }
+    }
+
+    private fun terminalArchiveJson(
+        history: List<TerminalArchiveEntry>
+    ): JSONArray = JSONArray().apply {
+        history.forEach { entry ->
+            put(
+                JSONObject()
+                    .put("archivedAtUtc", entry.archivedAtUtc)
+                    .put("cutoffUtc", entry.cutoffUtc)
+                    .put("count", entry.count)
+                    .put("reasons", terminalReasonsJson(entry.reasons))
+            )
+        }
+    }
+
+    private fun statsJson(
+        stats: List<com.pim.app.data.RejectedUsageSummaryStat>
+    ): JSONArray = JSONArray().apply {
+        stats.forEach { stat ->
+            put(
+                JSONObject()
+                    .put("reason", redactor.redactText(stat.reason).take(160))
+                    .put("count", stat.count)
+                    .put("oldestUpdatedAtUtc", stat.oldestUpdatedAtUtc)
+                    .put("newestUpdatedAtUtc", stat.newestUpdatedAtUtc)
+            )
+        }
     }
 
     private fun locationToJson(loc: com.pim.app.data.DiagnosticLocationRow): JSONObject {
@@ -1151,22 +1533,35 @@ class DiagnosticExportRepository internal constructor(
     }
 }
 
-private class BoundedInputStream(
+internal class BoundedInputStream(
     private val delegate: InputStream,
-    private val limit: Long
+    val limit: Long
 ) : InputStream() {
+    init {
+        require(limit >= 0L) { "limit must not be negative" }
+    }
+
     var bytesRead: Long = 0L
+        private set
+    var reachedLimit: Boolean = false
         private set
 
     override fun read(): Int {
-        if (bytesRead >= limit) return -1
+        if (bytesRead >= limit) {
+            reachedLimit = true
+            return -1
+        }
         val value = delegate.read()
         if (value >= 0) bytesRead++
         return value
     }
 
     override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
-        if (bytesRead >= limit) return -1
+        if (length == 0) return 0
+        if (bytesRead >= limit) {
+            reachedLimit = true
+            return -1
+        }
         val allowed = minOf(length.toLong(), limit - bytesRead).toInt()
         val read = delegate.read(buffer, offset, allowed)
         if (read > 0) bytesRead += read
@@ -1174,4 +1569,18 @@ private class BoundedInputStream(
     }
 
     override fun close() = delegate.close()
+}
+
+internal fun boundedBufferedInput(
+    input: InputStream,
+    readLimit: Long
+): BoundedBufferedInput = BoundedBufferedInput(input, readLimit)
+
+internal class BoundedBufferedInput(
+    input: InputStream,
+    readLimit: Long
+) : BufferedInputStream(BoundedInputStream(input, readLimit)) {
+    private val boundedSource = `in` as BoundedInputStream
+
+    val bytesRead: Long get() = boundedSource.bytesRead
 }

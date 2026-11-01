@@ -156,6 +156,8 @@ class DiagnosticExportCoreStreamingTest {
                     "settings.json",
                     "database-counts.json",
                     "sync-history.json",
+                    "usage-terminal-lifecycle.json",
+                    "crash-traces.jsonl",
                     "dropped-locations.jsonl",
                     "forensics.jsonl",
                     "locations.jsonl"

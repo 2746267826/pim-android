@@ -939,7 +939,7 @@ class LocationAcquisitionCoordinatorTest {
     }
 
     @Test
-    fun `updateAutomaticStream with the same interval but changed context re-registers`() = runTest {
+    fun `updateAutomaticStream with the same interval updates context without re-registering`() = runTest {
         createCoordinator(this)
         prerequisiteChecker.ready()
 
@@ -954,15 +954,18 @@ class LocationAcquisitionCoordinatorTest {
         runner.waitForStreamStart()
         assertEquals(1, runner.streamCount.get())
 
-        // 间隔不变但运动标注变化（如 Walking→Moving）：必须重注册，
-        // 否则流内 fix 的 rawJson 携带过期 motionSignal
+        // 间隔不变但运动标注变化（如 Unknown→Walking）：只更新后续 fix 的标注。
+        // 重注册会短暂重叠两个平台监听，使同一 fix 进入两次质量门。
         coordinator.updateAutomaticStream(automaticContext.copy(motionSignal = "Walking"))
         advanceUntilIdle()
 
-        runner.waitForStreamStart()
-        assertEquals(2, runner.streamCount.get())
+        assertEquals(1, runner.streamCount.get())
         assertEquals(60_000L, runner.streamRequest!!.intervalMillis)
         assertEquals("Walking", coordinator.streamState.value.motionSignal)
+
+        runner.emitStreamCandidate(aSnapshot)
+        runCurrent()
+        assertTrue(operations.enqueued.last().rawJson.contains("\"motionSignal\":\"Walking\""))
         coordinator.stopAutomaticStream()
         advanceUntilIdle()
     }

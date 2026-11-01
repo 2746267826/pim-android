@@ -117,7 +117,7 @@ class PimDatabaseMigrationsTest {
     }
 
     @Test
-    fun currentV4Schema_hasVersion4And11TablesIncludingForensicEvents() {
+    fun currentV5Schema_hasVersion5And11TablesIncludingForensicEvents() {
         val roomDatabase = Room.databaseBuilder(context, AppDatabase::class.java, currentDbName)
             .addMigrations(*PimDatabaseMigrations.ALL)
             .allowMainThreadQueries()
@@ -127,7 +127,7 @@ class PimDatabaseMigrationsTest {
             var cursor = db.query("PRAGMA user_version")
             cursor.use {
                 it.moveToFirst()
-                assertEquals(4L, it.getLong(0))
+                assertEquals(5L, it.getLong(0))
             }
             cursor = db.query(
                 "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'room%' AND name NOT LIKE 'sqlite%' AND name NOT LIKE 'android%'"
@@ -199,6 +199,90 @@ class PimDatabaseMigrationsTest {
                 )
             }
             assertTrue(duplicate.isFailure)
+        }
+    }
+
+    @Test
+    fun migrateFrom4To5_addsIdempotencyKeyWithoutDeletingExistingDroppedRows() {
+        helper.createDatabase(dbName, 4).use { db ->
+            repeat(2) {
+                db.execSQL(
+                    """
+                    INSERT INTO mobile_location_dropped_diagnostics
+                        (recorded_at_utc, provider, accuracy_meters, policy_mode, reason, created_at_utc)
+                    VALUES (1791396035696, 'network', 30.0, 'PowerSavingNormal',
+                            'passive-horizontal-accuracy-too-low', 1791396035696)
+                    """.trimIndent()
+                )
+            }
+        }
+
+        helper.runMigrationsAndValidate(
+            dbName,
+            5,
+            true,
+            PimDatabaseMigrations.MIGRATION_4_5
+        ).use { db ->
+            db.query("SELECT COUNT(*) FROM mobile_location_dropped_diagnostics").use {
+                it.moveToFirst()
+                assertEquals("migration must not destroy pre-existing diagnostics", 2L, it.getLong(0))
+            }
+            db.query(
+                "SELECT COUNT(*) FROM mobile_location_dropped_diagnostics WHERE fix_key IS NOT NULL"
+            ).use {
+                it.moveToFirst()
+                assertEquals("legacy rows remain untouched until a new write", 0L, it.getLong(0))
+            }
+            db.query(
+                """
+                SELECT
+                    COUNT(*) AS total_count,
+                    COALESCE(SUM(CASE WHEN fix_key IS NOT NULL THEN 1 ELSE 0 END), 0) AS keyed_count,
+                    COALESCE(SUM(CASE WHEN fix_key IS NULL THEN 1 ELSE 0 END), 0) AS unkeyed_count,
+                    COUNT(DISTINCT fix_key) AS distinct_keyed_count
+                FROM mobile_location_dropped_diagnostics
+                """.trimIndent()
+            ).use {
+                it.moveToFirst()
+                assertEquals(2L, it.getLong(it.getColumnIndexOrThrow("total_count")))
+                assertEquals(0L, it.getLong(it.getColumnIndexOrThrow("keyed_count")))
+                assertEquals(2L, it.getLong(it.getColumnIndexOrThrow("unkeyed_count")))
+                assertEquals(0L, it.getLong(it.getColumnIndexOrThrow("distinct_keyed_count")))
+            }
+
+            db.execSQL(
+                """
+                INSERT INTO mobile_location_dropped_diagnostics
+                    (fix_key, recorded_at_utc, provider, accuracy_meters, policy_mode, reason, created_at_utc)
+                VALUES ('same-fix', 1000, 'gps', 10.0, 'Active', 'drop', 1000)
+                """.trimIndent()
+            )
+            val duplicate = runCatching {
+                db.execSQL(
+                    """
+                    INSERT INTO mobile_location_dropped_diagnostics
+                        (fix_key, recorded_at_utc, provider, accuracy_meters, policy_mode, reason, created_at_utc)
+                    VALUES ('same-fix', 1000, 'gps', 10.0, 'Walking', 'drop', 1001)
+                    """.trimIndent()
+                )
+            }
+            assertTrue("fix_key unique index must reject a duplicate write", duplicate.isFailure)
+            db.query(
+                """
+                SELECT
+                    COUNT(*) AS total_count,
+                    COALESCE(SUM(CASE WHEN fix_key IS NOT NULL THEN 1 ELSE 0 END), 0) AS keyed_count,
+                    COALESCE(SUM(CASE WHEN fix_key IS NULL THEN 1 ELSE 0 END), 0) AS unkeyed_count,
+                    COUNT(DISTINCT fix_key) AS distinct_keyed_count
+                FROM mobile_location_dropped_diagnostics
+                """.trimIndent()
+            ).use {
+                it.moveToFirst()
+                assertEquals(3L, it.getLong(it.getColumnIndexOrThrow("total_count")))
+                assertEquals(1L, it.getLong(it.getColumnIndexOrThrow("keyed_count")))
+                assertEquals(2L, it.getLong(it.getColumnIndexOrThrow("unkeyed_count")))
+                assertEquals(1L, it.getLong(it.getColumnIndexOrThrow("distinct_keyed_count")))
+            }
         }
     }
 }

@@ -16,10 +16,15 @@ object RecordingController {
     internal const val SESSION = "recording_session"
     internal const val NOTE = "recording_note"
 
-    fun start(activity: Activity, noteId: String? = null): RecordingProblem? {
+    fun start(
+        activity: Activity,
+        noteId: String? = null,
+        availableBytes: Long = activity.noBackupFilesDir.usableSpace,
+    ): RecordingProblem? {
         if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
             return RecordingProblem.Permission
         }
+        if (!RecordingStoragePolicy.canStart(availableBytes)) return RecordingProblem.Storage
         return try {
             ContextCompat.startForegroundService(activity, intent(activity, START).putExtra(NOTE, noteId))
             null

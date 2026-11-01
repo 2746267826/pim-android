@@ -64,6 +64,64 @@ class LocationCallbackDeduplicatorTest {
     }
 
     @Test
+    fun `late better gps cannot claim a fused result delivered by an earlier batch`() {
+        val deduplicator = LocationCallbackDeduplicator()
+        val deliveredFused = snapshot(
+            time = START,
+            elapsed = ELAPSED,
+            provider = "fused",
+            accuracy = 12f
+        )
+        val first = deduplicator.filterForDelivery(listOf(deliveredFused))
+        val lateBetterGps = snapshot(
+            time = START + 80L,
+            elapsed = ELAPSED,
+            provider = "gps",
+            latitude = 31.230486,
+            accuracy = 4f
+        )
+
+        val second = deduplicator.filterForDelivery(listOf(lateBetterGps))
+
+        assertEquals(deliveredFused, first.delivered.single())
+        assertTrue("no replacement was actually delivered", second.delivered.isEmpty())
+        assertEquals(lateBetterGps, second.suppressions.single().suppressed)
+        assertEquals(deliveredFused, second.suppressions.single().retained)
+    }
+
+    @Test
+    fun `late better fused cannot claim a gps result delivered by an earlier batch`() {
+        val deduplicator = LocationCallbackDeduplicator()
+        val deliveredGps = snapshot(
+            time = START,
+            elapsed = ELAPSED,
+            provider = "gps",
+            accuracy = 10f
+        )
+        val first = deduplicator.filterForDelivery(listOf(deliveredGps))
+        val lateBetterFused = snapshot(
+            time = START + 80L,
+            elapsed = ELAPSED,
+            provider = "fused",
+            latitude = 31.230486,
+            accuracy = 3f
+        )
+
+        val second = deduplicator.filterForDelivery(listOf(lateBetterFused))
+        val replay = deduplicator.filterForDelivery(listOf(lateBetterFused))
+
+        assertEquals(deliveredGps, first.delivered.single())
+        assertTrue(second.delivered.isEmpty())
+        assertEquals(deliveredGps, second.suppressions.single().retained)
+        assertTrue(replay.delivered.isEmpty())
+        assertEquals(
+            "a suppressed cross-batch candidate must never become lastDelivered",
+            deliveredGps,
+            replay.suppressions.single().retained
+        )
+    }
+
+    @Test
     fun `replayed fused view stays suppressed after its gps counterpart was preferred`() {
         val deduplicator = LocationCallbackDeduplicator()
         val fused = snapshot(
@@ -286,11 +344,12 @@ class LocationCallbackDeduplicatorTest {
         time: Long,
         elapsed: Long? = null,
         provider: String,
-        latitude: Double = 31.230416
+        latitude: Double = 31.230416,
+        accuracy: Float = 8f,
     ) = LocationSnapshot(
         latitude = latitude,
         longitude = 121.473701,
-        horizontalAccuracyMeters = 8f,
+        horizontalAccuracyMeters = accuracy,
         provider = provider,
         source = "realtime",
         altitudeMeters = 10.0,

@@ -36,6 +36,7 @@ internal data class LocationCallbackDedupResult(
 internal class LocationCallbackDeduplicator {
     private var lastDelivered: LocationSnapshot? = null
     private val deliveredByIdentity = LinkedHashMap<String, LocationSnapshot>()
+    private val exactReplayIdentities = HashSet<String>()
     private var suppressedDuplicateCount = 0L
 
     @Synchronized
@@ -48,20 +49,23 @@ internal class LocationCallbackDeduplicator {
                 val duplicate = findDuplicate(candidate)
                 if (duplicate != null) {
                     suppressedDuplicateCount += 1L
-                    val keepCandidate = isPreferred(candidate, duplicate.retained)
-                    val exactIdentity = exactIdentity(candidate)
-                    if (exactIdentity != null && keepCandidate) {
-                        val acceptedIndex = accepted.indexOfFirst { it === duplicate.retained }
-                        if (acceptedIndex >= 0) {
-                            accepted[acceptedIndex] = candidate
+                    val acceptedIndex = accepted.indexOfFirst { it === duplicate.retained }
+                    val replaceAccepted = acceptedIndex >= 0 && isPreferred(candidate, duplicate.retained)
+                    if (replaceAccepted) {
+                        val displaced = accepted[acceptedIndex]
+                        accepted[acceptedIndex] = candidate
+                        // Replays of either representation must point at the one actually delivered.
+                        listOfNotNull(exactIdentity(displaced), exactIdentity(candidate)).forEach { identity ->
+                            deliveredByIdentity[identity] = candidate
                         }
-                        deliveredByIdentity[exactIdentity] = candidate
+                        exactIdentity(displaced)?.let(exactReplayIdentities::add)
                         lastDelivered = candidate
+                        trimIdentities()
                     }
                     suppressions += LocationDuplicateSuppression(
                         reason = duplicate.reason,
-                        suppressed = if (keepCandidate) duplicate.retained else candidate,
-                        retained = if (keepCandidate) candidate else duplicate.retained
+                        suppressed = if (replaceAccepted) duplicate.retained else candidate,
+                        retained = if (replaceAccepted) candidate else duplicate.retained
                     )
                     return@forEach
                 }
@@ -121,6 +125,9 @@ internal class LocationCallbackDeduplicator {
         val exactIdentity = exactIdentity(candidate)
         if (exactIdentity != null) {
             deliveredByIdentity[exactIdentity]?.let { previous ->
+                if (exactIdentity in exactReplayIdentities) {
+                    return Duplicate(previous, LocationDuplicateReason.EXACT_REPLAY)
+                }
                 duplicateReason(previous, candidate)?.let { reason ->
                     return Duplicate(previous, reason)
                 }
@@ -143,10 +150,17 @@ internal class LocationCallbackDeduplicator {
         val identity = exactIdentity(candidate)
         if (identity != null) {
             deliveredByIdentity[identity] = candidate
+            exactReplayIdentities.remove(identity)
         }
         lastDelivered = candidate
-        if (deliveredByIdentity.size > MAX_IDENTITIES) {
-            deliveredByIdentity.remove(deliveredByIdentity.keys.first())
+        trimIdentities()
+    }
+
+    private fun trimIdentities() {
+        while (deliveredByIdentity.size > MAX_IDENTITIES) {
+            val evicted = deliveredByIdentity.keys.first()
+            deliveredByIdentity.remove(evicted)
+            exactReplayIdentities.remove(evicted)
         }
     }
 

@@ -18,6 +18,8 @@ import com.pim.app.schedule.ScheduleCacheSnapshot
 import com.pim.app.schedule.ScheduleRefreshErrorKind
 import com.pim.app.data.MobileSyncStatus
 import com.pim.app.data.MobileUsageEventEntity
+import com.pim.app.data.MobileUsageSummaryEntity
+import com.pim.app.forensics.CrashTraceStore
 import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.settings.TrackingSettings
 import com.pim.app.settings.TrackingSettingsStore
@@ -71,6 +73,7 @@ class DiagnosticExportRepositoryTest {
     private val coreEntries = setOf(
         "manifest.json", "status.json", "settings.json",
         "database-counts.json", "sync-history.json",
+        "usage-terminal-lifecycle.json", "crash-traces.jsonl",
         // 阶段一新增：丢弃明细（REQ-9 AC-9.1）与取证台账（REQ-1~REQ-4）。
         "dropped-locations.jsonl", "forensics.jsonl"
     )
@@ -113,7 +116,9 @@ class DiagnosticExportRepositoryTest {
         runtimeSnapshot: () -> ForegroundLocationRuntimeState = { ForegroundLocationRuntimeState() },
         policyTransitionWriteFailure: () -> PolicyTransitionWriteFailure = {
             PolicyTransitionWriteFailure.None
-        }
+        },
+        usageTerminalLifecycleRepository: UsageTerminalLifecycleRepository? = null,
+        crashTraceStore: CrashTraceStore? = null
     ): DiagnosticExportRepository {
         val actualPublish: (File, File) -> Unit = if (publish != null) publish else { tmp, final ->
             Files.move(tmp.toPath(), final.toPath())
@@ -136,7 +141,9 @@ class DiagnosticExportRepositoryTest {
             deleteExportFile = deleteExportFile ?: { it.delete() },
             scheduleSnapshot = scheduleSnapshot,
             runtimeSnapshot = runtimeSnapshot,
-            policyTransitionWriteFailure = policyTransitionWriteFailure
+            policyTransitionWriteFailure = policyTransitionWriteFailure,
+            usageTerminalLifecycleRepository = usageTerminalLifecycleRepository,
+            crashTraceStore = crashTraceStore
         )
     }
 
@@ -208,6 +215,106 @@ class DiagnosticExportRepositoryTest {
         }
     }
 
+    @Test
+    fun defaultExport_includesTerminalLifecycleAndRedactedCrashTrace() = runTest {
+        dao.insertUsageSummaries(
+            listOf(
+                MobileUsageSummaryEntity(
+                    packageName = "com.example.dead",
+                    windowStartUtc = 1_000L,
+                    windowEndUtc = 2_000L,
+                    totalTimeForegroundMs = 1L,
+                    lastTimeUsedUtc = 1_500L,
+                    firstTimeStampUtc = 1_000L,
+                    lastTimeStampUtc = 1_500L,
+                    source = "test",
+                    sourceWindowStartUtc = 0L,
+                    sourceWindowEndUtc = 0L,
+                    collectedAtUtc = 1_000L,
+                    rawJson = "{}",
+                    syncStatus = MobileSyncStatus.REJECTED,
+                    lastError = "invalid-window",
+                    updatedAtUtc = baseNow - 2L * 24L * 60L * 60L * 1_000L
+                )
+            )
+        )
+        val ledgerFile = File(context.filesDir, "forensics/usage-terminal-export-test.json")
+        val usageRepository = UsageTerminalLifecycleRepository(
+            dao = dao,
+            logs = structuredLogRepo,
+            redactor = redactor,
+            ledgerFile = ledgerFile,
+            nowMillis = { baseNow }
+        )
+        val crashFile = File(context.cacheDir, "crash-export-test.jsonl")
+        crashFile.delete()
+        val crashStore = CrashTraceStore(redactor, crashFile) { baseNow }
+        crashStore.record(
+            Thread.currentThread(),
+            IllegalStateException("Authorization: Bearer export-secret")
+        )
+
+        try {
+            val repo = createRepo(
+                usageTerminalLifecycleRepository = usageRepository,
+                crashTraceStore = crashStore
+            )
+            val result = repo.export(includeRecentLocations = false)
+
+            ZipFile(result.file).use { zip ->
+                val terminal = JSONObject(zip.readEntry("usage-terminal-lifecycle.json")!!)
+                assertEquals(1, terminal.getInt("rejectedCount"))
+                assertEquals(
+                    "invalid-window",
+                    terminal.getJSONArray("reasons").getJSONObject(0).getString("reason")
+                )
+                val crash = zip.readEntry("crash-traces.jsonl")!!
+                assertTrue(crash.contains("IllegalStateException"))
+                assertTrue(crash.contains("[REDACTED]"))
+                assertFalse(crash.contains("export-secret"))
+                val status = JSONObject(zip.readEntry("status.json")!!)
+                assertEquals(1, status.getInt("crashTraceCount"))
+                assertEquals(1, status.getInt("rejectedUsageSummaryCount"))
+                val manifest = JSONObject(zip.readEntry("manifest.json")!!)
+                assertEquals(1, manifest.getJSONObject("coreExport").getInt("crashTraceCount"))
+            }
+        } finally {
+            ledgerFile.delete()
+            crashFile.delete()
+        }
+    }
+
+    @Test
+    fun clearDiagnostics_removesCrashTraceWithoutDeletingTerminalLedger() = runTest {
+        val crashFile = File(context.cacheDir, "crash-clear-test.jsonl")
+        val crashStore = CrashTraceStore(redactor, crashFile) { baseNow }
+        crashStore.record(Thread.currentThread(), IllegalStateException("synthetic"))
+        val ledgerFile = File(context.filesDir, "forensics/usage-terminal-clear-test.json")
+        ledgerFile.parentFile?.mkdirs()
+        ledgerFile.writeText("""{"archivedCount":7}""")
+        val usageRepository = UsageTerminalLifecycleRepository(
+            dao = dao,
+            logs = structuredLogRepo,
+            redactor = redactor,
+            ledgerFile = ledgerFile,
+            nowMillis = { baseNow }
+        )
+
+        try {
+            createRepo(
+                usageTerminalLifecycleRepository = usageRepository,
+                crashTraceStore = crashStore
+            ).clearDiagnostics()
+
+            assertFalse(crashFile.exists())
+            assertTrue(ledgerFile.isFile)
+            assertEquals(7L, JSONObject(ledgerFile.readText()).getLong("archivedCount"))
+        } finally {
+            crashFile.delete()
+            ledgerFile.delete()
+        }
+    }
+
     // --- include=true exports locations within 24h ---
 
     @Test
@@ -251,6 +358,31 @@ class DiagnosticExportRepositoryTest {
             assertEquals(baseNow - 24 * 3600_000L, manifest.getLong("coordinateRangeStartUtc"))
             assertEquals(baseNow, manifest.getLong("coordinateRangeEndUtc"))
             assertTrue(manifest.getBoolean("includeRecentLocations"))
+        }
+    }
+
+    @Test
+    fun syncHistoryExportIncludesOnlySanitizedSyncRunFailureReason() = runTest {
+        dao.insertSyncBatch(
+            MobileSyncBatchEntity(
+                batchId = "android-sync-run-test",
+                entityType = "sync-run",
+                rowCount = 3,
+                startedAtUtc = 100L,
+                finishedAtUtc = 200L,
+                syncStatus = "retry",
+                lastError = "timeout token=super-secret",
+                createdAtUtc = 100L
+            )
+        )
+
+        val result = createRepo().export(includeRecentLocations = false)
+        ZipFile(result.file).use { zip ->
+            val row = JSONArray(zip.readEntry("sync-history.json")!!).getJSONObject(0)
+            assertEquals("sync-run", row.getString("entityType"))
+            assertEquals("retry", row.getString("syncStatus"))
+            assertTrue(row.getString("failureReason").contains("[REDACTED]"))
+            assertFalse(row.getString("failureReason").contains("super-secret"))
         }
     }
 

@@ -133,7 +133,7 @@ class DiagnosticExportStreamingBoundsTest {
     }
 
     @Test
-    fun totalBudgetOmitsWholeFileAndReportsReasonWithoutInventingLineCount() = runTest {
+    fun totalBudgetFairlySamplesEachFileAndReportsHeadTailStrategy() = runTest {
         val newest = """{"message":"${"n".repeat(150)}"}""" + "\n"
         val older = """{"message":"${"o".repeat(100)}"}""" + "\n"
         writeLog("mobile-2026-10-30.jsonl", newest)
@@ -145,9 +145,21 @@ class DiagnosticExportStreamingBoundsTest {
         assertTrue(result.isPartial)
         ZipFile(result.file).use { zip ->
             val logExport = JSONObject(zip.readEntry("manifest.json")).getJSONObject("logExport")
-            assertEquals(1, logExport.getInt("omittedFileCount"))
-            assertEquals("total-limit", logExport.getJSONArray("omittedFiles").getJSONObject(0).getString("reason"))
-            assertFalse(logExport.getJSONArray("omittedFiles").getJSONObject(0).has("omittedLines"))
+            assertEquals(0, logExport.getInt("omittedFileCount"))
+            val files = logExport.getJSONArray("files")
+            assertEquals(2, files.length())
+            for (index in 0 until files.length()) {
+                val item = files.getJSONObject(index)
+                assertTrue(item.getLong("allocatedBytes") > 0L)
+                assertEquals("head-tail", item.getString("strategy"))
+                assertTrue(item.getLong("omittedMiddleBytes") > 0L)
+            }
+            val logNames = zip.entries().asSequence()
+                .map { it.name }
+                .filter { it.startsWith("logs/") }
+                .toList()
+            assertEquals(2, logNames.size)
+            assertTrue(logNames.all { zip.readEntry(it).contains("sample-gap") })
             assertTrue(
                 logExport.getJSONArray("suppressionReasons").toString().contains("total-limit")
             )

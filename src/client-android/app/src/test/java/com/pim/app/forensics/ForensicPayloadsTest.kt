@@ -1,12 +1,16 @@
 package com.pim.app.forensics
 
+import android.app.usage.UsageStatsManager
+import android.content.Context
 import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
+import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.Shadows
 import org.robolectric.annotation.Config
 
 /**
@@ -39,6 +43,7 @@ class ForensicPayloadsTest {
             sinceLastHeartbeatMillis = 900_000L,
             standbyBucket = AndroidHeartbeatSnapshotReader.STANDBY_BUCKET_RARE,
             standbyBucketLabel = "罕见",
+            standbyBucketObservedAtUtcMillis = 123L,
             ignoringBatteryOptimizations = false,
             dozeMode = true,
             powerSaveMode = false,
@@ -52,6 +57,9 @@ class ForensicPayloadsTest {
         assertEquals(900_000L, json.getLong("sinceLastHeartbeatMs"))
         assertEquals(40, json.getInt("standbyBucket"))
         assertEquals("罕见", json.getString("standbyBucketLabel"))
+        assertEquals("unavailable", json.getString("standbyBucketSource"))
+        assertTrue(json.has("standbyBucketFailureReason"))
+        assertEquals(123L, json.getLong("standbyBucketObservedAtUtcMillis"))
         assertFalse(json.getBoolean("ignoringBatteryOptimizations"))
         assertTrue(json.getBoolean("dozeMode"))
         assertFalse(json.getBoolean("powerSaveMode"))
@@ -252,13 +260,36 @@ class ForensicPayloadsTest {
             androidx.test.core.app.ApplicationProvider.getApplicationContext()
         )
 
+        assertEquals("豁免", reader.standbyBucketLabel(5))
         assertEquals("活跃", reader.standbyBucketLabel(10))
         assertEquals("工作集", reader.standbyBucketLabel(20))
         assertEquals("常用", reader.standbyBucketLabel(30))
         assertEquals("罕见", reader.standbyBucketLabel(40))
         assertEquals("受限", reader.standbyBucketLabel(45))
-        assertEquals("未知", reader.standbyBucketLabel(null))
-        assertEquals("未知", reader.standbyBucketLabel(999))
+        assertEquals("未知（读取失败）", reader.standbyBucketLabel(null))
+        assertEquals("未知（平台返回 0）", reader.standbyBucketLabel(0))
+        assertEquals("未知（代码 999）", reader.standbyBucketLabel(999))
+    }
+
+    @Test
+    fun `standby probe exposes raw value source and failure reason separately`() {
+        val context = androidx.test.core.app.ApplicationProvider.getApplicationContext<Context>()
+        val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as UsageStatsManager
+        Shadows.shadowOf(manager).setCurrentAppStandbyBucket(
+            UsageStatsManager.STANDBY_BUCKET_RARE
+        )
+        val reading = StandbyBucketProbe.read(context) { 456L }
+
+        assertEquals(UsageStatsManager.STANDBY_BUCKET_RARE, reading.rawValue)
+        assertEquals(StandbyBucketProbe.SOURCE_USAGE_STATS_MANAGER, reading.source)
+        assertNull(reading.failureReason)
+        assertEquals(456L, reading.observedAtUtcMillis)
+
+        Shadows.shadowOf(manager).setCurrentAppStandbyBucket(0)
+        val zero = StandbyBucketProbe.read(context) { 789L }
+        assertEquals(0, zero.rawValue)
+        assertEquals("platform-returned-0", zero.failureReason)
+        assertEquals(789L, zero.observedAtUtcMillis)
     }
 
     @Test

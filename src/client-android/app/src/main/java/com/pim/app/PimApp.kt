@@ -29,6 +29,12 @@ class PimApp : Application(), Configuration.Provider {
     lateinit var startupForensics: StartupForensics
 
     @Inject
+    lateinit var crashForensics: com.pim.app.forensics.CrashForensics
+
+    @Inject
+    lateinit var usageTerminalLifecycle: com.pim.app.mobile.diagnostics.UsageTerminalLifecycleRepository
+
+    @Inject
     lateinit var keepAliveCoordinator: com.pim.app.keepalive.KeepAliveCoordinator
 
     @Inject
@@ -41,6 +47,15 @@ class PimApp : Application(), Configuration.Provider {
 
     override fun onCreate() {
         super.onCreate()
+        try {
+            crashForensics.install()
+        } catch (ex: Exception) {
+            android.util.Log.e(
+                "PimCrashForensics",
+                "安装崩溃堆栈捕获失败，继续使用系统默认处理器。",
+                ex
+            )
+        }
         liveUpdatePublisher.cancelStaleNotification()
         liveUpdatePublisher.start(scope)
         // 启动取证（REQ-1 ~ REQ-4）：读退出原因、判强停/重启、写存活心跳。
@@ -82,6 +97,18 @@ class PimApp : Application(), Configuration.Provider {
                     "eventmute",
                     "启动时对账静音会话失败：${ex.message ?: ex::class.java.simpleName}",
                     ex
+                )
+            }
+
+            // #59：死信只做有界归档回收，不能抢在启动取证/强停判定之前。
+            try {
+                usageTerminalLifecycle.refreshAndReclaim()
+            } catch (ex: kotlinx.coroutines.CancellationException) {
+                throw ex
+            } catch (ex: Exception) {
+                logs.warn(
+                    "diagnostics-lifecycle",
+                    "启动时清理 usage 死信失败：${ex.message ?: ex::class.java.simpleName}"
                 )
             }
         }

@@ -7,6 +7,7 @@ import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.test.runTest
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -37,9 +38,59 @@ class MobileDataDaoRejectedTest {
         dao.insertSyncBatch(batch(syncStatus = MobileSyncStatus.SYNCED))
         dao.insertSyncBatch(batch(syncStatus = MobileSyncStatus.REJECTED))
         dao.insertSyncBatch(batch(syncStatus = MobileSyncStatus.REJECTED))
+        dao.insertSyncBatch(batch(syncStatus = MobileSyncStatus.SYNCING, entityType = "sync-run"))
 
         val count = dao.pendingSyncBatchCount().first()
         assertEquals(1, count)
+    }
+
+    @Test
+    fun interruptedSyncHistoryRepairAndTrimDoNotTouchUploadBatches() = runTest {
+        val business = dao.insertSyncBatch(
+            batch(syncStatus = MobileSyncStatus.SYNCING, createdAtUtc = 1L)
+        )
+        val runOld = dao.insertSyncBatch(
+            batch(
+                batchId = "run-old",
+                syncStatus = MobileSyncStatus.SYNCING,
+                entityType = "sync-run",
+                createdAtUtc = 2L
+            )
+        )
+        val runNew = dao.insertSyncBatch(
+            batch(
+                batchId = "run-new",
+                syncStatus = MobileSyncStatus.PENDING,
+                entityType = "sync-run",
+                createdAtUtc = 3L
+            )
+        )
+
+        assertEquals(
+            2,
+            dao.failInterruptedSyncHistory(
+                nowUtc = 50L,
+                entityType = "sync-run",
+                reason = "sync-process-interrupted"
+            )
+        )
+        val rows = dao.diagnosticSyncHistory(limit = 10)
+        assertEquals(
+            MobileSyncStatus.SYNCING,
+            rows.single { it.createdAtUtc == 1L }.syncStatus
+        )
+        assertTrue(rows.filter { it.entityType == "sync-run" }.all {
+            it.syncStatus == MobileSyncStatus.FAILED
+        })
+        assertTrue(
+            dao.getSyncBatchesBySyncStatus(MobileSyncStatus.FAILED, limit = 10)
+                .all { it.lastError == "sync-process-interrupted" }
+        )
+
+        assertEquals(1, dao.trimSyncHistory(keepNewest = 1, entityType = "sync-run"))
+        assertTrue(business > 0L && runOld > 0L && runNew > 0L)
+        assertEquals(1, dao.diagnosticSyncHistory(limit = 10).count { it.entityType == "sync-run" })
+        assertEquals(1, dao.diagnosticSyncHistory(limit = 10).count { it.entityType == "test" })
     }
 
     @Test
@@ -94,6 +145,43 @@ class MobileDataDaoRejectedTest {
         assertEquals(0, count)
     }
 
+    @Test
+    fun rejectedUsageSummaryQueriesAreBoundedAndOnlyReclaimOldRejectedRows() = runTest {
+        val old = System.currentTimeMillis() - 40L * 24L * 60L * 60L * 1_000L
+        val fresh = System.currentTimeMillis() - 2L * 24L * 60L * 60L * 1_000L
+        dao.insertUsageSummaries(
+            listOf(
+                summary(MobileSyncStatus.REJECTED).copy(
+                    lastError = "invalid-window",
+                    updatedAtUtc = old
+                ),
+                summary(MobileSyncStatus.REJECTED).copy(
+                    lastError = "invalid-window",
+                    updatedAtUtc = fresh
+                ),
+                summary(MobileSyncStatus.PENDING).copy(updatedAtUtc = old),
+                summary(MobileSyncStatus.FAILED).copy(updatedAtUtc = old),
+                summary(MobileSyncStatus.SYNCING).copy(updatedAtUtc = old)
+            )
+        )
+
+        val oldIds = dao.rejectedUsageSummaryIdsOlderThan(fresh - 1L, limit = 10)
+        assertEquals(1, oldIds.size)
+        assertEquals(
+            1,
+            dao.deleteRejectedUsageSummariesOlderThanIds(
+                ids = oldIds,
+                cutoffUtc = fresh - 1L
+            )
+        )
+        assertEquals(4, dao.countUsageSummariesBySyncStatus(MobileSyncStatus.PENDING) +
+            dao.countUsageSummariesBySyncStatus(MobileSyncStatus.FAILED) +
+            dao.countUsageSummariesBySyncStatus(MobileSyncStatus.SYNCING) +
+            dao.countUsageSummariesBySyncStatus(MobileSyncStatus.REJECTED))
+        assertEquals(1, dao.countUsageSummariesBySyncStatus(MobileSyncStatus.REJECTED))
+        assertTrue(dao.rejectedUsageSummaryStats(limit = 1).single().reason == "invalid-window")
+    }
+
     private fun event(syncStatus: String = MobileSyncStatus.PENDING) = MobileUsageEventEntity(
         packageName = "com.test",
         eventType = 1,
@@ -145,11 +233,17 @@ class MobileDataDaoRejectedTest {
         syncStatus = syncStatus
     )
 
-    private fun batch(syncStatus: String = MobileSyncStatus.PENDING) = MobileSyncBatchEntity(
-        batchId = java.util.UUID.randomUUID().toString(),
-        entityType = "test",
+    private fun batch(
+        syncStatus: String = MobileSyncStatus.PENDING,
+        entityType: String = "test",
+        batchId: String = java.util.UUID.randomUUID().toString(),
+        createdAtUtc: Long = System.currentTimeMillis()
+    ) = MobileSyncBatchEntity(
+        batchId = batchId,
+        entityType = entityType,
         rowCount = 1,
-        syncStatus = syncStatus
+        syncStatus = syncStatus,
+        createdAtUtc = createdAtUtc
     )
 
     private fun profile(

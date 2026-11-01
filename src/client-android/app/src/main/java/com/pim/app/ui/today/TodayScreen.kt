@@ -176,7 +176,7 @@ internal fun TodayStatusBar(
             )
             FactChip("已确认", state.confirmedCount.toString())
             FactChip("本轮拒绝", state.rejectedCount.toString())
-            FactChip("永久拒绝", state.permanentRejectedCount.toString())
+            FactChip("死信保留", state.permanentRejectedCount.toString())
             state.lastSuccessfulUploadAt?.let { FactChip("上次成功", it) }
             state.nextAttemptAt?.let { FactChip("下次尝试", it) }
             state.generatedAt?.let { FactChip("生成时间", it) }

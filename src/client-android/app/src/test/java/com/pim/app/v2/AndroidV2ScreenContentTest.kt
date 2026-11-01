@@ -8,7 +8,7 @@ import org.junit.Test
 class AndroidV2ScreenContentTest {
     @Test
     fun screensExposeApprovedInformationArchitecture() {
-        assertContains("ui/today/TodayScreen.kt", listOf("syncButtonLabel", "syncButtonShowSpinner", "待传总数", "定位待传", "上传中", "已确认", "本轮拒绝", "永久拒绝", "服务器版本不支持嵌入页面", "打开设置"))
+        assertContains("ui/today/TodayScreen.kt", listOf("syncButtonLabel", "syncButtonShowSpinner", "待传总数", "定位待传", "上传中", "已确认", "本轮拒绝", "死信保留", "服务器版本不支持嵌入页面", "打开设置"))
         assertContains("ui/tracks/TracksScreen.kt", listOf("PimWebViewScreen", "/embed/android/tracks", "viewModel.bridge", "服务器版本不支持嵌入页面", "打开设置", "embedSupported"))
         assertContains(
             "ui/settings/SettingsScreen.kt",

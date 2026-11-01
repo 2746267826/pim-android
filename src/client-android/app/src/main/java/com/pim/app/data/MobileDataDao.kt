@@ -188,7 +188,14 @@ interface MobileDataDao {
         rejectedStatus: String = MobileSyncStatus.REJECTED
     ): Flow<Int>
 
-    @Query("SELECT COUNT(*) FROM mobile_sync_batches WHERE sync_status != :syncedStatus AND sync_status != :rejectedStatus")
+    @Query(
+        """
+        SELECT COUNT(*) FROM mobile_sync_batches
+        WHERE entity_type != 'sync-run'
+          AND sync_status != :syncedStatus
+          AND sync_status != :rejectedStatus
+        """
+    )
     fun pendingSyncBatchCount(
         syncedStatus: String = MobileSyncStatus.SYNCED,
         rejectedStatus: String = MobileSyncStatus.REJECTED
@@ -216,6 +223,95 @@ interface MobileDataDao {
         """
     )
     fun aggregateRejectedCount(rejected: String = MobileSyncStatus.REJECTED): Flow<Int>
+
+    @Query("SELECT COUNT(*) FROM mobile_usage_summaries WHERE sync_status = :syncStatus")
+    suspend fun countUsageSummariesBySyncStatus(
+        syncStatus: String
+    ): Int
+
+    /**
+     * Dead-letter usage summaries grouped by their persisted rejection reason.
+     *
+     * Only aggregate fields are returned: diagnostics need a reason/count summary,
+     * not another copy of package-level usage data.
+     */
+    @Query(
+        """
+        SELECT COALESCE(NULLIF(TRIM(last_error), ''), :fallbackReason) AS reason,
+               COUNT(*) AS count,
+               MIN(updated_at_utc) AS oldestUpdatedAtUtc,
+               MAX(updated_at_utc) AS newestUpdatedAtUtc
+        FROM mobile_usage_summaries
+        WHERE sync_status = :rejectedStatus
+        GROUP BY COALESCE(NULLIF(TRIM(last_error), ''), :fallbackReason)
+        ORDER BY count DESC, reason ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun rejectedUsageSummaryStats(
+        rejectedStatus: String = MobileSyncStatus.REJECTED,
+        fallbackReason: String = "server-rejected",
+        limit: Int = 20
+    ): List<RejectedUsageSummaryStat>
+
+    @Query(
+        """
+        SELECT COALESCE(NULLIF(TRIM(last_error), ''), :fallbackReason) AS reason,
+               COUNT(*) AS count,
+               MIN(updated_at_utc) AS oldestUpdatedAtUtc,
+               MAX(updated_at_utc) AS newestUpdatedAtUtc
+        FROM mobile_usage_summaries
+        WHERE sync_status = :rejectedStatus AND updated_at_utc < :cutoffUtc
+        GROUP BY COALESCE(NULLIF(TRIM(last_error), ''), :fallbackReason)
+        ORDER BY count DESC, reason ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun rejectedUsageSummaryStatsOlderThan(
+        cutoffUtc: Long,
+        rejectedStatus: String = MobileSyncStatus.REJECTED,
+        fallbackReason: String = "server-rejected",
+        limit: Int = 50
+    ): List<RejectedUsageSummaryStat>
+
+    @Query(
+        """
+        SELECT COUNT(*) FROM mobile_usage_summaries
+        WHERE sync_status = :rejectedStatus AND updated_at_utc < :cutoffUtc
+        """
+    )
+    suspend fun countRejectedUsageSummariesOlderThan(
+        cutoffUtc: Long,
+        rejectedStatus: String = MobileSyncStatus.REJECTED
+    ): Int
+
+    @Query(
+        """
+        SELECT id FROM mobile_usage_summaries
+        WHERE sync_status = :rejectedStatus AND updated_at_utc < :cutoffUtc
+        ORDER BY updated_at_utc ASC, id ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun rejectedUsageSummaryIdsOlderThan(
+        cutoffUtc: Long,
+        rejectedStatus: String = MobileSyncStatus.REJECTED,
+        limit: Int = 500
+    ): List<Long>
+
+    @Query(
+        """
+        DELETE FROM mobile_usage_summaries
+        WHERE sync_status = :rejectedStatus
+          AND updated_at_utc < :cutoffUtc
+          AND id IN (:ids)
+        """
+    )
+    suspend fun deleteRejectedUsageSummariesOlderThanIds(
+        ids: List<Long>,
+        cutoffUtc: Long,
+        rejectedStatus: String = MobileSyncStatus.REJECTED
+    ): Int
 
     @Query("DELETE FROM mobile_usage_events WHERE id IN (:ids)")
     suspend fun deleteUsageEventByIds(ids: List<Long>)
@@ -396,13 +492,81 @@ interface MobileDataDao {
         """
         SELECT entity_type AS entityType, row_count AS rowCount,
                started_at_utc AS startedAtUtc, finished_at_utc AS finishedAtUtc,
-               sync_status AS syncStatus, created_at_utc AS createdAtUtc
+               sync_status AS syncStatus, created_at_utc AS createdAtUtc,
+               CASE WHEN entity_type = 'sync-run' THEN last_error ELSE NULL END AS failureReason
         FROM mobile_sync_batches
         ORDER BY created_at_utc DESC
         LIMIT :limit
         """
     )
     suspend fun diagnosticSyncHistory(limit: Int = 100): List<DiagnosticSyncHistoryRow>
+
+    @Query(
+        """
+        UPDATE mobile_sync_batches
+        SET row_count = :rowCount,
+            finished_at_utc = :finishedAtUtc,
+            sync_status = :syncStatus,
+            last_error = :lastError,
+            updated_at_utc = :finishedAtUtc
+        WHERE id = :id
+        """
+    )
+    suspend fun finishSyncHistory(
+        id: Long,
+        rowCount: Int,
+        finishedAtUtc: Long,
+        syncStatus: String,
+        lastError: String? = null
+    )
+
+    @Query(
+        """
+        UPDATE mobile_sync_batches
+        SET finished_at_utc = :nowUtc,
+            sync_status = :failedStatus,
+            last_error = :reason,
+            updated_at_utc = :nowUtc
+        WHERE entity_type = :entityType
+          AND sync_status IN (:inProgressStatus, :pendingStatus)
+        """
+    )
+    suspend fun failInterruptedSyncHistory(
+        nowUtc: Long,
+        entityType: String,
+        reason: String,
+        failedStatus: String = MobileSyncStatus.FAILED,
+        inProgressStatus: String = MobileSyncStatus.SYNCING,
+        pendingStatus: String = MobileSyncStatus.PENDING
+    ): Int
+
+    @Query(
+        """
+        DELETE FROM mobile_sync_batches
+        WHERE entity_type = :entityType AND created_at_utc < :cutoffUtc
+        """
+    )
+    suspend fun deleteSyncHistoryOlderThan(
+        cutoffUtc: Long,
+        entityType: String
+    ): Int
+
+    @Query(
+        """
+        DELETE FROM mobile_sync_batches
+        WHERE entity_type = :entityType
+          AND id NOT IN (
+            SELECT id FROM mobile_sync_batches
+            WHERE entity_type = :entityType
+            ORDER BY created_at_utc DESC, id DESC
+            LIMIT :keepNewest
+        )
+        """
+    )
+    suspend fun trimSyncHistory(
+        keepNewest: Int,
+        entityType: String
+    ): Int
 
     @Query(
         """

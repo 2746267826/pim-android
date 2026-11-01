@@ -20,7 +20,15 @@ data class DiagnosticSyncHistoryRow(
     val startedAtUtc: Long?,
     val finishedAtUtc: Long?,
     val syncStatus: String,
-    val createdAtUtc: Long
+    val createdAtUtc: Long,
+    val failureReason: String? = null
+)
+
+data class RejectedUsageSummaryStat(
+    val reason: String,
+    val count: Long,
+    val oldestUpdatedAtUtc: Long,
+    val newestUpdatedAtUtc: Long
 )
 
 data class DiagnosticLocationRow(

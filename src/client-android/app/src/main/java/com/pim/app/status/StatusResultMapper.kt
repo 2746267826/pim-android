@@ -1,6 +1,7 @@
 package com.pim.app.status
 
 import androidx.work.WorkInfo
+import com.pim.app.mobile.diagnostics.UsageTerminalLifecycleSnapshot
 import com.pim.app.mobile.sync.MobileSyncOutcome
 import com.pim.app.mobile.sync.MobileSyncState
 
@@ -84,6 +85,7 @@ object StatusResultMapper {
         syncState: MobileSyncState,
         workInfos: StatusWorkInfos,
         permanentRejected: Int,
+        terminalUsage: UsageTerminalLifecycleSnapshot = UsageTerminalLifecycleSnapshot(),
         networkAvailability: NetworkAvailability,
         probeResult: ConnectionProbeResult?,
         justAccepted: Boolean
@@ -116,6 +118,7 @@ object StatusResultMapper {
             pendingTotal = snapshot.queues.pendingUploadTotal,
             acceptedCount = syncState.acceptedCount,
             permanentRejectedCount = permanentRejected,
+            terminalUsage = terminalUsage,
             rejectedCount = syncState.rejectedCount,
             lastSuccessfulUploadAt = syncState.lastSuccessfulUploadAt,
             lastAttemptedUploadAt = syncState.lastAttemptedUploadAt,

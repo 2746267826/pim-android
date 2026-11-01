@@ -639,6 +639,42 @@ data class EventResponsePagedResultApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.HabitCadence`（response）。 */
+/**
+ * 契约枚举 `HabitCadence`（整数，取值：0, 1, 2, 3）。
+ * 契约没有给出成员名，臆造名字等于编造接口，因此这里保留契约类型名但按 Int 处理。
+ */
+typealias HabitCadence = Int
+
+/** 契约 `components.schemas.HabitRoutineDto`（response）。 */
+@Serializable
+data class HabitRoutineDto(
+    val cadence: HabitCadence,
+    val description: String? = null,
+    val id: String,
+    val source: String,
+    val status: String,
+    val title: String,
+)
+
+/** 契约 `components.schemas.HabitRoutineDtoApiResponse`（response）。 */
+@Serializable
+data class HabitRoutineDtoApiResponse(
+    val code: Int,
+    val data: HabitRoutineDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.HabitRoutineDtoIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class HabitRoutineDtoIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<HabitRoutineDto>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
 /** 契约 `components.schemas.IcsImportForm`（request）。 */
 @Serializable
 data class IcsImportForm(

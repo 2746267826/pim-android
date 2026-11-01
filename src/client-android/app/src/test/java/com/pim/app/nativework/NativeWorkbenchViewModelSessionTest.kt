@@ -1,6 +1,9 @@
 package com.pim.app.nativework
 
 import com.pim.app.nativework.quicknotes.LegacyQuickNoteRepository
+import com.pim.core.contract.HabitRoutineDto
+import com.pim.core.contract.HabitRoutineDtoApiResponse
+import com.pim.core.contract.HabitRoutineDtoIReadOnlyListApiResponse
 import com.pim.core.contract.OperationConfirmationDto
 import com.pim.core.contract.OperationConfirmationDtoApiResponse
 import com.pim.core.contract.OperationConfirmationDtoIReadOnlyListApiResponse
@@ -18,6 +21,7 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
@@ -154,6 +158,74 @@ class NativeWorkbenchViewModelSessionTest {
         }
     }
 
+    @Test
+    fun delayedHabitArchiveCannotUpdateStateAfterOwnerSwitch() = runTest {
+        val mainDispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(mainDispatcher)
+        try {
+            var archiveResponse: Continuation<Any?>? = null
+            var archiveCalls = 0
+            val ownerAApi = Proxy.newProxyInstance(
+                ApiService::class.java.classLoader,
+                arrayOf(ApiService::class.java),
+            ) { _, method, args ->
+                when (method.name) {
+                    "getHabits" -> HabitRoutineDtoIReadOnlyListApiResponse(
+                        code = 200,
+                        data = listOf(habit()),
+                        message = "ok",
+                        timestamp = "now",
+                    )
+                    "archiveHabit" -> {
+                        archiveCalls += 1
+                        archiveResponse = args.last() as Continuation<Any?>
+                        COROUTINE_SUSPENDED
+                    }
+                    else -> error("Unexpected owner-A call ${method.name}")
+                }
+            } as ApiService
+            val transport = ControllableTransport(
+                current = session(ownerA, generation = 1L),
+                api = ownerAApi,
+            )
+            val unusedApi = Proxy.newProxyInstance(
+                ApiService::class.java.classLoader,
+                arrayOf(ApiService::class.java),
+            ) { _, _, _ -> error("Template API must not be called") } as ApiService
+            val viewModel = NativeWorkbenchViewModel(
+                repository = NativeWorkbenchRepository(unusedApi),
+                legacyQuickNotes = LegacyQuickNoteRepository(unusedApi),
+                transport = transport,
+            )
+
+            viewModel.selectSection(NativeWorkbenchSection.Habits)
+            runCurrent()
+            viewModel.archiveHabit(viewModel.state.value.habits.single())
+            runCurrent()
+            assertTrue(archiveResponse != null)
+
+            transport.current = session(ownerB, generation = 2L)
+            archiveResponse!!.resumeWith(
+                Result.success(
+                    HabitRoutineDtoApiResponse(
+                        code = 200,
+                        data = habit(status = "archived"),
+                        message = "ok",
+                        timestamp = "now",
+                    )
+                )
+            )
+            runCurrent()
+
+            assertTrue(viewModel.state.value.habits.isEmpty())
+            assertTrue(viewModel.state.value.feedback == null)
+            assertTrue(viewModel.state.value.error.orEmpty().contains("账号或服务器已切换"))
+            assertEquals(1, archiveCalls)
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
     private fun session(ownerId: String, generation: Long) = NativeWorkbenchSession(
         binding = BoundUploadSession("https://pim.example", ownerId),
         identityGeneration = generation,
@@ -190,6 +262,15 @@ class NativeWorkbenchViewModelSessionTest {
         source = "test",
         status = 0,
         summary = summary,
+    )
+
+    private fun habit(status: String = "active") = HabitRoutineDto(
+        cadence = 1,
+        description = null,
+        id = "habit-a",
+        source = "test",
+        status = status,
+        title = "Owner A habit",
     )
 
     private class ControllableTransport(

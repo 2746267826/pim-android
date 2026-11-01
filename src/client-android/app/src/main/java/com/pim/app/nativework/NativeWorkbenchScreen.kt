@@ -104,6 +104,7 @@ fun NativeWorkbenchScreen(
     var showQuickNoteDetail by remember { mutableStateOf(false) }
     var reminderToSnooze by remember { mutableStateOf<NativeReminderAction?>(null) }
     var confirmationToReject by remember { mutableStateOf<NativeOperationConfirmation?>(null) }
+    var habitToArchive by remember { mutableStateOf<NativeHabit?>(null) }
 
     Column(modifier.fillMaxSize()) {
         WorkbenchHeader(
@@ -170,6 +171,10 @@ fun NativeWorkbenchScreen(
                 onOpen = viewModel::openConfirmation,
                 onReject = { confirmationToReject = it },
                 onCloseDetail = viewModel::closeConfirmationDetail,
+            )
+            NativeWorkbenchSection.Habits -> HabitsNativeContent(
+                state = state,
+                onArchive = { habitToArchive = it },
             )
             NativeWorkbenchSection.Devices -> DevicesNativeContent(
                 state = state,
@@ -412,6 +417,29 @@ fun NativeWorkbenchScreen(
             },
             dismissButton = {
                 TextButton(onClick = { confirmationToReject = null }) { Text("取消") }
+            },
+        )
+    }
+    habitToArchive?.let { habit ->
+        AlertDialog(
+            onDismissRequest = { habitToArchive = null },
+            title = { Text("归档习惯？") },
+            text = {
+                Text("将请求服务端归档「${habit.title}」。归档结果以服务端响应为准。")
+            },
+            confirmButton = {
+                TextButton(
+                    onClick = {
+                        habitToArchive = null
+                        viewModel.archiveHabit(habit)
+                    },
+                    enabled = state.busyAction == null,
+                ) {
+                    Text("归档")
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { habitToArchive = null }) { Text("取消") }
             },
         )
     }
@@ -868,6 +896,49 @@ private fun ConfirmationsNativeContent(
         item {
             Text(
                 "为避免泄露私密负载或误执行，原始预览不会显示；确认执行暂由服务端完整页面处理。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+    }
+}
+
+@Composable
+private fun HabitsNativeContent(
+    state: NativeWorkbenchUiState,
+    onArchive: (NativeHabit) -> Unit,
+) {
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item { SectionTitle("习惯", "${state.habits.size} 条") }
+        if (state.habits.isEmpty()) item { EmptyCard("暂无习惯") }
+        items(state.habits, key = { it.id }) { habit ->
+            OutlinedCard(Modifier.fillMaxWidth()) {
+                Row(
+                    Modifier.fillMaxWidth().padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                ) {
+                    Column(Modifier.weight(1f), verticalArrangement = Arrangement.spacedBy(4.dp)) {
+                        Text(habit.title, style = MaterialTheme.typography.titleSmall)
+                        Text(
+                            "${habitCadenceLabel(habit.cadence)} · ${habit.status}",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    }
+                    TextButton(
+                        onClick = { onArchive(habit) },
+                        enabled = state.busyAction == null,
+                    ) { Text("归档") }
+                }
+            }
+        }
+        item {
+            Text(
+                "原生页提供服务端列表与明确确认的归档；创建、编辑和打卡记录仍由服务端完整页面处理。",
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )

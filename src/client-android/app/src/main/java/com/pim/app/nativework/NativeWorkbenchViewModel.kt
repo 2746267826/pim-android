@@ -32,6 +32,7 @@ enum class NativeWorkbenchSection(val label: String) {
     Calendar("日历"),
     Reminders("提醒"),
     Confirmations("确认"),
+    Habits("习惯"),
     Devices("设备"),
     Knowledge("知识分类"),
     Diagnostics("诊断"),
@@ -66,6 +67,7 @@ data class NativeWorkbenchUiState(
     val search: String = "",
     val taskBooksError: String? = null,
     val reminders: List<NativeReminderAction> = emptyList(),
+    val habits: List<NativeHabit> = emptyList(),
     val confirmations: List<NativeOperationConfirmation> = emptyList(),
     val selectedConfirmationId: String? = null,
     val confirmationDetail: NativeOperationConfirmation? = null,
@@ -240,6 +242,10 @@ class NativeWorkbenchViewModel @Inject constructor(
                                 loadingConfirmationDetail = false,
                             )
                         }
+                    }
+                    NativeWorkbenchSection.Habits -> {
+                        val habits = binding.repository.loadHabits()
+                        updateIfCurrent(binding) { it.copy(habits = habits) }
                     }
                 }
                 if (sessionGuard.canApply(binding.session)) {
@@ -580,6 +586,19 @@ class NativeWorkbenchViewModel @Inject constructor(
         }
     }
 
+    fun archiveHabit(habit: NativeHabit) {
+        if (_state.value.habits.none { it.id == habit.id }) return
+        mutate("归档习惯") { binding ->
+            val archived = binding.repository.archiveHabit(habit.id)
+            updateIfCurrent(binding) {
+                it.copy(habits = it.habits.map { current ->
+                    if (current.id == archived.id) archived else current
+                })
+            }
+            "习惯已归档"
+        }
+    }
+
     private fun loadTasks(showLoading: Boolean = true) {
         refreshJob?.cancel()
         val binding = requireLoadedBindingOrShowError() ?: return
@@ -791,6 +810,12 @@ class NativeWorkbenchViewModel @Inject constructor(
                             loadingConfirmationDetail = false,
                             loading = false,
                         )
+                    }
+                }
+                NativeWorkbenchSection.Habits -> {
+                    val habits = binding.repository.loadHabits()
+                    updateIfCurrent(binding) {
+                        it.copy(habits = habits, loading = false)
                     }
                 }
             }

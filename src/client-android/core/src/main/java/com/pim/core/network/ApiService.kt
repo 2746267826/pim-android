@@ -30,6 +30,8 @@ import com.pim.core.contract.AuthResponseApiResponse
 import com.pim.core.contract.AppKnowledgeAppDtoListApiResponse
 import com.pim.core.contract.AppKnowledgeContextDtoApiResponse
 import com.pim.core.contract.AppKnowledgeContextDtoListApiResponse
+import com.pim.core.contract.HabitRoutineDtoApiResponse
+import com.pim.core.contract.HabitRoutineDtoIReadOnlyListApiResponse
 import com.pim.core.contract.CalendarOperationResultApiResponse
 import com.pim.core.contract.CalendarResponseApiResponse
 import com.pim.core.contract.CalendarResponseListApiResponse
@@ -540,6 +542,12 @@ interface ApiService {
         @Path("id") id: String,
         @Query("scheduledAt") scheduledAt: String
     ): ReminderResponseApiResponse
+
+    @GET("calendar/habits")
+    suspend fun getHabits(): HabitRoutineDtoIReadOnlyListApiResponse
+
+    @POST("calendar/habits/{id}/archive")
+    suspend fun archiveHabit(@Path("id") id: String): HabitRoutineDtoApiResponse
 
     @GET("status")
     suspend fun getSystemStatus(): SystemStatusDetailDtoApiResponse

@@ -462,6 +462,14 @@ class NativeWorkbenchRepository @Inject constructor(
         )
     }
 
+    suspend fun loadHabits(): List<NativeHabit> =
+        requireData(api.getHabits().data, "服务端未返回习惯列表", "读取习惯")
+            .map(::nativeHabit)
+
+    suspend fun archiveHabit(id: String): NativeHabit =
+        requireData(api.archiveHabit(id).data, "习惯不存在或已失效", "归档习惯")
+            .let(::nativeHabit)
+
     private fun <T> requireData(value: T?, message: String, operation: String): T =
         value ?: throw NativeWorkbenchRequestException(
             message.trim().takeIf { it.isNotEmpty() }

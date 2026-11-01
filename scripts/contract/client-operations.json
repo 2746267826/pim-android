@@ -100,6 +100,8 @@
     {"apiService": "selectNoteDerivedVersion", "method": "POST", "path": "/api/v1/native-notes/derived-artifacts/{artifactId}/select"},
     {"apiService": "getPendingOperationConfirmations", "method": "GET", "path": "/api/v1/operations/confirmations/pending"},
     {"apiService": "getOperationConfirmation", "method": "GET", "path": "/api/v1/operations/confirmations/{id}"},
-    {"apiService": "rejectOperationConfirmation", "method": "POST", "path": "/api/v1/operations/confirmations/{id}/reject"}
+    {"apiService": "rejectOperationConfirmation", "method": "POST", "path": "/api/v1/operations/confirmations/{id}/reject"},
+    {"apiService": "getHabits", "method": "GET", "path": "/api/v1/calendar/habits"},
+    {"apiService": "archiveHabit", "method": "POST", "path": "/api/v1/calendar/habits/{id}/archive"}
   ]
 }

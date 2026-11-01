@@ -541,7 +541,10 @@ class ForegroundLocationService : Service() {
             policyEngine!!.reduce(
                 LocationPolicyInput(
                     nowMillis = System.currentTimeMillis(),
-                    collectionEnabled = settings.continuousCollectionEnabled
+                    collectionEnabled = settings.continuousCollectionEnabled,
+                    nowElapsedRealtimeMillis = SystemClock.elapsedRealtime(),
+                    motionSignalObservedAtElapsedRealtimeMillis =
+                        motionSignalRepository.status.value.observedAtElapsedRealtimeMillis
                 )
             )
         )
@@ -696,6 +699,7 @@ class ForegroundLocationService : Service() {
     private fun recomputePolicyDecision(): PolicyDecision {
         val now = System.currentTimeMillis()
         val settings = trackingSettingsStore.read()
+        val motionStatus = motionSignalRepository.status.value
         // 本轮循环没有新 fix 入库（仅 30s 兜底或运动信号唤醒）：GPS 速度未知，
         // 按 null 观察状态机，让 GPS 失锁/停车无 fix 时高速档也能按设计回落；
         // 有新 fix 时用其最新 GPS 速度。
@@ -714,8 +718,11 @@ class ForegroundLocationService : Service() {
                     scheduleWindowRepository.snapshotForCurrentServer().windows,
                     now
                 ),
-                motionSignal = motionSignalRepository.status.value.signal,
-                speedMetersPerSecond = speed
+                motionSignal = motionStatus.signal,
+                speedMetersPerSecond = speed,
+                nowElapsedRealtimeMillis = SystemClock.elapsedRealtime(),
+                motionSignalObservedAtElapsedRealtimeMillis =
+                    motionStatus.observedAtElapsedRealtimeMillis
             )
         ) ?: currentDecision
     }

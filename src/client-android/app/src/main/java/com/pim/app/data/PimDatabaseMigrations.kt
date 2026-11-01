@@ -100,5 +100,26 @@ object PimDatabaseMigrations {
         }
     }
 
-    val ALL = arrayOf(MIGRATION_2_3, MIGRATION_3_4)
+    /**
+     * #60: make repeated dropped-location callbacks idempotent from schema v5 onward.
+     *
+     * Pre-v5 rows lack the fix identity fields needed for a safe backfill. They are
+     * deliberately preserved with fix_key = NULL: historical counts remain the raw
+     * ledger and must not be presented as retroactively deduplicated.
+     */
+    val MIGRATION_4_5 = object : Migration(4, 5) {
+        override fun migrate(db: SupportSQLiteDatabase) {
+            db.execSQL(
+                "ALTER TABLE mobile_location_dropped_diagnostics ADD COLUMN fix_key TEXT"
+            )
+            db.execSQL(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS index_mobile_location_dropped_diagnostics_fix_key
+                ON mobile_location_dropped_diagnostics(fix_key)
+                """.trimIndent()
+            )
+        }
+    }
+
+    val ALL = arrayOf(MIGRATION_2_3, MIGRATION_3_4, MIGRATION_4_5)
 }

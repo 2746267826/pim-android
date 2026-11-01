@@ -29,8 +29,11 @@ interface MobileDataDao {
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertLocationPoint(point: MobileLocationPointEntity): Long
 
-    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
     suspend fun insertDroppedLocationDiagnostic(diagnostic: MobileLocationDroppedDiagnosticEntity): Long
+
+    @Query("SELECT id FROM mobile_location_dropped_diagnostics WHERE fix_key = :fixKey LIMIT 1")
+    suspend fun findDroppedLocationDiagnosticIdByFixKey(fixKey: String): Long?
 
     @Insert(onConflict = OnConflictStrategy.REPLACE)
     suspend fun insertPolicyTransition(transition: MobileLocationPolicyTransitionEntity): Long
@@ -639,6 +642,18 @@ interface MobileDataDao {
         afterId: Long,
         pageSize: Int
     ): List<DiagnosticDroppedDetailRow>
+
+    @Query(
+        """
+        SELECT
+            COUNT(*) AS totalRowCount,
+            COALESCE(SUM(CASE WHEN fix_key IS NOT NULL THEN 1 ELSE 0 END), 0) AS keyedRowCount,
+            COALESCE(SUM(CASE WHEN fix_key IS NULL THEN 1 ELSE 0 END), 0) AS legacyUnkeyedRowCount,
+            COUNT(DISTINCT fix_key) AS distinctKeyedFixCount
+        FROM mobile_location_dropped_diagnostics
+        """
+    )
+    suspend fun droppedDiagnosticStorageStats(): DroppedDiagnosticStorageStats
 
     @Query("DELETE FROM mobile_logs")
     suspend fun deleteAllMobileLogs(): Int

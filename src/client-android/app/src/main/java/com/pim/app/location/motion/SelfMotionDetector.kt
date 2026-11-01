@@ -13,7 +13,8 @@ import kotlin.math.sqrt
 
 /**
  * 自研运动检测传感器薄包装：把加速度计/步数/重大运动传感器事件喂给
- * [SelfMotionEvaluator]，信号变化时通过 [onSignal] 通知。不依赖 GMS。
+ * [SelfMotionEvaluator]，每个完整评估窗口通过 [onSignalSample] 发布信号与
+ * 单调时钟心跳。不依赖 GMS。
  *
  * - 加速度计 SENSOR_DELAY_GAME（≈20Hz），60 样本 ≈3s 一个窗口
  * - 步数传感器记录全局累计值，由 evaluator 记基线算增量
@@ -25,21 +26,21 @@ class SelfMotionDetector(
     private val evaluator: SelfMotionEvaluator = SelfMotionEvaluator(
         nowElapsedRealtimeMillis = { SystemClock.elapsedRealtime() }
     ),
-    private val onSignal: (MotionSignal) -> Unit = {},
+    private val onSignalSample: (MotionSignal, Long) -> Unit = { _, _ -> },
+    private val nowElapsedRealtimeMillis: () -> Long = { SystemClock.elapsedRealtime() },
     sensorManager: SensorManager =
         context.getSystemService(Context.SENSOR_SERVICE) as SensorManager
 ) : SensorEventListener {
 
     private val sensorManager = sensorManager
 
-    private var lastSignal = MotionSignal.Unknown
     private var started = false
 
     private val triggerListener = object : TriggerEventListener() {
         override fun onTrigger(event: TriggerEvent?) {
             if (event != null) {
                 evaluator.significantMotionTriggered()
-                notifyIfChanged()
+                publishSample()
             }
             rearmSignificantMotion()
         }
@@ -60,7 +61,6 @@ class SelfMotionDetector(
         started = true
         if (freshStart) {
             evaluator.reset()
-            lastSignal = MotionSignal.Unknown
         }
         sensorManager.getDefaultSensor(Sensor.TYPE_ACCELEROMETER)?.let {
             sensorManager.registerListener(this, it, SensorManager.SENSOR_DELAY_GAME)
@@ -94,12 +94,13 @@ class SelfMotionDetector(
                 val x = event.values[0].toDouble()
                 val y = event.values[1].toDouble()
                 val z = event.values[2].toDouble()
-                evaluator.accelMagnitude(sqrt(x * x + y * y + z * z))
-                notifyIfChanged()
+                if (evaluator.accelMagnitude(sqrt(x * x + y * y + z * z))) {
+                    publishSample()
+                }
             }
             Sensor.TYPE_STEP_COUNTER -> {
                 evaluator.stepCount(event.values[0].toLong())
-                notifyIfChanged()
+                publishSample()
             }
         }
     }
@@ -114,11 +115,8 @@ class SelfMotionDetector(
         }
     }
 
-    private fun notifyIfChanged() {
+    private fun publishSample() {
         val signal = evaluator.currentSignal()
-        if (signal != lastSignal) {
-            lastSignal = signal
-            onSignal(signal)
-        }
+        onSignalSample(signal, nowElapsedRealtimeMillis())
     }
 }

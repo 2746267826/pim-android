@@ -11,6 +11,7 @@ import com.pim.app.status.ConnectionProbeStore
 import com.pim.app.status.PermissionStatusSnapshot
 import java.io.File
 import java.io.IOException
+import java.io.InputStream
 import java.nio.file.Files
 import java.util.zip.ZipFile
 import kotlinx.coroutines.Dispatchers
@@ -276,6 +277,74 @@ class DiagnosticExportStreamingBoundsTest {
         assertEquals(37L, bounded.bytesRead)
         assertEquals(37L, produced)
         assertTrue(bounded.reachedLimit)
+    }
+
+    @Test
+    fun fullSegmentRawSourceNeverReadsBeyondSnapshotLimit() {
+        assertBoundedBufferedReadStopsAtRawStream(limit = 4_096L)
+    }
+
+    @Test
+    fun headSegmentRawSourceNeverReadsBeyondSampleLimit() {
+        assertBoundedBufferedReadStopsAtRawStream(limit = 73L)
+    }
+
+    @Test
+    fun tailSegmentRawSourceNeverReadsBeyondTailLimit() {
+        assertBoundedBufferedReadStopsAtRawStream(limit = 1_003L)
+    }
+
+    private fun assertBoundedBufferedReadStopsAtRawStream(limit: Long) {
+        val sourceSize = (limit * 4L).coerceAtMost(Int.MAX_VALUE.toLong()).toInt()
+        val counting = CountingInputStream(
+            source = ByteArray(sourceSize) { ('a'.code + it % 26).toByte() }
+                .inputStream()
+        )
+        val boundedBuffered = boundedBufferedInput(counting, limit)
+        val target = ByteArray(257)
+        var consumed = 0L
+        boundedBuffered.use { stream ->
+            while (true) {
+                val read = stream.read(target)
+                if (read < 0) break
+                consumed += read
+            }
+        }
+
+        assertEquals(limit, consumed)
+        assertTrue(counting.readRequests > 0)
+        assertTrue(counting.maxReadRequestLength <= limit)
+        assertTrue(counting.bytesRead <= limit)
+        assertEquals(limit, counting.bytesRead)
+        assertEquals(limit, boundedBuffered.bytesRead)
+    }
+
+    private class CountingInputStream(
+        private val source: InputStream
+    ) : InputStream() {
+        var bytesRead = 0L
+            private set
+        var readRequests = 0
+            private set
+        var maxReadRequestLength = 0L
+            private set
+
+        override fun read(): Int {
+            readRequests++
+            maxReadRequestLength = maxOf(maxReadRequestLength, 1L)
+            return source.read().also { if (it >= 0) bytesRead++ }
+        }
+
+        override fun read(buffer: ByteArray, offset: Int, length: Int): Int {
+            if (length == 0) return 0
+            readRequests++
+            maxReadRequestLength = maxOf(maxReadRequestLength, length.toLong())
+            return source.read(buffer, offset, length).also {
+                if (it > 0) bytesRead += it
+            }
+        }
+
+        override fun close() = source.close()
     }
 
     @Test

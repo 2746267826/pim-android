@@ -629,7 +629,7 @@ class DiagnosticExportRepository internal constructor(
                 val result = writeLogSegment(
                     zos = zos,
                     entryName = entryName,
-                    input = BufferedInputStream(file.inputStream()),
+                    input = file.inputStream(),
                     readLimit = originalBytes,
                     trailingOmissionReason = "snapshot-boundary"
                 )
@@ -655,7 +655,7 @@ class DiagnosticExportRepository internal constructor(
                 val head = writeLogSegment(
                     zos = zos,
                     entryName = entryName,
-                    input = BufferedInputStream(file.inputStream()),
+                    input = file.inputStream(),
                     readLimit = headBudget,
                     trailingOmissionReason = "sample-boundary"
                 )
@@ -694,11 +694,9 @@ class DiagnosticExportRepository internal constructor(
                             originalBytes - alignedStart,
                             tailReadBudget
                         )
-                        val tailInput = BufferedInputStream(
-                            java.io.FileInputStream(file).apply {
-                                channel.position(alignedStart)
-                            }
-                        )
+                        val tailInput = java.io.FileInputStream(file).apply {
+                            channel.position(alignedStart)
+                        }
                         val tail = writeLogSegment(
                             zos = zos,
                             entryName = entryName,
@@ -781,7 +779,9 @@ class DiagnosticExportRepository internal constructor(
         var oversizedLine = false
         val reasons = linkedSetOf<String>()
         val lineBuffer = ByteArrayOutputStream(minOf(maxLogLineBytes, 8192))
-        val boundedInput = BoundedInputStream(input, readLimit)
+        // Bound the raw source before buffering so BufferedInputStream cannot
+        // prefetch bytes beyond the caller's snapshot/read allocation.
+        val boundedInput = boundedBufferedInput(input, readLimit)
 
         fun writeText(text: String) {
             val encoded = text.toByteArray(Charsets.UTF_8)
@@ -1569,4 +1569,18 @@ internal class BoundedInputStream(
     }
 
     override fun close() = delegate.close()
+}
+
+internal fun boundedBufferedInput(
+    input: InputStream,
+    readLimit: Long
+): BoundedBufferedInput = BoundedBufferedInput(input, readLimit)
+
+internal class BoundedBufferedInput(
+    input: InputStream,
+    readLimit: Long
+) : BufferedInputStream(BoundedInputStream(input, readLimit)) {
+    private val boundedSource = `in` as BoundedInputStream
+
+    val bytesRead: Long get() = boundedSource.bytesRead
 }

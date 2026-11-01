@@ -9,7 +9,8 @@
 #   3) 契约快照变了、生成物没重新生成（加了字段）→ 红；
 #   4) 契约快照变了、生成物没重新生成（加了 operation 的字段依赖）→ 红；
 #   5) 生成物缺失 → 红；
-#   6) operation 清单里写了契约中不存在的端点 → 生成器拒绝产出（配置错误，非静默变绿）。
+#   6) operation 清单里写了契约中不存在的端点 → 生成器拒绝产出（配置错误，非静默变绿）；
+#   7) nullable 单引用 allOf 包装可生成；多成员/兄弟约束的复杂 allOf 继续 fail-closed。
 #
 # 用法：
 #   bash scripts/ci/test-contract-kotlin.sh
@@ -49,6 +50,15 @@ make_fixture() { # <名称> -> 打印路径
 run_check() { # <fixture> -> 打印 rc
   local dir="$1"
   bash "$dir/scripts/ci/check-contract-kotlin.sh" >"$dir/check.log" 2>&1
+  printf '%s' "$?"
+}
+
+run_generate() { # <fixture> <out-dir> -> 打印 rc
+  local dir="$1" out="$2"
+  python3 "$dir/scripts/contract/generate-kotlin.py" \
+    --contract "$dir/contract/openapi.json" \
+    --operations "$dir/scripts/contract/client-operations.json" \
+    --out-dir "$out" >"$dir/generate.log" 2>&1
   printf '%s' "$?"
 }
 
@@ -134,8 +144,76 @@ PY
 rc="$(run_check "$F")"
 expect_rc 4 "$rc" "编造的 operation 让生成器直接报错（不是静默产出半张契约）" "$F"
 
-# --- 7) 门禁确实接进了必需检查链（否则「红了也没人拦」） --------------------
-log "[7] CI 必需检查链接线"
+# --- 7) nullable single-ref allOf 包装接受，复杂 allOf fail-closed -------------
+log "[7] nullable 单引用 allOf：包装元数据接受，复杂形状拒绝"
+F="$(make_fixture nullable-allof)"
+python3 - "$F/scripts/contract/client-operations.json" <<'PY'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+d = json.loads(p.read_text(encoding="utf-8"))
+d["operations"].append({
+    "apiService": "reprocessNoteAsrTask",
+    "method": "POST",
+    "path": "/api/v1/native-notes/asr-tasks/{sourceTaskId}/reprocess",
+})
+p.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+PY
+OUT="$TMP_ROOT/nullable-allof-out"
+rc="$(run_generate "$F" "$OUT")"
+if [ "$rc" = 0 ] && python3 - "$OUT/$GENERATED_REL" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+consent = "    val consent: AiAsrDestinationConsent? = null,"
+destination = "    val destination: AiAsrDestinationConsent? = null,"
+raise SystemExit(0 if text.count(consent) == 3 and text.count(destination) == 1 else 1)
+PY
+then
+  ok "单引用 nullable 包装生成 AiAsrDestinationConsent?，不把共享组件改成 nullable"
+else
+  bad "单引用 nullable 包装未按预期生成（generator rc=$rc）"
+  sed -n '1,40p' "$F/generate.log" | sed 's/^/      | /'
+fi
+
+F="$(make_fixture allof-multi-member)"
+python3 - "$F/contract/openapi.json" <<'PY'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+d = json.loads(p.read_text(encoding="utf-8"))
+prop = d["components"]["schemas"]["StartNoteAsrRequest"]["properties"]["consent"]
+prop["allOf"].append({"$ref": "#/components/schemas/AiAsrDestinationConsent"})
+p.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+PY
+OUT="$TMP_ROOT/allof-multi-member-out"
+rc="$(run_generate "$F" "$OUT")"
+if [ "$rc" = 1 ] && grep -q '复杂 allOf' "$F/generate.log"; then
+  ok "多成员 allOf 被生成器拒绝（rc=1，未产出半张契约）"
+else
+  bad "多成员 allOf 未 fail-closed（generator rc=$rc）"
+  sed -n '1,40p' "$F/generate.log" | sed 's/^/      | /'
+fi
+
+F="$(make_fixture allof-ref-sibling)"
+python3 - "$F/contract/openapi.json" <<'PY'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+d = json.loads(p.read_text(encoding="utf-8"))
+prop = d["components"]["schemas"]["StartNoteAsrRequest"]["properties"]["consent"]
+prop["allOf"][0]["maxProperties"] = 0
+p.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+PY
+OUT="$TMP_ROOT/allof-ref-sibling-out"
+rc="$(run_generate "$F" "$OUT")"
+if [ "$rc" = 1 ] && grep -q '复杂 allOf' "$F/generate.log"; then
+  ok "\$ref 兄弟约束被生成器拒绝（rc=1，未丢约束）"
+else
+  bad "\$ref 兄弟约束未 fail-closed（generator rc=$rc）"
+  sed -n '1,40p' "$F/generate.log" | sed 's/^/      | /'
+fi
+
+# --- 8) 门禁确实接进了必需检查链（否则「红了也没人拦」） --------------------
+log "[8] CI 必需检查链接线"
 if ! command -v python3 >/dev/null 2>&1 || ! python3 -c "import yaml" >/dev/null 2>&1; then
   bad "需要 PyYAML 才能校验 CI 接线（本项无法执行，不算通过）"
 else

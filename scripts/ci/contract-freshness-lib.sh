@@ -154,10 +154,25 @@ PY
 
 # --- raw 字节抓取（不带 Auth、不跟随重定向） --------------------------------
 
+# raw.githubusercontent.com 不可达时，只允许回退到 api.github.com 的 raw-media
+# 端点，并固定使用同 40 位 SHA 与同 content path。自定义 raw base 不触发回退，
+# 避免离线测试或自定义来源意外访问公网。
 pim_contract_fetch_raw() { # <raw_base> <repo> <sha> <source_path> <out_file> -> rc 0/3
-  local base="$1" repo="$2" sha="$3" spath="$4" out="$5" url
+  local base="$1" repo="$2" sha="$3" spath="$4" out="$5" url media_url
   url="$base/$repo/$sha/$spath"
-  if ! curl -fsS --max-redirs 0 --connect-timeout 20 --max-time 180 "$url" -o "$out"; then
+  if curl -fsS --max-redirs 0 --connect-timeout 20 --max-time 180 "$url" -o "$out"; then
+    return 0
+  fi
+  [ "$base" = "$PIM_CONTRACT_DEFAULT_RAW_BASE" ] || {
+    pim_contract_err "无法从 configured raw source 获取字节：$(pim_contract_redact_url "$url")"
+    return 3
+  }
+  media_url="https://api.github.com/repos/$repo/contents/$spath?ref=$sha"
+  pim_contract_warn "raw.githubusercontent.com 不可达，尝试 api.github.com raw-media fallback（同 SHA 同 path）"
+  if ! curl -fsS --max-redirs 0 --connect-timeout 20 --max-time 180 \
+       -H "Accept: application/vnd.github.raw+json" \
+       -H "X-GitHub-Api-Version: 2022-11-28" \
+       "$media_url" -o "$out"; then
     pim_contract_err "无法从权威源获取字节：$(pim_contract_redact_url "$url")"
     return 3
   fi

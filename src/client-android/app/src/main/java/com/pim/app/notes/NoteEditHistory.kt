@@ -123,9 +123,9 @@ internal fun NoteDocument.historyEditKey(next: NoteDocument): String {
             val old = before[index]
             val new = after[index]
             if (old.string("kind") == "markdown" && new.string("kind") == "markdown" &&
-                JsonObject(old - "text") == JsonObject(new - "text")) return "markdown:${old.string("id")}" 
+                JsonObject(old - "text") == JsonObject(new - "text")) return "markdown:${old.string("id")}"
             if (old.string("kind") == "ink" && new.string("kind") == "ink" &&
-                JsonObject(old - "ink") == JsonObject(new - "ink")) return "ink:${old.string("id")}" 
+                JsonObject(old - "ink") == JsonObject(new - "ink")) return "ink:${old.string("id")}"
         }
     }
     return "document"

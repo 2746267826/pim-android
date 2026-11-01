@@ -76,6 +76,38 @@ class CrashForensicsTest {
     }
 
     @Test
+    fun captureAndLoggingFailuresCannotHideTheOriginalHandlerHandoff() {
+        val dir = Files.createTempDirectory("crash-handler-failure-test").toFile()
+        try {
+            val parentFile = File(dir, "not-a-directory")
+            parentFile.writeText("x")
+            assertTrue(parentFile.isFile)
+            val failingStore = CrashTraceStore(
+                redactor = redactor,
+                traceFile = File(parentFile, "crash-traces.jsonl")
+            )
+            val logAttempted = AtomicBoolean(false)
+            val delegated = AtomicBoolean(false)
+            val handler = CrashForensics(
+                store = failingStore,
+                logCaptureFailure = { _, _ ->
+                    logAttempted.set(true)
+                    throw IllegalStateException("logging unavailable")
+                }
+            ).delegatingHandler(
+                Thread.UncaughtExceptionHandler { _, _ -> delegated.set(true) }
+            )
+
+            handler.uncaughtException(Thread.currentThread(), IllegalStateException("original"))
+
+            assertTrue(logAttempted.get())
+            assertTrue(delegated.get())
+        } finally {
+            dir.deleteRecursively()
+        }
+    }
+
+    @Test
     fun traceReaderBoundsInputRedactsCredentialsAndReportsFailures() {
         val credentialText = "Authorization: Bearer abc.def\n" + "x".repeat(ExitTraceReader.MAX_BYTES)
         val result = ExitTraceReader.read(redactor) {

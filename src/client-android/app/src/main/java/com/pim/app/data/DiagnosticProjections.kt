@@ -45,6 +45,17 @@ data class RejectedUsageSummaryStat(
     val newestUpdatedAtUtc: Long
 )
 
+data class UsageTerminalArchiveRow(
+    val id: Long,
+    val rowCount: Int,
+    val createdAtUtc: Long,
+    val requestJson: String?
+)
+
+data class UsageTerminalArchiveTotal(
+    val archivedCount: Long
+)
+
 data class DiagnosticLocationRow(
     val id: Long,
     val latitude: Double,

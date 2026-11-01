@@ -195,6 +195,7 @@ interface MobileDataDao {
         """
         SELECT COUNT(*) FROM mobile_sync_batches
         WHERE entity_type != 'sync-run'
+          AND sync_status != 'archived'
           AND sync_status != :syncedStatus
           AND sync_status != :rejectedStatus
         """
@@ -271,6 +272,29 @@ interface MobileDataDao {
         """
     )
     suspend fun rejectedUsageSummaryStatsOlderThan(
+        cutoffUtc: Long,
+        rejectedStatus: String = MobileSyncStatus.REJECTED,
+        fallbackReason: String = "server-rejected",
+        limit: Int = 50
+    ): List<RejectedUsageSummaryStat>
+
+    @Query(
+        """
+        SELECT COALESCE(NULLIF(TRIM(last_error), ''), :fallbackReason) AS reason,
+               COUNT(*) AS count,
+               MIN(updated_at_utc) AS oldestUpdatedAtUtc,
+               MAX(updated_at_utc) AS newestUpdatedAtUtc
+        FROM mobile_usage_summaries
+        WHERE sync_status = :rejectedStatus
+          AND updated_at_utc < :cutoffUtc
+          AND id IN (:ids)
+        GROUP BY COALESCE(NULLIF(TRIM(last_error), ''), :fallbackReason)
+        ORDER BY count DESC, reason ASC
+        LIMIT :limit
+        """
+    )
+    suspend fun rejectedUsageSummaryStatsForIds(
+        ids: List<Long>,
         cutoffUtc: Long,
         rejectedStatus: String = MobileSyncStatus.REJECTED,
         fallbackReason: String = "server-rejected",
@@ -570,6 +594,34 @@ interface MobileDataDao {
         keepNewest: Int,
         entityType: String
     ): Int
+
+    @Query(
+        """
+        SELECT id, row_count AS rowCount, created_at_utc AS createdAtUtc,
+               request_json AS requestJson
+        FROM mobile_sync_batches
+        WHERE entity_type = :entityType
+        ORDER BY created_at_utc DESC, id DESC
+        LIMIT :limit
+        """
+    )
+    suspend fun usageTerminalArchiveRows(
+        entityType: String,
+        limit: Int
+    ): List<UsageTerminalArchiveRow>
+
+    @Query(
+        """
+        SELECT row_count AS archivedCount
+        FROM mobile_sync_batches
+        WHERE batch_id = :batchId AND entity_type = :entityType
+        LIMIT 1
+        """
+    )
+    suspend fun usageTerminalArchiveTotal(
+        batchId: String,
+        entityType: String
+    ): UsageTerminalArchiveTotal?
 
     @Query(
         """

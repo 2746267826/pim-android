@@ -18,9 +18,16 @@ import org.json.JSONObject
  * existing uncaught-exception handler.
  */
 @Singleton
-class CrashForensics @Inject constructor(
-    private val store: CrashTraceStore
+class CrashForensics internal constructor(
+    private val store: CrashTraceStore,
+    private val logCaptureFailure: (String, Throwable) -> Unit
 ) {
+    @Inject
+    constructor(store: CrashTraceStore) : this(
+        store = store,
+        logCaptureFailure = { message, error -> Log.e(TAG, message, error) }
+    )
+
     private val installLock = Any()
     private var installed = false
 
@@ -36,15 +43,18 @@ class CrashForensics @Inject constructor(
     internal fun delegatingHandler(
         delegate: Thread.UncaughtExceptionHandler?
     ): Thread.UncaughtExceptionHandler = Thread.UncaughtExceptionHandler { thread, throwable ->
-        capture(thread, throwable)
-        if (
-            delegate != null &&
-            delegate !== Thread.getDefaultUncaughtExceptionHandler()
-        ) {
-            delegate.uncaughtException(thread, throwable)
-        } else {
-            // There is no safe fallback that can keep the process alive.
-            throw throwable
+        try {
+            capture(thread, throwable)
+        } finally {
+            if (
+                delegate != null &&
+                delegate !== Thread.getDefaultUncaughtExceptionHandler()
+            ) {
+                delegate.uncaughtException(thread, throwable)
+            } else {
+                // There is no safe fallback that can keep the process alive.
+                throw throwable
+            }
         }
     }
 
@@ -56,7 +66,11 @@ class CrashForensics @Inject constructor(
             store.record(thread, throwable)
         } catch (captureFailure: Throwable) {
             // Never hide the original crash or replace it with a capture error.
-            Log.e(TAG, "Failed to persist crash trace", captureFailure)
+            try {
+                logCaptureFailure("Failed to persist crash trace", captureFailure)
+            } catch (_: Throwable) {
+                // Logging is best effort while the process is already crashing.
+            }
         }
     }
 

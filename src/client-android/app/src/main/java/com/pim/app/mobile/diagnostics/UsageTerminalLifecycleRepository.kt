@@ -1,7 +1,10 @@
 package com.pim.app.mobile.diagnostics
 
 import android.content.Context
+import androidx.room.withTransaction
+import com.pim.app.data.AppDatabase
 import com.pim.app.data.MobileDataDao
+import com.pim.app.data.MobileSyncBatchEntity
 import com.pim.app.data.MobileSyncStatus
 import com.pim.app.data.RejectedUsageSummaryStat
 import com.pim.app.mobile.logs.StructuredLogRepository
@@ -10,6 +13,7 @@ import java.io.File
 import java.nio.file.AtomicMoveNotSupportedException
 import java.nio.file.Files
 import java.nio.file.StandardCopyOption
+import java.util.UUID
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
@@ -26,6 +30,13 @@ import org.json.JSONObject
 data class TerminalReasonCount(
     val reason: String,
     val count: Long
+)
+
+data class TerminalArchiveEntry(
+    val archivedAtUtc: Long,
+    val cutoffUtc: Long,
+    val count: Long,
+    val reasons: List<TerminalReasonCount>
 )
 
 /**
@@ -46,6 +57,7 @@ data class UsageTerminalLifecycleSnapshot(
     val lastReclaimedAtUtc: Long? = null,
     val lastReclaimedCount: Long = 0L,
     val lastReclaimedReasons: List<TerminalReasonCount> = emptyList(),
+    val archiveHistory: List<TerminalArchiveEntry> = emptyList(),
     val lastError: String? = null
 ) {
     val statusText: String
@@ -64,7 +76,7 @@ data class UsageTerminalLifecycleSnapshot(
                 ""
             }
             val reclaimable = if (reclaimableCount > 0L) {
-                "；其中 $reclaimableCount 条已超过保留期，启动时继续清理"
+                "；其中 $reclaimableCount 条已超过保留期，受单次预算限制，下次启动继续清理"
             } else {
                 ""
             }
@@ -75,28 +87,34 @@ data class UsageTerminalLifecycleSnapshot(
 
 @Singleton
 class UsageTerminalLifecycleRepository internal constructor(
+    private val database: AppDatabase,
     private val dao: MobileDataDao,
     private val logs: StructuredLogRepository,
     private val redactor: DiagnosticRedactor,
     private val ledgerFile: File,
     private val nowMillis: () -> Long = System::currentTimeMillis,
     private val retentionDays: Int = DEFAULT_RETENTION_DAYS,
-    private val pageSize: Int = DEFAULT_PAGE_SIZE
+    private val pageSize: Int = DEFAULT_PAGE_SIZE,
+    private val maxReclaimRowsPerPass: Int = DEFAULT_MAX_RECLAIM_ROWS_PER_PASS,
+    private val afterArchiveInsert: () -> Unit = {},
+    private val beforeLedgerMirrorWrite: () -> Unit = {}
 ) {
     @Inject
     constructor(
         @ApplicationContext context: Context,
-        dao: MobileDataDao,
+        database: AppDatabase,
         logs: StructuredLogRepository,
         redactor: DiagnosticRedactor
     ) : this(
-        dao = dao,
+        database = database,
+        dao = database.mobileDataDao(),
         logs = logs,
         redactor = redactor,
         ledgerFile = File(context.filesDir, "forensics/usage-terminal-lifecycle.json"),
         nowMillis = System::currentTimeMillis,
         retentionDays = DEFAULT_RETENTION_DAYS,
-        pageSize = DEFAULT_PAGE_SIZE
+        pageSize = DEFAULT_PAGE_SIZE,
+        maxReclaimRowsPerPass = DEFAULT_MAX_RECLAIM_ROWS_PER_PASS
     )
 
     private val mutex = Mutex()
@@ -106,6 +124,7 @@ class UsageTerminalLifecycleRepository internal constructor(
     init {
         require(retentionDays > 0) { "retentionDays must be positive" }
         require(pageSize > 0) { "pageSize must be positive" }
+        require(maxReclaimRowsPerPass > 0) { "maxReclaimRowsPerPass must be positive" }
     }
 
     suspend fun refresh(): UsageTerminalLifecycleSnapshot = withContext(Dispatchers.IO) {
@@ -134,22 +153,74 @@ class UsageTerminalLifecycleRepository internal constructor(
             var removed = 0L
             var reclaimedReasons = emptyList<TerminalReasonCount>()
             if (reclaimExpired) {
-                reclaimedReasons = sanitizeStats(
-                    dao.rejectedUsageSummaryStatsOlderThan(cutoff)
-                )
-                while (true) {
+                var remainingBudget = maxReclaimRowsPerPass
+                while (remainingBudget > 0) {
                     val ids = dao.rejectedUsageSummaryIdsOlderThan(
                         cutoffUtc = cutoff,
-                        limit = pageSize
+                        limit = minOf(pageSize, remainingBudget)
                     )
                     if (ids.isEmpty()) break
-                    val count = dao.deleteRejectedUsageSummariesOlderThanIds(
-                        ids = ids,
-                        cutoffUtc = cutoff,
-                        rejectedStatus = MobileSyncStatus.REJECTED
-                    )
+                    val archivedPage = database.withTransaction {
+                        val pageReasons = sanitizeStats(
+                            dao.rejectedUsageSummaryStatsForIds(
+                                ids = ids,
+                                cutoffUtc = cutoff,
+                                limit = MAX_REASONS
+                            )
+                        )
+                        val archiveJson = archivePageJson(
+                            archivedAtUtc = now,
+                            cutoffUtc = cutoff,
+                            ids = ids,
+                            reasons = pageReasons
+                        ).toString()
+                        val archiveId = dao.insertSyncBatch(
+                            MobileSyncBatchEntity(
+                                batchId = "usage-terminal-archive-${UUID.randomUUID()}",
+                                entityType = USAGE_TERMINAL_ARCHIVE_ENTITY,
+                                rowCount = ids.size,
+                                requestJson = archiveJson,
+                                syncStatus = ARCHIVED_STATUS,
+                                createdAtUtc = now,
+                                updatedAtUtc = now
+                            )
+                        )
+                        check(archiveId > 0L) { "Failed to persist usage archive summary" }
+                        val archivedBefore = dao.usageTerminalArchiveTotal(
+                            batchId = USAGE_TERMINAL_ARCHIVE_TOTAL_BATCH_ID,
+                            entityType = USAGE_TERMINAL_ARCHIVE_TOTAL_ENTITY
+                        )?.archivedCount ?: 0L
+                        val totalId = dao.insertSyncBatch(
+                            MobileSyncBatchEntity(
+                                batchId = USAGE_TERMINAL_ARCHIVE_TOTAL_BATCH_ID,
+                                entityType = USAGE_TERMINAL_ARCHIVE_TOTAL_ENTITY,
+                                rowCount = (archivedBefore + ids.size)
+                                    .coerceAtMost(Int.MAX_VALUE.toLong())
+                                    .toInt(),
+                                requestJson = archiveJson,
+                                syncStatus = ARCHIVED_STATUS,
+                                createdAtUtc = now,
+                                updatedAtUtc = now
+                            )
+                        )
+                        check(totalId > 0L) { "Failed to persist cumulative usage archive count" }
+                        afterArchiveInsert()
+                        val deleted = dao.deleteRejectedUsageSummariesOlderThanIds(
+                            ids = ids,
+                            cutoffUtc = cutoff,
+                            rejectedStatus = MobileSyncStatus.REJECTED
+                        )
+                        check(deleted == ids.size) {
+                            "Usage archive page changed before atomic deletion"
+                        }
+                        deleted to pageReasons
+                    }
+                    val count = archivedPage.first
+                    val pageReasons = archivedPage.second
                     if (count <= 0) break
                     removed += count
+                    remainingBudget -= count
+                    reclaimedReasons = mergeReasons(reclaimedReasons, pageReasons)
                 }
 
                 val purgedSyncHistory = dao.deleteSyncHistoryOlderThan(
@@ -160,14 +231,27 @@ class UsageTerminalLifecycleRepository internal constructor(
                     keepNewest = MAX_SYNC_HISTORY_ROWS,
                     entityType = "sync-run"
                 )
-                if (removed > 0L || purgedSyncHistory > 0 || trimmedSyncHistory > 0) {
+                val trimmedTerminalArchives = dao.trimSyncHistory(
+                    keepNewest = MAX_ARCHIVE_HISTORY,
+                    entityType = USAGE_TERMINAL_ARCHIVE_ENTITY
+                )
+                if (
+                    removed > 0L ||
+                    purgedSyncHistory > 0 ||
+                    trimmedSyncHistory > 0 ||
+                    trimmedTerminalArchives > 0
+                ) {
                     logs.info(
                         "diagnostics-lifecycle",
                         "终态诊断清理完成。",
                         mapOf(
                             "reclaimedRejectedUsageSummaries" to removed,
+                            "reclaimedReasons" to reclaimedReasons.joinToString { reason ->
+                                "${reason.reason}:${reason.count}"
+                            },
                             "purgedSyncHistory" to purgedSyncHistory,
-                            "trimmedSyncHistory" to trimmedSyncHistory
+                            "trimmedSyncHistory" to trimmedSyncHistory,
+                            "trimmedTerminalArchives" to trimmedTerminalArchives
                         )
                     )
                 }
@@ -179,24 +263,39 @@ class UsageTerminalLifecycleRepository internal constructor(
             val reclaimableCount = dao.countRejectedUsageSummariesOlderThan(cutoff).toLong()
             val oldest = rawStats.minOfOrNull { it.oldestUpdatedAtUtc }
             val nextEligible = oldest?.let { it + retentionDays.toLong() * DAY_MILLIS }
-            val updatedLedger = if (removed > 0L) {
-                ledger.copy(
-                    archivedCount = ledger.archivedCount + removed,
-                    lastReclaimedAtUtc = now,
-                    lastReclaimedCount = removed,
-                    lastReclaimedReasons = reclaimedReasons,
-                    lastError = ledger.lastError,
-                    history = (ledger.history + ArchiveEntry(
-                        archivedAtUtc = now,
-                        cutoffUtc = cutoff,
-                        count = removed,
-                        reasons = reclaimedReasons
-                    )).takeLast(MAX_ARCHIVE_HISTORY)
-                )
+            val archiveRows = dao.usageTerminalArchiveRows(
+                entityType = USAGE_TERMINAL_ARCHIVE_ENTITY,
+                limit = MAX_ARCHIVE_HISTORY
+            )
+            val durableHistory = archiveRows.mapNotNull(::parseArchiveRow).reversed()
+            val archiveHistory = if (durableHistory.isNotEmpty()) {
+                durableHistory
             } else {
-                ledger
+                ledger.history
             }
-            writeLedger(updatedLedger)
+            val durableArchivedCount = maxOf(
+                ledger.archivedCount,
+                dao.usageTerminalArchiveTotal(
+                    batchId = USAGE_TERMINAL_ARCHIVE_TOTAL_BATCH_ID,
+                    entityType = USAGE_TERMINAL_ARCHIVE_TOTAL_ENTITY
+                )?.archivedCount ?: 0L
+            )
+            val latestArchive = archiveHistory.lastOrNull()
+            val updatedLedger = ledger.copy(
+                archivedCount = durableArchivedCount,
+                lastReclaimedAtUtc = latestArchive?.archivedAtUtc ?: ledger.lastReclaimedAtUtc,
+                lastReclaimedCount = latestArchive?.count ?: ledger.lastReclaimedCount,
+                lastReclaimedReasons = latestArchive?.reasons ?: ledger.lastReclaimedReasons,
+                history = archiveHistory
+            )
+            if (removed > 0L || ledger.lastError != null || !ledgerFile.isFile) {
+                try {
+                    beforeLedgerMirrorWrite()
+                    writeLedger(updatedLedger)
+                } catch (_: Exception) {
+                    // The Room archive is authoritative and committed with deletion.
+                }
+            }
 
             UsageTerminalLifecycleSnapshot(
                 rejectedCount = rejectedCount,
@@ -205,10 +304,11 @@ class UsageTerminalLifecycleRepository internal constructor(
                 reclaimableCount = reclaimableCount,
                 retentionDays = retentionDays,
                 nextEligibleAtUtc = nextEligible,
-                archivedCount = updatedLedger.archivedCount,
+                archivedCount = durableArchivedCount,
                 lastReclaimedAtUtc = updatedLedger.lastReclaimedAtUtc,
                 lastReclaimedCount = updatedLedger.lastReclaimedCount,
                 lastReclaimedReasons = updatedLedger.lastReclaimedReasons,
+                archiveHistory = archiveHistory,
                 lastError = updatedLedger.lastError
             ).also { _snapshot.value = it }
         } catch (ex: CancellationException) {
@@ -219,8 +319,100 @@ class UsageTerminalLifecycleRepository internal constructor(
                 "diagnostics-lifecycle",
                 "读取或清理 usage 死信失败：$lastError"
             )
-            _snapshot.value.copy(lastError = lastError).also { _snapshot.value = it }
+            val fallbackLedger = readLedger()
+            val fallbackStats = runCatching {
+                sanitizeStats(dao.rejectedUsageSummaryStats(limit = MAX_REASONS))
+            }.getOrDefault(emptyList())
+            val fallbackRejected = runCatching {
+                dao.countUsageSummariesBySyncStatus(MobileSyncStatus.REJECTED).toLong()
+            }.getOrDefault(_snapshot.value.rejectedCount)
+            val fallbackReclaimable = runCatching {
+                dao.countRejectedUsageSummariesOlderThan(cutoff).toLong()
+            }.getOrDefault(_snapshot.value.reclaimableCount)
+            val fallbackArchiveRows = runCatching {
+                dao.usageTerminalArchiveRows(
+                    entityType = USAGE_TERMINAL_ARCHIVE_ENTITY,
+                    limit = MAX_ARCHIVE_HISTORY
+                )
+            }.getOrDefault(emptyList())
+            val fallbackDurableHistory = fallbackArchiveRows
+                .mapNotNull(::parseArchiveRow)
+                .reversed()
+            val fallbackHistory = if (fallbackDurableHistory.isNotEmpty()) {
+                fallbackDurableHistory
+            } else {
+                fallbackLedger.history
+            }
+            val fallbackArchivedCount = maxOf(
+                fallbackLedger.archivedCount,
+                runCatching {
+                    dao.usageTerminalArchiveTotal(
+                        batchId = USAGE_TERMINAL_ARCHIVE_TOTAL_BATCH_ID,
+                        entityType = USAGE_TERMINAL_ARCHIVE_TOTAL_ENTITY
+                    )?.archivedCount ?: 0L
+                }.getOrDefault(0L)
+            )
+            val fallbackLatest = fallbackHistory.lastOrNull()
+            UsageTerminalLifecycleSnapshot(
+                rejectedCount = fallbackRejected,
+                reasons = fallbackStats,
+                oldestRejectedUpdatedAtUtc = _snapshot.value.oldestRejectedUpdatedAtUtc,
+                reclaimableCount = fallbackReclaimable,
+                retentionDays = retentionDays,
+                nextEligibleAtUtc = _snapshot.value.nextEligibleAtUtc,
+                archivedCount = fallbackArchivedCount,
+                lastReclaimedAtUtc = fallbackLatest?.archivedAtUtc
+                    ?: fallbackLedger.lastReclaimedAtUtc,
+                lastReclaimedCount = fallbackLatest?.count ?: fallbackLedger.lastReclaimedCount,
+                lastReclaimedReasons = fallbackLatest?.reasons
+                    ?: fallbackLedger.lastReclaimedReasons,
+                archiveHistory = fallbackHistory,
+                lastError = lastError
+            ).also { _snapshot.value = it }
         }
+    }
+
+    private fun archivePageJson(
+        archivedAtUtc: Long,
+        cutoffUtc: Long,
+        ids: List<Long>,
+        reasons: List<TerminalReasonCount>
+    ): JSONObject = JSONObject()
+        .put("version", 1)
+        .put("archivedAtUtc", archivedAtUtc)
+        .put("cutoffUtc", cutoffUtc)
+        .put("rowCount", ids.size)
+        .put("reasons", reasonsJson(reasons))
+
+    private fun parseArchiveRow(
+        row: com.pim.app.data.UsageTerminalArchiveRow
+    ): TerminalArchiveEntry? {
+        val json = row.requestJson?.let { raw ->
+            runCatching { JSONObject(raw) }.getOrNull()
+        }
+        val count = maxOf(row.rowCount.toLong(), json?.optLong("rowCount", 0L) ?: 0L)
+            .coerceAtLeast(0L)
+        if (count <= 0L) return null
+        return TerminalArchiveEntry(
+            archivedAtUtc = row.createdAtUtc,
+            cutoffUtc = json?.optLong("cutoffUtc", 0L) ?: 0L,
+            count = count,
+            reasons = parseReasons(json?.optJSONArray("reasons"))
+        )
+    }
+
+    private fun mergeReasons(
+        current: List<TerminalReasonCount>,
+        added: List<TerminalReasonCount>
+    ): List<TerminalReasonCount> {
+        val counts = linkedMapOf<String, Long>()
+        (current + added).forEach { item ->
+            counts[item.reason] = (counts[item.reason] ?: 0L) + item.count
+        }
+        return counts
+            .map { (reason, count) -> TerminalReasonCount(reason, count) }
+            .sortedWith(compareByDescending<TerminalReasonCount> { it.count }.thenBy { it.reason })
+            .take(MAX_REASONS)
     }
 
     private fun sanitizeStats(stats: List<RejectedUsageSummaryStat>): List<TerminalReasonCount> =
@@ -318,13 +510,13 @@ class UsageTerminalLifecycleRepository internal constructor(
         }
     }
 
-    private fun parseHistory(array: JSONArray?): List<ArchiveEntry> {
+    private fun parseHistory(array: JSONArray?): List<TerminalArchiveEntry> {
         if (array == null) return emptyList()
         return (0 until array.length()).mapNotNull { index ->
             val item = array.optJSONObject(index) ?: return@mapNotNull null
             val count = item.optLong("count", 0L).coerceAtLeast(0L)
             if (count <= 0L) return@mapNotNull null
-            ArchiveEntry(
+            TerminalArchiveEntry(
                 archivedAtUtc = item.optLong("archivedAtUtc", 0L),
                 cutoffUtc = item.optLong("cutoffUtc", 0L),
                 count = count,
@@ -350,23 +542,21 @@ class UsageTerminalLifecycleRepository internal constructor(
         val lastReclaimedCount: Long = 0L,
         val lastReclaimedReasons: List<TerminalReasonCount> = emptyList(),
         val lastError: String? = null,
-        val history: List<ArchiveEntry> = emptyList()
-    )
-
-    private data class ArchiveEntry(
-        val archivedAtUtc: Long,
-        val cutoffUtc: Long,
-        val count: Long,
-        val reasons: List<TerminalReasonCount>
+        val history: List<TerminalArchiveEntry> = emptyList()
     )
 
     companion object {
         const val DEFAULT_RETENTION_DAYS = 30
         const val DEFAULT_PAGE_SIZE = 500
+        const val DEFAULT_MAX_RECLAIM_ROWS_PER_PASS = 5_000
         const val MAX_ARCHIVE_HISTORY = 32
         const val MAX_REASONS = 20
         const val MAX_SYNC_HISTORY_ROWS = 2_000
         const val MAX_LEDGER_BYTES = 256 * 1024L
+        const val USAGE_TERMINAL_ARCHIVE_ENTITY = "usage-terminal-archive"
+        private const val USAGE_TERMINAL_ARCHIVE_TOTAL_ENTITY = "usage-terminal-archive-total"
+        private const val USAGE_TERMINAL_ARCHIVE_TOTAL_BATCH_ID = "usage-terminal-archive-total-v1"
+        private const val ARCHIVED_STATUS = "archived"
         private const val MAX_REASON_CHARS = 160
         private const val DAY_MILLIS = 24L * 60L * 60L * 1_000L
     }

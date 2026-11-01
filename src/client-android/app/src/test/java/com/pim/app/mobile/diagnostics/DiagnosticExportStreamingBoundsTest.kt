@@ -167,6 +167,118 @@ class DiagnosticExportStreamingBoundsTest {
     }
 
     @Test
+    fun fullLogReadStopsAtSnapshotBoundaryAfterActiveFileKeepsGrowing() = runTest {
+        val original = buildLogLines(tag = "stable", count = 12, width = 48)
+        writeLog("mobile-2026-10-30.jsonl", original)
+        val originalBytes = original.toByteArray(Charsets.UTF_8).size.toLong()
+        val appended = buildLogLines(tag = "secret-growth", count = 4_000, width = 128)
+
+        val repo = createRepo(
+            maxLineBytes = 512,
+            maxFileBytes = 2_000_000,
+            maxTotalBytes = 2_000_000,
+            afterLogSnapshot = {
+                File(logDir, "mobile-2026-10-30.jsonl")
+                    .appendText(appended, Charsets.UTF_8)
+            }
+        )
+        val result = repo.export(includeRecentLocations = false)
+
+        ZipFile(result.file).use { zip ->
+            val entry = zip.readEntry("logs/mobile-2026-10-30.jsonl")
+            assertFalse(entry.contains("secret-growth"))
+            val logExport = JSONObject(zip.readEntry("manifest.json")).getJSONObject("logExport")
+            val file = logExport.getJSONArray("files").getJSONObject(0)
+            assertEquals("full", file.getString("strategy"))
+            assertEquals(originalBytes, file.getLong("originalBytes"))
+            assertTrue(file.getLong("readBytes") <= originalBytes)
+            assertTrue(file.getLong("includedBytes") <= originalBytes)
+            assertTrue(file.getJSONArray("suppressionReasons").toString().contains("file-changed"))
+        }
+    }
+
+    @Test
+    fun sampledLogReadStopsAtSnapshotBoundaryAfterAppendAndTailRotation() = runTest {
+        val original = buildLogLines(tag = "original", count = 200, width = 80)
+        writeLog("mobile-2026-10-30.jsonl", original)
+        val originalBytes = original.toByteArray(Charsets.UTF_8).size.toLong()
+        val replacement = buildLogLines(tag = "replacement-secret", count = 4_000, width = 128)
+
+        val repo = createRepo(
+            maxLineBytes = 512,
+            maxFileBytes = 8_192,
+            maxTotalBytes = 2_048,
+            afterLogSnapshot = {
+                val file = File(logDir, "mobile-2026-10-30.jsonl")
+                val rotated = File(logDir, "mobile-2026-10-30.jsonl.rotated")
+                file.renameTo(rotated)
+                file.writeText(replacement, Charsets.UTF_8)
+            }
+        )
+        val result = repo.export(includeRecentLocations = false)
+
+        ZipFile(result.file).use { zip ->
+            val entry = zip.readEntry("logs/mobile-2026-10-30.jsonl")
+            assertTrue(entry.isNotBlank())
+            val logExport = JSONObject(zip.readEntry("manifest.json")).getJSONObject("logExport")
+            val file = logExport.getJSONArray("files").getJSONObject(0)
+            assertEquals("head-tail", file.getString("strategy"))
+            assertEquals(originalBytes, file.getLong("originalBytes"))
+            assertTrue(file.getLong("readBytes") <= file.getLong("allocatedBytes"))
+            assertTrue(file.getLong("readBytes") <= originalBytes)
+            assertTrue(file.getJSONArray("suppressionReasons").toString().contains("file-changed"))
+        }
+    }
+
+    @Test
+    fun truncatedTailCannotReadPastSnapshotOrAllocatedBudget() = runTest {
+        val original = buildLogLines(tag = "truncate", count = 200, width = 80)
+        writeLog("mobile-2026-10-30.jsonl", original)
+
+        val repo = createRepo(
+            maxLineBytes = 512,
+            maxFileBytes = 8_192,
+            maxTotalBytes = 2_048,
+            afterLogSnapshot = {
+                File(logDir, "mobile-2026-10-30.jsonl").writeText("", Charsets.UTF_8)
+            }
+        )
+        val result = repo.export(includeRecentLocations = false)
+
+        ZipFile(result.file).use { zip ->
+            val logExport = JSONObject(zip.readEntry("manifest.json")).getJSONObject("logExport")
+            val file = logExport.getJSONArray("files").getJSONObject(0)
+            assertTrue(file.getLong("readBytes") <= file.getLong("allocatedBytes"))
+            assertTrue(file.getLong("readBytes") <= file.getLong("originalBytes"))
+            assertTrue(file.getJSONArray("suppressionReasons").toString().contains("file-changed"))
+        }
+    }
+
+    @Test
+    fun boundedInputStreamReportsActualBytesAndNeverConsumesBeyondLimit() {
+        var produced = 0L
+        val endless = object : java.io.InputStream() {
+            override fun read(): Int {
+                produced++
+                return 'x'.code
+            }
+        }
+        val bounded = BoundedInputStream(endless, limit = 37)
+        val buffer = ByteArray(128)
+        var total = 0
+        while (true) {
+            val read = bounded.read(buffer)
+            if (read < 0) break
+            total += read
+        }
+
+        assertEquals(37, total)
+        assertEquals(37L, bounded.bytesRead)
+        assertEquals(37L, produced)
+        assertTrue(bounded.reachedLimit)
+    }
+
+    @Test
     fun targetWriteFailureKeepsOriginalLogsAndReturnsExplicitFailure() = runTest {
         val content = """{"message":"keep-me"}""" + "\n"
         writeLog("mobile-2026-10-30.jsonl", content)
@@ -271,7 +383,8 @@ class DiagnosticExportStreamingBoundsTest {
         maxLineBytes: Int,
         maxFileBytes: Long,
         maxTotalBytes: Long,
-        publish: ((File, File) -> Unit)? = null
+        publish: ((File, File) -> Unit)? = null,
+        afterLogSnapshot: () -> Unit = {}
     ): DiagnosticExportRepository = DiagnosticExportRepository(
         context = context,
         db = db,
@@ -298,7 +411,8 @@ class DiagnosticExportStreamingBoundsTest {
         },
         maxLogLineBytes = maxLineBytes,
         maxLogFileBytes = maxFileBytes,
-        maxLogTotalBytes = maxTotalBytes
+        maxLogTotalBytes = maxTotalBytes,
+        afterLogSnapshot = afterLogSnapshot
     )
 
     private fun ZipFile.readEntry(name: String): String =

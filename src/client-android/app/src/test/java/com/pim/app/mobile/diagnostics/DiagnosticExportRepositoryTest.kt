@@ -240,6 +240,7 @@ class DiagnosticExportRepositoryTest {
         )
         val ledgerFile = File(context.filesDir, "forensics/usage-terminal-export-test.json")
         val usageRepository = UsageTerminalLifecycleRepository(
+            database = db,
             dao = dao,
             logs = structuredLogRepo,
             redactor = redactor,
@@ -293,6 +294,7 @@ class DiagnosticExportRepositoryTest {
         ledgerFile.parentFile?.mkdirs()
         ledgerFile.writeText("""{"archivedCount":7}""")
         val usageRepository = UsageTerminalLifecycleRepository(
+            database = db,
             dao = dao,
             logs = structuredLogRepo,
             redactor = redactor,

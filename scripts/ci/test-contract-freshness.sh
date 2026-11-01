@@ -5,6 +5,8 @@
 # 覆盖：
 #   ① 同字节 → check 0 且仓内零写入                 ② 合法 JSON 但内容不同 → 非 0
 #   ③ 取源失败（不可达 / 404）→ 非 0                ④ payload HTML / 空体 → 非 0
+#   ③b default raw 失败时限定同 SHA/path 的 api.github.com raw-media fallback；
+#      custom base 不 fallback，fallback payload 仍经过 fail-closed 校验
 #   ⑤ PIM_CONTRACT_REPO/REF 真实改变被访问路径（含 40-hex 直用不解析）
 #   ⑥ check 全程零写入（inode/mtime + git status）+ 静态只读守卫
 #   ⑦ provenance：一致 → PASS；与快照不符 / 缺失 → FAIL；resolvedRef 滞后 → PASS
@@ -304,6 +306,75 @@ say "   404 rc=$CHECK_RC"
 record "check_http404_exit_nonzero" $([ "$CHECK_RC" -ne 0 ] && echo 0 || echo 1) "rc=$CHECK_RC when the source returns 404"
 record "check_http404_exit_3" $([ "$CHECK_RC" -eq 3 ] && echo 0 || echo 1) "rc=$CHECK_RC (documented fetch-failure code = 3)"
 record "check_http404_no_write" $([ "$SIG_BEFORE" = "$SIG_AFTER" ] && echo 0 || echo 1) "inode/size/mtime unchanged"
+
+# ============ ③b default-only raw-media fallback（离线 fake curl） =========
+section "③b raw-media fallback 仅 default base；无 Auth/redirect；坏 payload 仍 fail-closed"
+FAKE_CURL_LOG="$WORK/raw-fetch-curl.log"
+FAKE_OUT="$WORK/raw-fetch-fallback.json"
+FAKE_MODE=default
+curl() {
+  local args="$*" out=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -o) out="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  printf '%s\n' "$args" >> "$FAKE_CURL_LOG"
+  case "$args" in
+    *"raw.githubusercontent.com/pim-api/$SHA_MASTER/contract/openapi.json"*)
+      return 28
+      ;;
+    *"api.github.com/repos/pim-api/contents/contract/openapi.json?ref=$SHA_MASTER"*)
+      case "$FAKE_MODE" in
+        default) cp "$FIX/openapi.master.json" "$out" ;;
+        badpayload) cp "$FIX/openapi.html" "$out" ;;
+        *) return 22 ;;
+      esac
+      return 0
+      ;;
+  esac
+  return 22
+}
+
+: > "$FAKE_CURL_LOG"
+rm -f "$FAKE_OUT"
+pim_contract_fetch_raw "$PIM_CONTRACT_DEFAULT_RAW_BASE" pim-api "$SHA_MASTER" \
+  contract/openapi.json "$FAKE_OUT" >/dev/null 2>"$WORK/fallback-default.log"
+DEFAULT_FETCH_RC=$?
+DEFAULT_CALLS="$(grep -c . "$FAKE_CURL_LOG" || true)"
+DEFAULT_MEDIA_CALLS="$(grep -c 'api.github.com/repos/pim-api/contents/contract/openapi.json' "$FAKE_CURL_LOG" || true)"
+DEFAULT_AUTH_CALLS="$(grep -ci 'authorization' "$FAKE_CURL_LOG" || true)"
+DEFAULT_REDIRECT_BAD="$(grep -vc -- '--max-redirs 0' "$FAKE_CURL_LOG" || true)"
+DEFAULT_BYTES_OK=1
+[ -f "$FAKE_OUT" ] && [ "$(sha "$FAKE_OUT")" = "$(sha "$FIX/openapi.master.json")" ] && DEFAULT_BYTES_OK=0
+record "fallback_default_success_same_bytes" $([ "$DEFAULT_FETCH_RC" -eq 0 ] && [ "$DEFAULT_BYTES_OK" -eq 0 ] && echo 0 || echo 1) "rc=$DEFAULT_FETCH_RC; fallback bytes match fixture"
+record "fallback_default_two_calls_and_exact_media" $([ "$DEFAULT_CALLS" -eq 2 ] && [ "$DEFAULT_MEDIA_CALLS" -eq 1 ] && echo 0 || echo 1) "calls=$DEFAULT_CALLS media_calls=$DEFAULT_MEDIA_CALLS"
+record "fallback_default_no_authorization" $([ "$DEFAULT_AUTH_CALLS" -eq 0 ] && echo 0 || echo 1) "Authorization mentions=$DEFAULT_AUTH_CALLS"
+record "fallback_default_no_redirect" $([ "$DEFAULT_REDIRECT_BAD" -eq 0 ] && echo 0 || echo 1) "calls missing --max-redirs 0=$DEFAULT_REDIRECT_BAD"
+
+: > "$FAKE_CURL_LOG"
+rm -f "$FAKE_OUT"
+FAKE_MODE=default
+pim_contract_fetch_raw "$RAW" pim-api "$SHA_MASTER" contract/openapi.json "$FAKE_OUT" \
+  >/dev/null 2>"$WORK/fallback-custom.log"
+CUSTOM_FETCH_RC=$?
+CUSTOM_CALLS="$(grep -c . "$FAKE_CURL_LOG" || true)"
+CUSTOM_MEDIA_CALLS="$(grep -c 'api.github.com' "$FAKE_CURL_LOG" || true)"
+record "fallback_custom_base_refused" $([ "$CUSTOM_FETCH_RC" -eq 3 ] && [ "$CUSTOM_MEDIA_CALLS" -eq 0 ] && echo 0 || echo 1) "rc=$CUSTOM_FETCH_RC media_calls=$CUSTOM_MEDIA_CALLS"
+record "fallback_custom_base_no_second_request" $([ "$CUSTOM_CALLS" -eq 1 ] && echo 0 || echo 1) "calls=$CUSTOM_CALLS"
+
+: > "$FAKE_CURL_LOG"
+rm -f "$FAKE_OUT"
+FAKE_MODE=badpayload
+pim_contract_fetch_raw "$PIM_CONTRACT_DEFAULT_RAW_BASE" pim-api "$SHA_MASTER" \
+  contract/openapi.json "$FAKE_OUT" >/dev/null 2>"$WORK/fallback-bad-fetch.log"
+BAD_FETCH_RC=$?
+pim_contract_validate_payload "$FAKE_OUT" >/dev/null 2>"$WORK/fallback-bad-payload.log"
+BAD_PAYLOAD_RC=$?
+record "fallback_bad_payload_fetch_reaches_validator" $([ "$BAD_FETCH_RC" -eq 0 ] && echo 0 || echo 1) "fetch rc=$BAD_FETCH_RC"
+record "fallback_bad_payload_fail_closed" $([ "$BAD_PAYLOAD_RC" -eq 4 ] && echo 0 || echo 1) "payload validation rc=$BAD_PAYLOAD_RC (configuration/payload failure)"
+unset -f curl
 
 # ======================= ④ payload HTML / 空体 → 非 0 ======================
 section "④ 权威源返回 HTML / 空体 → 非 0（不得当成契约比对）"

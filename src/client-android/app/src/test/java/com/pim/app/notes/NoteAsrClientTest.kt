@@ -67,6 +67,8 @@ class NoteAsrClientTest {
         presetId = "mimo-v2",
         presetVersion = "2026-10-01",
     )
+    private val routeConfigRevision = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+    private val routeConsentVersion = "consent-2026-11-01"
 
     private fun store() = NoteAsrTaskStore.at(temp.root)
     private fun materials() = NoteMaterialStore.at(temp.root)
@@ -74,7 +76,25 @@ class NoteAsrClientTest {
     private fun intent(): NoteAsrTaskRecord =
         store().createIntent(source, null, binding, "alice", destination, "auto")
 
-    @Test fun lostCreateReceiptStaysVerificationPendingAndExplicitReplayReusesTheSameTaskId() = runBlocking {
+    @Test fun lostCreateReceiptIsRecoveredByGetAndImportsTheAuthoritativeRouteSnapshot() = runBlocking {
+        val record = intent()
+        val server = Server(record.taskId)
+        server.loseStart = true
+        val client = client(server)
+        try { client.start(record); fail("Expected unknown receipt") } catch (_: IOException) { }
+        val pending = store().read(record.taskId)
+        assertEquals(NoteAsrIntentPhase.VerificationPending, pending.localPhase)
+        assertEquals(1, server.startRequests.size)
+        val fetched = client.get(record.taskId)
+        assertEquals("cloud-asr", fetched.route)
+        assertEquals(routeConfigRevision, fetched.routeConfigRevision)
+        assertEquals(routeConsentVersion, fetched.routeConsentVersion)
+        val importedAfterLostReceipt = store().read(record.taskId)
+        assertEquals(fetched, importedAfterLostReceipt.task)
+        assertEquals(NoteAsrIntentPhase.Accepted, importedAfterLostReceipt.localPhase)
+    }
+
+    @Test fun lostCreateReceiptCanExplicitlyReplayTheSameTaskIdWithoutGet() = runBlocking {
         val record = intent()
         val server = Server(record.taskId)
         server.loseStart = true
@@ -265,6 +285,24 @@ class NoteAsrClientTest {
         assertEquals(listOf("auto", "zh"), destinations.single().languages)
     }
 
+    @Test fun localRouteRetrySendsNoCloudConsentAndKeepsNullDestination() = runBlocking {
+        val taskId = newNoteId()
+        val server = Server(taskId).apply { localRoute = true }
+        store().importRemote(
+            server.task("NeedsAttention", totalSegments = 2, completedSegments = 0),
+            binding,
+            "alice",
+            null,
+        )
+        client(server).segments(taskId, 20)
+
+        val retried = client(server).retry(taskId, listOf(1), true)
+
+        assertNull(server.retryRequests.single().consent)
+        assertNull(retried.destination)
+        assertEquals("local", retried.task?.route)
+    }
+
     private fun client(server: Server) = NoteAsrClient(
         store(), materials(), server.api, binding, "alice",
     )
@@ -275,6 +313,7 @@ class NoteAsrClientTest {
         var startStatus: Int? = null
         var getStatus: Int? = null
         var retryStatus: Int? = null
+        var localRoute = false
         var sourceCount = 0
         var sourceCalls = 0
         var segmentCalls = 0
@@ -310,7 +349,8 @@ class NoteAsrClientTest {
             completedSamples = completedSegments * 60 * 16_000L,
             completedSegments = completedSegments,
             createdAt = "2026-10-29T00:00:00Z",
-            destination = destination,
+            destination = if (localRoute) null else destination,
+            executionMode = if (localRoute) "realtime" else null,
             failedSegments = if (phase == "NeedsAttention") 1 else 0,
             inputSha256 = "a".repeat(64),
             language = "auto",
@@ -318,6 +358,9 @@ class NoteAsrClientTest {
             noteId = source.noteId,
             phase = phase,
             revision = revision,
+            route = if (localRoute) "local" else "cloud-asr",
+            routeConfigRevision = routeConfigRevision,
+            routeConsentVersion = routeConsentVersion,
             sampleRate = 16_000,
             stopRequested = phase == "Stopped",
             taskId = taskId,

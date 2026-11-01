@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 41761f8dbcf6fb2cd890b0581c5fa7e81322e57fb399b0ab4b5d254c5f6a3730)
+//   契约快照 : contract/openapi.json (sha256 e5c555e2864e182f98242b0bbe50b156f755e9ea18dd5c57724518edd6bd8d76)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -1050,7 +1050,10 @@ data class MobileUsageSummaryResponseApiResponse(
 @Serializable
 data class NoteAsrAttemptDto(
     val errorMessage: String? = null,
+    val evidenceId: String? = null,
     val logId: String? = null,
+    val providerHandle: String? = null,
+    val receiptKind: String? = null,
     val requestId: String,
     val status: String,
 )
@@ -1085,12 +1088,27 @@ data class NoteAsrDestinationsDtoApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.NoteAsrRouteConsent`（request）。 */
+@Serializable
+data class NoteAsrRouteConsent(
+    val batchScopeConfirmed: Boolean? = null,
+    val configRevision: String,
+    val confirmed: Boolean,
+    val consentVersion: String,
+    val executionMode: String? = null,
+    val route: String,
+)
+
 /** 契约 `components.schemas.NoteAsrSegmentDto`（response）。 */
 @Serializable
 data class NoteAsrSegmentDto(
     val attempts: List<NoteAsrAttemptDto>,
     val chunkIndex: Int,
+    val coverageJson: String? = null,
+    val evidenceId: String? = null,
     val index: Int,
+    val providerHandle: String? = null,
+    val receiptKind: String? = null,
     val recordingId: String,
     val recordingOffsetSamples: Long,
     val recordingSegment: Int,
@@ -1155,11 +1173,13 @@ data class NoteAsrSourcesDtoApiResponse(
 /** 契约 `components.schemas.NoteAsrTaskDto`（response）。 */
 @Serializable
 data class NoteAsrTaskDto(
+    val attemptId: String? = null,
     val backgroundProcessingAvailable: Boolean? = null,
     val completedSamples: Long,
     val completedSegments: Int,
     val createdAt: String,
-    val destination: AiAsrDestinationConsent,
+    val destination: AiAsrDestinationConsent? = null,
+    val executionMode: String? = null,
     val failedSegments: Int,
     val inputSha256: String,
     val language: String,
@@ -1167,6 +1187,9 @@ data class NoteAsrTaskDto(
     val noteId: String,
     val phase: String,
     val revision: String,
+    val route: String? = null,
+    val routeConfigRevision: String? = null,
+    val routeConsentVersion: String? = null,
     val sampleRate: Int,
     val stopRequested: Boolean,
     val taskId: String,
@@ -1670,7 +1693,7 @@ data class RegisterRequest(
 @Serializable
 data class RetryNoteAsrRequest(
     val acknowledgePossibleDuplicateCharge: Boolean,
-    val consent: AiAsrDestinationConsent,
+    val consent: AiAsrDestinationConsent? = null,
     val expectedRevision: String,
     val expectedUserId: String,
     val retryId: String,
@@ -1737,9 +1760,12 @@ data class SelectNoteDerivedVersionRequest(
 /** 契约 `components.schemas.StartNoteAsrRequest`（request）。 */
 @Serializable
 data class StartNoteAsrRequest(
-    val consent: AiAsrDestinationConsent,
+    val consent: AiAsrDestinationConsent? = null,
     val expectedUserId: String,
     val language: String? = null,
+    val parentTaskId: String? = null,
+    val reprocessReason: String? = null,
+    val route: NoteAsrRouteConsent? = null,
     val taskId: String,
     val versionId: String,
 )

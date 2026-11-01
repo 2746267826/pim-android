@@ -304,8 +304,107 @@ class NoteAsrTaskStoreTest {
             source, null, binding, "alice", destination.copy(presetVersion = "2026-10-02"), "auto",
         )
         assertNotEquals(first.taskId, second.taskId)
-        assertEquals("2026-10-01", store.read(first.taskId).destination.presetVersion)
-        assertEquals("2026-10-02", store.read(second.taskId).destination.presetVersion)
+        assertEquals("2026-10-01", store.read(first.taskId).destination?.presetVersion)
+        assertEquals("2026-10-02", store.read(second.taskId).destination?.presetVersion)
+    }
+
+    @Test fun localRouteMayPersistNullDestinationButCloudRouteMayNotLoseConsent() {
+        val store = store()
+        val localTask = task(newNoteId(), "Queued").copy(
+            destination = null,
+            route = "local",
+            executionMode = "realtime",
+        )
+        val imported = store.importRemote(localTask, binding, "alice", null)
+        assertNull(imported.destination)
+        assertEquals("local", imported.task?.route)
+        store.update(localTask.taskId) { it.copy(localPhase = NoteAsrIntentPhase.Accepted) }
+        assertEquals("local", store.read(localTask.taskId).task?.route)
+
+        val cloudWithoutConsent = task(newNoteId(), "Queued").copy(
+            destination = null,
+            route = "cloud-asr",
+            executionMode = "realtime",
+        )
+        try {
+            store.importRemote(cloudWithoutConsent, binding, "alice", null)
+            fail("Cloud tasks must not be imported without a frozen consent")
+        } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test fun preparedAndSubmittingIntentsAttachOneAuthoritativeRouteSnapshot() {
+        listOf(NoteAsrIntentPhase.Prepared, NoteAsrIntentPhase.Submitting).forEach { phase ->
+            val isolated = NoteAsrTaskStore.at(temp.newFolder(phase.name))
+            val intent = isolated.createIntent(source, null, binding, "alice", destination, "auto")
+            if (phase == NoteAsrIntentPhase.Submitting) {
+                isolated.update(intent.taskId) { it.copy(localPhase = phase) }
+            }
+            val routeSnapshot = task(intent.taskId, "Queued").copy(
+                route = "cloud-asr",
+                executionMode = "realtime",
+                routeConfigRevision = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+                routeConsentVersion = "consent-2026-11-01",
+            )
+
+            val attached = isolated.importRemote(routeSnapshot, binding, "alice", null)
+
+            assertEquals(NoteAsrIntentPhase.Accepted, attached.localPhase)
+            assertEquals("cloud-asr", attached.task?.route)
+            assertEquals("realtime", attached.task?.executionMode)
+            assertEquals(routeSnapshot.routeConfigRevision, attached.task?.routeConfigRevision)
+            assertEquals(routeSnapshot.routeConsentVersion, attached.task?.routeConsentVersion)
+        }
+    }
+
+    @Test fun authoritativeTaskLocksRouteAndAllowsOnlyOneLegacySnapshotBackfill() {
+        val store = store()
+        val intent = store.createIntent(source, null, binding, "alice", destination, "auto")
+        val legacy = task(intent.taskId, "Queued").copy(
+            route = "cloud-asr",
+            executionMode = "realtime",
+        )
+        store.importRemote(legacy, binding, "alice", null)
+
+        val backfilled = legacy.copy(
+            routeConfigRevision = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            routeConsentVersion = "consent-2026-11-01",
+        )
+        store.importRemote(backfilled, binding, "alice", null)
+        assertEquals(backfilled.routeConfigRevision, store.read(intent.taskId).task?.routeConfigRevision)
+
+        try {
+            store.importRemote(
+                backfilled.copy(routeConfigRevision = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"),
+                binding,
+                "alice",
+                null,
+            )
+            fail("An authoritative route config revision must not be rebound")
+        } catch (_: IllegalArgumentException) { }
+        try {
+            store.importRemote(backfilled.copy(route = "cloud-multimodal"), binding, "alice", null)
+            fail("An authoritative route must not be rebound")
+        } catch (_: IllegalArgumentException) { }
+    }
+
+    @Test fun updateMayAttachTheFirstRouteSnapshotButThenLocksIt() {
+        val store = store()
+        val intent = store.createIntent(source, null, binding, "alice", destination, "auto")
+        val routeSnapshot = task(intent.taskId, "Queued").copy(
+            route = "cloud-asr",
+            executionMode = "realtime",
+            routeConfigRevision = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+            routeConsentVersion = "consent-2026-11-01",
+        )
+
+        val attached = store.update(intent.taskId) { it.copy(task = routeSnapshot) }
+        assertEquals(routeSnapshot.route, attached.task?.route)
+        try {
+            store.update(intent.taskId) {
+                it.copy(task = routeSnapshot.copy(routeConsentVersion = "consent-2026-12-01"))
+            }
+            fail("An attached route consent snapshot must not be rebound")
+        } catch (_: IllegalArgumentException) { }
     }
 
     private fun target() = NoteUploadTarget(binding, "alice")

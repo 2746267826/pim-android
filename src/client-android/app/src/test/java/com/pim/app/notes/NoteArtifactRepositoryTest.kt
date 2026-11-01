@@ -173,11 +173,11 @@ class NoteArtifactRepositoryTest {
         val task = seedTask()
         tasks.recordRemote(
             task.taskId,
-            NoteArtifactRemoteTaskView("task-rev", "Completed", observedAtMillis = 2_000),
+            NoteArtifactRemoteTaskView("task-rev", "NeedsAttention", observedAtMillis = 2_000),
             nowMillis = 2_000,
         )
         transport.detail = detailView(
-            NoteArtifactRemoteTaskView("task-rev", "Completed", observedAtMillis = 2_000),
+            NoteArtifactRemoteTaskView("task-rev", "NeedsAttention", observedAtMillis = 2_000),
             steps = listOf(
                 step("image-1", "Succeeded"),
                 step("record-1", "Failed", error = "upstream_timeout"),
@@ -196,7 +196,7 @@ class NoteArtifactRepositoryTest {
         )
 
         assertEquals(listOf(listOf("record-1")), transport.retryStepKeys)
-        assertEquals("Completed", tasks.read(task.taskId).remote?.phase)
+        assertEquals("NeedsAttention", tasks.read(task.taskId).remote?.phase)
         assertEquals("task-rev-retry-1", tasks.read(task.taskId).remote?.revision)
         assertNull(tasks.read(task.taskId).pendingRetry)
     }
@@ -205,11 +205,11 @@ class NoteArtifactRepositoryTest {
         val task = seedTask()
         tasks.recordRemote(
             task.taskId,
-            NoteArtifactRemoteTaskView("task-rev", "Completed", observedAtMillis = 2_000),
+            NoteArtifactRemoteTaskView("task-rev", "NeedsAttention", observedAtMillis = 2_000),
             nowMillis = 2_000,
         )
         transport.detail = detailView(
-            NoteArtifactRemoteTaskView("task-rev", "Completed", observedAtMillis = 2_000),
+            NoteArtifactRemoteTaskView("task-rev", "NeedsAttention", observedAtMillis = 2_000),
             steps = listOf(step("record-1", "Failed", error = "upstream_timeout")),
         )
         val repository = repository()
@@ -293,18 +293,18 @@ class NoteArtifactRepositoryTest {
         val task = seedTask()
         tasks.recordRemote(
             task.taskId,
-            NoteArtifactRemoteTaskView("task-rev-new", "Completed", observedAtMillis = 2_000),
+            NoteArtifactRemoteTaskView("task-rev-new", "NeedsAttention", observedAtMillis = 2_000),
             nowMillis = 2_000,
         )
         transport.detail = detailView(
-            NoteArtifactRemoteTaskView("task-rev-old", "Completed", observedAtMillis = 1_000),
+            NoteArtifactRemoteTaskView("task-rev-old", "NeedsAttention", observedAtMillis = 1_000),
             steps = listOf(step("done", "Succeeded"), step("failed", "Failed")),
         )
         val repository = repository()
         repository.refresh(noteId, materialVersionId, task.taskId)
         tasks.recordRemote(
             task.taskId,
-            NoteArtifactRemoteTaskView("task-rev-new", "Completed", observedAtMillis = 2_100),
+            NoteArtifactRemoteTaskView("task-rev-new", "NeedsAttention", observedAtMillis = 2_100),
             nowMillis = 2_100,
         )
 
@@ -319,7 +319,7 @@ class NoteArtifactRepositoryTest {
         assertTrue(repository.state.value.message.orEmpty().contains("进度已变化"))
 
         transport.detail = detailView(
-            NoteArtifactRemoteTaskView("task-rev-new", "Completed", observedAtMillis = 2_100),
+            NoteArtifactRemoteTaskView("task-rev-new", "NeedsAttention", observedAtMillis = 2_100),
             steps = listOf(step("done", "Succeeded"), step("failed", "Failed")),
         )
         repository.refresh(noteId, materialVersionId, task.taskId)
@@ -349,6 +349,32 @@ class NoteArtifactRepositoryTest {
 
         assertTrue(transport.retryStepKeys.isEmpty())
         assertTrue(repository.state.value.message.orEmpty().contains("仍在执行中"))
+    }
+
+    @Test fun inputBlockedTaskRejectsStepRetryBeforeTransport() = runBlocking {
+        val task = seedTask()
+        tasks.recordRemote(
+            task.taskId,
+            NoteArtifactRemoteTaskView("blocked-rev", "Blocked", observedAtMillis = 2_000),
+            nowMillis = 2_000,
+        )
+        transport.detail = detailView(
+            NoteArtifactRemoteTaskView("blocked-rev", "Blocked", observedAtMillis = 2_000),
+            steps = listOf(step("record-1", "Failed", error = "input_blocked")),
+        )
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, task.taskId)
+
+        repository.retrySelectedSteps(
+            taskId = task.taskId,
+            noteId = noteId,
+            materialVersionId = materialVersionId,
+            stepKeys = listOf("record-1"),
+            duplicateChargeConfirmed = true,
+        )
+
+        assertTrue(transport.retryStepKeys.isEmpty())
+        assertTrue(repository.state.value.message.orEmpty().contains("输入级阻断"))
     }
 
     @Test fun manualRevisionConflictKeepsLocalDraftAndObservedServerHead() = runBlocking {
@@ -1058,7 +1084,7 @@ class NoteArtifactRepositoryTest {
             }
             val view = NoteArtifactRemoteTaskView(
                 revision = "task-rev-retry-${retryStepKeys.size}",
-                phase = "Completed",
+                phase = "NeedsAttention",
                 observedAtMillis = 2_200,
             )
             (details[record.taskId] ?: detail)?.let { details[record.taskId] = it.copy(view = view) }

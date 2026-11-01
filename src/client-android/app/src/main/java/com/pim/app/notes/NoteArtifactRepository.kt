@@ -426,6 +426,10 @@ class NoteArtifactRepository(
             publish("已有恢复回执尚未确认；请核对原恢复请求，不能创建新的恢复标识。")
             return
         }
+        if (task.remote?.phase == "Blocked") {
+            publish("任务存在输入级阻断，服务端不接受步骤重试；原任务和本机稿保留。")
+            return
+        }
         if (task.remote?.phase?.let(::isRunningTaskPhase) == true) {
             publish("任务仍在执行中；请刷新核对后再选择步骤，不能重跑执行中的步骤。")
             return

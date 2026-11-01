@@ -159,6 +159,7 @@ data class NoteArtifactEditorUiState(
 
     val canRetrySelectedSteps: Boolean
         get() = taskId != null && !retryReceiptPending &&
+            taskPhase != "Blocked" &&
             taskPhase?.let(::isRunningTaskPhase) != true &&
             retryableSteps.isNotEmpty()
 

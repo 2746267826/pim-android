@@ -616,7 +616,11 @@ private fun StepRecoveryPanel(
         ) {
             Text("步骤恢复", style = MaterialTheme.typography.titleMedium)
             Text(
-                "服务器当前报告 ${editor.recoverySteps.size} 个步骤；仅非成功、非执行中步骤可选，每次最多20步。",
+                if (editor.taskPhase == "Blocked") {
+                    "任务存在输入级阻断；服务端不接受步骤重试，请先修复固定输入问题。"
+                } else {
+                    "服务器当前报告 ${editor.recoverySteps.size} 个步骤；仅非成功、非执行中步骤可选，每次最多20步。"
+                },
                 style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant,
             )
@@ -634,7 +638,8 @@ private fun StepRecoveryPanel(
                                 else selectedStepKeys - step.key,
                             )
                         },
-                        enabled = step.canRetry && !isRunningTaskPhase(editor.taskPhase.orEmpty()) &&
+                        enabled = step.canRetry && editor.taskPhase != "Blocked" &&
+                            !isRunningTaskPhase(editor.taskPhase.orEmpty()) &&
                             (step.key in selectedStepKeys || selectedStepKeys.size < 20),
                         modifier = Modifier.testTag(
                             "note-artifact-step-select-${editor.kind.name}-${step.key}",

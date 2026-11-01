@@ -62,6 +62,16 @@ internal fun NoteLibraryScreen(
                 }
                 PimStatusBanner("笔记和原始材料保存在本机。上传只保存固定材料；逐段转写需单独核对 ASR 目标并明确同意。",
                     PimStatusTone.Info)
+                if (state.importQuarantine.retainedCount > 0) {
+                    val retainedMiB = (state.importQuarantine.retainedBytes + 1024 * 1024 - 1) / (1024 * 1024)
+                    PimStatusBanner(
+                        "失败导入包保留 ${state.importQuarantine.retainedCount} 个，共 $retainedMiB MiB。" +
+                            "失败包最多保留 ${NoteFileStore.MAX_QUARANTINE_ENTRIES} 个、" +
+                            "${NoteFileStore.MAX_QUARANTINE_BYTES / (1024 * 1024)} MiB；" +
+                            "超限时只回收最旧的失败导入包，不删除任何已保存笔记。",
+                        PimStatusTone.Warning,
+                    )
+                }
                 OutlinedButton(
                     onClick = onAsr,
                     modifier = Modifier.fillMaxWidth().testTag("note-asr-open"),

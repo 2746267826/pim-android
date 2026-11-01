@@ -143,6 +143,17 @@ fun NativeNotesScreen(
                                             PimStatusBanner("保存失败，当前更改尚未可靠落盘。请检查存储空间后重试。", PimStatusTone.Error)
                                             TextButton(onClick = { onRetry(note.id) }) { Text("重试本地保存") }
                                         }
+                                        when (state.historyUnavailable[note.id]) {
+                                            NoteHistoryUnavailableReason.SnapshotTooLarge -> PimStatusBanner(
+                                                "本篇超过 ${NoteEditHistory.MAX_SNAPSHOT_BYTES / (1024 * 1024)} MiB 的整篇撤销预算，仍会正常保存；为避免内存和磁盘无界，本篇不提供整篇撤销记录。",
+                                                PimStatusTone.Warning,
+                                            )
+                                            NoteHistoryUnavailableReason.DamagedJournal -> PimStatusBanner(
+                                                "本篇的撤销记录无法通过完整性校验，已暂停使用且保留原文件；笔记正文正常读写。",
+                                                PimStatusTone.Warning,
+                                            )
+                                            null -> Unit
+                                        }
                                         recording.problem?.takeIf { ownSession != null }?.let { PimStatusBanner(it.message, PimStatusTone.Error) }
                                         if (ownActive && !notificationsVisible) PimStatusBanner("系统通知权限或录音渠道已关闭，后台录音状态可能不可见。", PimStatusTone.Warning)
                                         if (recording.active && !ownActive) PimStatusBanner("另一篇笔记正在录音，本页编辑不会改变录音归属。", PimStatusTone.Info)

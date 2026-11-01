@@ -126,6 +126,32 @@ class NoteEditHistoryTest {
         reopened.initialize()
         assertEquals(damagedId, reopened.state.value.documents.getValue(damagedId).id)
         assertEquals(NoteHistoryAvailability(), reopened.state.value.editHistory.getValue(damagedId))
+        assertEquals(
+            NoteHistoryUnavailableReason.DamagedJournal,
+            reopened.state.value.historyUnavailable.getValue(damagedId),
+        )
+        reopened.checkpoint(damagedId)
         assertEquals("damaged journal, retain me", File(notesRoot, ".edit-history/$damagedId.json").readText())
+    }
+
+    @Test fun oversizedDocumentDegradesHistoryWhileTheNoteStillSaves() = runBlocking {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        val notesRoot = File(app.noBackupFilesDir, "notes")
+        val repository = NoteRepository(app)
+        repository.initialize()
+        val id = repository.create()
+        repository.update(id) {
+            it.withBlocks(listOf(markdownBlock("x".repeat(NoteEditHistory.MAX_SNAPSHOT_BYTES + 1))))
+        }
+
+        assertEquals(
+            NoteHistoryUnavailableReason.SnapshotTooLarge,
+            repository.state.value.historyUnavailable.getValue(id),
+        )
+        assertEquals(NoteHistoryAvailability(), repository.state.value.editHistory.getValue(id))
+        val saved = repository.checkpoint(id)
+
+        assertEquals(saved, NoteFileStore(notesRoot).read(id))
+        assertFalse(File(notesRoot, ".edit-history/$id.json").exists())
     }
 }

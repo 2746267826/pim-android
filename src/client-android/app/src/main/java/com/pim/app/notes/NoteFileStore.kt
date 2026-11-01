@@ -11,6 +11,7 @@ import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.MessageDigest
+import java.util.concurrent.CancellationException
 import java.util.zip.ZipEntry
 import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
@@ -18,6 +19,11 @@ import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
 
 data class NoteEntry(val id: String, val title: String, val damaged: Boolean = false)
+
+data class NoteImportQuarantineSummary(
+    val retainedCount: Int = 0,
+    val retainedBytes: Long = 0,
+)
 
 class NoteFileStore(private val root: File) {
     fun saveInsertion(anchor: NoteInsertion): String {
@@ -137,9 +143,11 @@ class NoteFileStore(private val root: File) {
     @Synchronized fun importDocument(input: InputStream): NoteDocument {
         val id = newNoteId()
         val importRoot = File(root, ".import-failures")
-        check(importRoot.isDirectory || importRoot.mkdirs()) { "Cannot create import staging directory" }
-        check(importRoot.usableSpace >= MIN_IMPORT_SPACE_BYTES) { "Insufficient space to import the document package" }
-        val staging = File(importRoot, id)
+        val stagingRoot = File(root, ".import-staging")
+        check(stagingRoot.isDirectory || stagingRoot.mkdirs()) { "Cannot create import staging directory" }
+        recoverAbandonedImports()
+        check(stagingRoot.usableSpace >= MIN_IMPORT_SPACE_BYTES) { "Insufficient space to import the document package" }
+        val staging = File(stagingRoot, id)
         check(staging.mkdirs()) { "Cannot create import staging folder" }
         try {
             val entries = mutableSetOf<String>()
@@ -224,9 +232,37 @@ class NoteFileStore(private val root: File) {
             return visible
         } catch (error: Exception) {
             // Keep the exact received entries for manual recovery instead of publishing a partial note.
-            if (staging.exists() && File(root, id).exists().not()) staging.renameTo(File(importRoot, "$id-failed"))
-            throw error
+            // Published notes are never cleanup candidates. If quarantine is full, keep this one
+            // bounded package in staging and block another import rather than discard user input.
+            val retained = staging.exists() && !File(root, id).exists() &&
+                retainImportFailure(staging, importRoot, id)
+            val preserved = retained || staging.exists()
+            val detail = error.message?.take(180) ?: error.javaClass.simpleName
+            val recovery = if (preserved) {
+                if (retained) "失败导入包已隔离保留，不会替换已有笔记"
+                else "失败导入包仍在受限恢复区，未删除；请先处理恢复包再重试"
+            } else {
+                "失败导入包未能写入恢复区；既有隔离材料未删除，请检查本机空间"
+            }
+            if (error is CancellationException) throw error
+            throw IllegalArgumentException("$detail；$recovery", error)
         }
+    }
+
+    @Synchronized fun recoverAbandonedImports(): NoteImportQuarantineSummary {
+        val importRoot = File(root, ".import-failures")
+        abandonedImportEntries().forEach { (directory, _) ->
+            retainImportFailure(directory, importRoot, directory.name)
+        }
+        return importQuarantineSummary()
+    }
+
+    @Synchronized fun importQuarantineSummary(): NoteImportQuarantineSummary {
+        val entries = importFailureEntries() + abandonedImportEntries()
+        return NoteImportQuarantineSummary(
+            retainedCount = entries.size,
+            retainedBytes = entries.sumOf { it.second },
+        )
     }
 
     fun markdown(note: NoteDocument): String = note.blocks.joinToString("\n\n") { block -> when (block.string("kind")) {
@@ -246,8 +282,56 @@ class NoteFileStore(private val root: File) {
         catch (error: Exception) { atomic.failWrite(stream); throw error }
     }
 
+    private fun retainImportFailure(staging: File, importRoot: File, id: String): Boolean {
+        if (!importRoot.isDirectory && !importRoot.mkdirs()) return false
+        val incomingBytes = directoryBytes(staging)
+        if (incomingBytes > MAX_QUARANTINE_BYTES) return false
+        val target = File(importRoot, id)
+        if (!staging.renameTo(target)) return false
+        val retained = importFailureEntries().toMutableList()
+        var retainedBytes = retained.sumOf { it.second }
+        while (retained.size > MAX_QUARANTINE_ENTRIES || retainedBytes > MAX_QUARANTINE_BYTES) {
+            // Never recycle the package that just arrived before it has a durable home.
+            val oldest = retained.firstOrNull { it.first != target } ?: break
+            if (!oldest.first.deleteRecursively()) {
+                target.renameTo(staging)
+                return false
+            }
+            retained.remove(oldest)
+            retainedBytes -= oldest.second
+        }
+        return retained.size <= MAX_QUARANTINE_ENTRIES && retainedBytes <= MAX_QUARANTINE_BYTES
+    }
+
+    private fun importFailureEntries(): List<Pair<File, Long>> {
+        val failureRoot = File(root, ".import-failures")
+        if (!failureRoot.isDirectory) return emptyList()
+        return failureRoot.listFiles().orEmpty()
+            .filter { it.isDirectory && isImportFailureDirectory(it.name) }
+            .map { it to directoryBytes(it) }
+            .sortedBy { it.first.lastModified() }
+    }
+
+    private fun abandonedImportEntries(): List<Pair<File, Long>> {
+        val stagingRoot = File(root, ".import-staging")
+        if (!stagingRoot.isDirectory) return emptyList()
+        return stagingRoot.listFiles().orEmpty()
+            .filter { it.isDirectory && validNoteId(it.name) }
+            .map { it to directoryBytes(it) }
+            .sortedBy { it.first.lastModified() }
+    }
+
+    private fun isImportFailureDirectory(name: String): Boolean =
+        validNoteId(name.removeSuffix("-failed"))
+
+    private fun directoryBytes(directory: File): Long = directory.walkTopDown()
+        .filter { it.isFile }
+        .sumOf { it.length() }
+
     companion object {
         const val MAX_PHOTO_BYTES = 32 * 1024 * 1024L
+        const val MAX_QUARANTINE_ENTRIES = 2
+        const val MAX_QUARANTINE_BYTES = 224L * 1024 * 1024
         private const val MAX_MANIFEST_BYTES = 8 * 1024 * 1024
         private const val MAX_MARKDOWN_BYTES = 16 * 1024 * 1024
         private const val MAX_INK_PREVIEW_BYTES = 16 * 1024 * 1024

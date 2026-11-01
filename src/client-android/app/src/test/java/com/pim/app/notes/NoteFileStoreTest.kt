@@ -281,6 +281,23 @@ class NoteFileStoreTest {
         assertEquals(attached, store.read(note.id))
     }
 
+    @Test fun failedImportQuarantineIsBoundedWithoutDeletingPublishedNotes() {
+        val note = NoteDocument.create().withTitle("不能回收的已保存笔记")
+        store.save(note)
+
+        repeat(NoteFileStore.MAX_QUARANTINE_ENTRIES + 2) {
+            assertThrows(IllegalArgumentException::class.java) {
+                store.importDocument(ByteArrayInputStream(byteArrayOf(1, 2, 3)))
+            }
+        }
+
+        val summary = store.importQuarantineSummary()
+        assertTrue(summary.retainedCount <= NoteFileStore.MAX_QUARANTINE_ENTRIES)
+        assertTrue(summary.retainedBytes <= NoteFileStore.MAX_QUARANTINE_BYTES)
+        assertEquals(note, store.read(note.id))
+        assertTrue(File(temp.root, ".import-staging").listFiles().orEmpty().isEmpty())
+    }
+
     private fun buildZip(files: Map<String, ByteArray>): ByteArray = ByteArrayOutputStream().also { output ->
         java.util.zip.ZipOutputStream(output).use { zip ->
             files.forEach { (name, bytes) ->

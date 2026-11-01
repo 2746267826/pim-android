@@ -19,13 +19,24 @@ data class NotesState(
     val entries: List<NoteEntry> = emptyList(),
     val documents: Map<String, NoteDocument> = emptyMap(),
     val savedRevisions: Map<String, Long> = emptyMap(),
+    val editHistory: Map<String, NoteHistoryAvailability> = emptyMap(),
     val errors: Set<String> = emptySet(),
     val loadFailed: Boolean = false
 )
 
+data class NoteHistoryAvailability(
+    val canUndo: Boolean = false,
+    val canRedo: Boolean = false,
+    val undoDepth: Int = 0,
+    val redoDepth: Int = 0,
+)
+
 @Singleton
 class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
-    private val store = NoteFileStore(File(context.noBackupFilesDir, "notes"))
+    private val notesRoot = File(context.noBackupFilesDir, "notes")
+    private val store = NoteFileStore(notesRoot)
+    private val editHistory = NoteEditHistoryStore(File(notesRoot, ".edit-history"))
+    private val histories = mutableMapOf<String, NoteEditHistory>()
     private val mutableState = MutableStateFlow(NotesState())
     val state = mutableState.asStateFlow()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -52,8 +63,21 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
             try {
                 val entries = store.entries()
                 val documents = entries.filterNot { it.damaged }.associate { it.id to store.read(it.id) }
+                histories.clear()
+                histories.putAll(documents.mapValues { (_, document) ->
+                    runCatching { editHistory.read(document.id) }.getOrNull()
+                        ?.takeIf { it.current().string("id") == document.id }
+                        ?.reconcile(document)
+                        ?: NoteEditHistory.initial(document)
+                })
                 synchronized(this@NoteRepository) {
-                    mutableState.value = NotesState(true, entries, documents, documents.mapValues { it.value.revision })
+                    mutableState.value = NotesState(
+                        loaded = true,
+                        entries = entries,
+                        documents = documents,
+                        savedRevisions = documents.mapValues { it.value.revision },
+                        editHistory = histories.mapValues { (_, history) -> history.availability() },
+                    )
                 }
             } catch (error: CancellationException) { throw error }
             catch (_: Exception) { mutableState.value = state.value.copy(loadFailed = true) }
@@ -86,9 +110,14 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
         writes.withLock {
             val note = checkNotNull(state.value.documents[id])
             if (state.value.savedRevisions[id] != note.revision) store.save(note)
+            histories[id]?.let(editHistory::save)
             synchronized(this@NoteRepository) {
                 val current = state.value
-                mutableState.value = current.copy(savedRevisions = current.savedRevisions + (id to note.revision), errors = current.errors - id)
+                mutableState.value = current.copy(
+                    savedRevisions = current.savedRevisions + (id to note.revision),
+                    editHistory = histories[id]?.let { current.editHistory + (id to it.availability()) } ?: current.editHistory,
+                    errors = current.errors - id,
+                )
             }
             note
         }
@@ -106,10 +135,57 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
         open().use { store.exportDocument(note, it) }
     }
 
+    suspend fun importDocument(open: () -> InputStream): NoteDocument = withContext(Dispatchers.IO) {
+        initialize()
+        val imported = open().use(store::importDocument)
+        histories[imported.id] = NoteEditHistory.initial(imported)
+        publish(imported, recordHistory = false)
+        imported
+    }
+
+    @Synchronized fun undo(id: String): Boolean = moveHistory(id, forward = false)
+    @Synchronized fun redo(id: String): Boolean = moveHistory(id, forward = true)
+
+    private fun moveHistory(id: String, forward: Boolean): Boolean {
+        val current = state.value.documents[id] ?: return false
+        val history = histories[id] ?: NoteEditHistory.initial(current).also { histories[id] = it }
+        val target = if (forward) history.cursor + 1 else history.cursor - 1
+        if (target !in history.snapshots.indices) return false
+        val nextHistory = history.movedTo(target)
+        val next = current.withHistoryContent(nextHistory.current())
+        histories[id] = nextHistory
+        publish(next, recordHistory = false)
+        return true
+    }
+
     private fun publish(note: NoteDocument) {
+        publish(note, recordHistory = true)
+    }
+
+    private fun publish(note: NoteDocument, recordHistory: Boolean) {
         val old = state.value
+        if (recordHistory) {
+            val previous = old.documents[note.id]
+            if (previous != null) {
+                val history = histories[note.id] ?: NoteEditHistory.initial(previous)
+                val key = previous.historyEditKey(note)
+                if (key.isNotEmpty()) histories[note.id] = history.record(note, key, System.currentTimeMillis())
+            }
+        }
         val entries = listOf(NoteEntry(note.id, note.title)) + old.entries.filterNot { it.id == note.id }
-        mutableState.value = old.copy(entries = entries, documents = old.documents + (note.id to note), errors = old.errors - note.id)
+        mutableState.value = old.copy(
+            entries = entries,
+            documents = old.documents + (note.id to note),
+            editHistory = histories[note.id]?.let { old.editHistory + (note.id to it.availability()) } ?: old.editHistory,
+            errors = old.errors - note.id,
+        )
         pending.trySend(note.id)
     }
+
+    private fun NoteEditHistory.availability() = NoteHistoryAvailability(
+        canUndo = canUndo,
+        canRedo = canRedo,
+        undoDepth = cursor,
+        redoDepth = snapshots.lastIndex - cursor,
+    )
 }

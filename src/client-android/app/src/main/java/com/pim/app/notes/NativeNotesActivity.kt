@@ -75,6 +75,13 @@ class NativeNotesActivity : ComponentActivity() {
         if (uri != null && id != null) model.exportMaterial(id) { contentResolver.openOutputStream(uri, "wt") ?: error("Cannot write material export") }
         else if (uri != null) model.tell("无法确认固定版本，未导出；不会改用当前新稿，请重新选择版本")
     }
+    private val importPackage = registerForActivityResult(ActivityResultContracts.OpenDocument()) { uri ->
+        if (uri == null) model.tell("已取消导入文档包")
+        else model.importDocument(
+            open = { contentResolver.openInputStream(uri) ?: error("Cannot read document package") },
+            onImported = model::open,
+        )
+    }
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
@@ -159,12 +166,16 @@ class NativeNotesActivity : ComponentActivity() {
                     onExport = { note ->
                         exportSnapshot = note
                         try { export.launch("PIM-document.zip") } catch (_: Exception) { exportSnapshot = null; model.tell("没有可用的文档导出位置") }
+                    },
+                    onImport = {
+                        try { importPackage.launch(arrayOf("application/zip", "application/octet-stream")) }
+                        catch (_: Exception) { model.tell("没有可用的文档包选择器") }
                     }, onRetryMaterial = model.materials::retry,
                     onExportMaterial = { id ->
                         model.prepareMaterialExport(id)
                         try { exportMaterials.launch("PIM-material-${id.take(8)}.zip") }
                         catch (_: Exception) { model.consumeMaterialExport(); model.tell("没有可用的材料包导出位置") }
-                    }, onExit = ::finish,
+                    }, onUndo = model.notes::undo, onRedo = model.notes::redo, onExit = ::finish,
                     onStopRecording = {
                         recording.session?.takeIf { it.active && it.noteId == selected }?.let { session ->
                             RecordingController.finish(this, session.id)?.let { model.tell(it.message) }

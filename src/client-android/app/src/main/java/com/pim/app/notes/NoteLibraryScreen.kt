@@ -35,7 +35,7 @@ internal fun NoteLibraryScreen(
     uploads: NoteUploadsState = NoteUploadsState(),
     currentTarget: NoteUploadTarget? = null,
     onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
-    asrTaskCount: Int = 0, onAsr: () -> Unit = {},
+    asrTaskCount: Int = 0, onAsr: () -> Unit = {}, onImport: () -> Unit = {},
 ) {
     val d = PimTheme.dimensions
     var search by rememberSaveable { mutableStateOf("") }
@@ -69,6 +69,16 @@ internal fun NoteLibraryScreen(
                     Icon(Icons.Default.GraphicEq, null)
                     Spacer(Modifier.width(d.spaceSmall))
                     Text(if (asrTaskCount > 0) "逐段转写任务 · $asrTaskCount 个" else "逐段转写任务")
+                }
+                Spacer(Modifier.height(d.spaceMedium))
+                OutlinedButton(
+                    onClick = { if (!busy) onImport() },
+                    enabled = !busy,
+                    modifier = Modifier.fillMaxWidth().testTag("note-import-package"),
+                ) {
+                    Icon(Icons.Default.FileUpload, null)
+                    Spacer(Modifier.width(d.spaceSmall))
+                    Text("导入可编辑文档包")
                 }
                 Spacer(Modifier.height(d.spaceMedium))
                 OutlinedTextField(search, { search = it }, label = { Text("搜索本机笔记") }, singleLine = true,

@@ -356,6 +356,24 @@ class NotesViewModel @Inject constructor(
         }
     }
 
+    fun importDocument(open: () -> java.io.InputStream, onImported: (String) -> Unit = {}) {
+        if (busy.value) return
+        mutableBusy.value = true
+        viewModelScope.launch {
+            try {
+                val imported = notes.importDocument(open)
+                onImported(imported.id)
+                tell("文档包已安全导入为新笔记；原始文件未被替换。")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                tell("文档包导入失败；未发布不完整笔记。请检查压缩包、照片校验和及本机空间。")
+            } finally {
+                mutableBusy.value = false
+            }
+        }
+    }
+
     fun prepareMaterialExport(id: String) { saved["exportMaterialVersionId"] = id }
     fun consumeMaterialExport(): String? = saved.remove("exportMaterialVersionId")
 

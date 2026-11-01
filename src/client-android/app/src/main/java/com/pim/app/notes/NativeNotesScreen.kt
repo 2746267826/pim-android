@@ -41,6 +41,8 @@ fun NativeNotesScreen(
     onPauseResume: () -> Unit, onFinish: (String) -> Unit,
     onPlay: (RecordingSession, Int) -> Unit, onExport: (NoteDocument) -> Unit,
     onRetryMaterial: (String) -> Unit, onExportMaterial: (String) -> Unit,
+    onImport: () -> Unit = {},
+    onUndo: (String) -> Unit = {}, onRedo: (String) -> Unit = {},
     onExit: () -> Unit = {}, onStopRecording: () -> Unit = {},
     completion: NoteCompletion? = null, onDismissCompletion: () -> Unit = {}, onDismissMessage: (String) -> Unit = {},
     uploads: NoteUploadsState = NoteUploadsState(), uploadTarget: NoteUploadTarget? = null,
@@ -67,7 +69,7 @@ fun NativeNotesScreen(
             if (note == null) {
                 NoteLibraryScreen(state, selectedId, recording, busy, onCreate, onOpen, onExit,
                     uploads = uploads, currentTarget = uploadTarget, onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
-                    asrTaskCount = asr.tasks.size, onAsr = { showAsr = true })
+                    asrTaskCount = asr.tasks.size, onAsr = { showAsr = true }, onImport = onImport)
             } else key(note.id) {
                 var preview by rememberSaveable { mutableStateOf(false) }
                 val scope = rememberCoroutineScope()
@@ -197,7 +199,12 @@ fun NativeNotesScreen(
                         },
                         onPreview = { afterInput { preview = !preview } }, onFinish = { afterInput { confirmFinish = true } },
                         onMaterials = { leaveInput(); showMaterials = true }, onRecordings = { leaveInput(); showRecordings = true },
-                        onExport = { afterInput(onExport) }, onAbout = { leaveInput(); showAbout = true }, needsReview = editor.reviewIds.isNotEmpty())
+                        onExport = { afterInput(onExport) }, onImport = onImport, onAbout = { leaveInput(); showAbout = true },
+                        needsReview = editor.reviewIds.isNotEmpty(),
+                        canUndo = state.editHistory[note.id]?.canUndo == true,
+                        canRedo = state.editHistory[note.id]?.canRedo == true,
+                        onUndo = { afterInput { onUndo(note.id) } },
+                        onRedo = { afterInput { onRedo(note.id) } })
                     NoteEditorDock(recording, ownActive, saved && !busy && !committing && !recording.active && !recording.preparing,
                         !busy && !committing && !preview && lastMarkdown != null,
                         onRecord = { afterInput { onRecord(it.id) } }, onPauseResume = onPauseResume,

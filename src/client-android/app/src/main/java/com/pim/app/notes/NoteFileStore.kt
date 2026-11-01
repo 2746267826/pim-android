@@ -5,11 +5,14 @@ import android.graphics.BitmapFactory
 import android.graphics.Matrix
 import android.util.AtomicFile
 import androidx.exifinterface.media.ExifInterface
+import java.io.BufferedInputStream
+import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
 import java.security.MessageDigest
 import java.util.zip.ZipEntry
+import java.util.zip.ZipInputStream
 import java.util.zip.ZipOutputStream
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.*
@@ -131,6 +134,101 @@ class NoteFileStore(private val root: File) {
         }
     }
 
+    @Synchronized fun importDocument(input: InputStream): NoteDocument {
+        val id = newNoteId()
+        val importRoot = File(root, ".import-failures")
+        check(importRoot.isDirectory || importRoot.mkdirs()) { "Cannot create import staging directory" }
+        check(importRoot.usableSpace >= MIN_IMPORT_SPACE_BYTES) { "Insufficient space to import the document package" }
+        val staging = File(importRoot, id)
+        check(staging.mkdirs()) { "Cannot create import staging folder" }
+        try {
+            val entries = mutableSetOf<String>()
+            var manifest: ByteArray? = null
+            var markdownProjection: ByteArray? = null
+            val stagedAssets = mutableSetOf<String>()
+            var entryCount = 0
+            var expandedBytes = 0L
+            ZipInputStream(BufferedInputStream(input)).use { zip ->
+                while (true) {
+                    val entry = zip.nextEntry ?: break
+                    entryCount++
+                    require(entryCount <= MAX_ARCHIVE_ENTRIES) { "Document package has too many entries" }
+                    require(validArchivePath(entry.name)) { "Unsafe document package path" }
+                    require(entries.add(entry.name)) { "Duplicate document package path" }
+                    require(!entry.isDirectory) { "Document package directories are not artifacts" }
+                    val bytes = when {
+                        entry.name == "note.json" -> readEntry(zip, MAX_MANIFEST_BYTES)
+                        entry.name == "document.md" -> readEntry(zip, MAX_MARKDOWN_BYTES)
+                        PHOTO_ENTRY.matches(entry.name) -> readEntry(zip, MAX_PHOTO_BYTES.toInt())
+                        INK_ENTRY.matches(entry.name) -> readEntry(zip, MAX_INK_PREVIEW_BYTES)
+                        else -> throw IllegalArgumentException("Unknown document package entry")
+                    }
+                    expandedBytes += bytes.size
+                    require(expandedBytes <= MAX_EXPANDED_BYTES) { "Document package expands beyond the local budget" }
+                    when {
+                        entry.name == "note.json" -> manifest = bytes
+                        entry.name == "document.md" -> markdownProjection = bytes
+                        entry.name.startsWith("assets/") -> {
+                            val target = File(staging, entry.name)
+                            check(target.parentFile!!.isDirectory || target.parentFile!!.mkdirs())
+                            target.writeBytes(bytes)
+                            stagedAssets += entry.name
+                        }
+                    }
+                }
+            }
+            val exported = NoteDocument.decode(requireNotNull(manifest).toString(Charsets.UTF_8))
+            requireNotNull(markdownProjection) { "Missing document.md projection" }
+            require(exported.blocks.all { it.string("kind") in setOf("markdown", "photo", "ink") }) {
+                "Package contains extensions with unknown material semantics"
+            }
+            exported.blocks.filter { it.string("kind") == "photo" }.forEach { block ->
+                require(block.string("mimeType") in setOf("image/jpeg", "image/png", "image/webp"))
+                val photo = File(staging, photoPath(block))
+                require(photo.isFile && photo.length() <= MAX_PHOTO_BYTES)
+                require(validMaterialDigest(block.string("sha256")))
+                require(photo.inputStream().use(::hashStream) == block.string("sha256")) { "Photo integrity check failed" }
+            }
+            exported.blocks.filter { it.string("kind") == "ink" }.forEach { block ->
+                val preview = File(staging, inkPath(block))
+                require(preview.isFile) { "Missing editable ink preview" }
+                require(preview.inputStream().use { it.readNBytesCompat(8) }.contentEquals(PNG_SIGNATURE)) {
+                    "Editable ink preview is not a PNG"
+                }
+            }
+            val imported = exported.copy(source = JsonObject(exported.source + mapOf(
+                "id" to JsonPrimitive(id),
+                "revision" to JsonPrimitive(0),
+            )))
+            imported.validate()
+            require(markdownProjection!!.toString(Charsets.UTF_8) == markdown(imported)) {
+                "document.md does not match the editable source"
+            }
+            val expectedAssets = imported.blocks.mapNotNull { block ->
+                when (block.string("kind")) {
+                    "photo" -> photoPath(block)
+                    "ink" -> inkPath(block)
+                    else -> null
+                }
+            }.toSet()
+            require(stagedAssets == expectedAssets && expectedAssets.size == stagedAssets.size) {
+                "Document package does not contain exactly the referenced materials"
+            }
+            atomicWrite(File(staging, "note.json")) {
+                it.write(imported.source.toString().toByteArray(Charsets.UTF_8))
+            }
+            val target = directory(id)
+            check(!target.exists() && staging.renameTo(target)) { "Cannot finalize imported document" }
+            val visible = read(id)
+            require(visible.id == imported.id && visible.blocks == imported.blocks)
+            return visible
+        } catch (error: Exception) {
+            // Keep the exact received entries for manual recovery instead of publishing a partial note.
+            if (staging.exists() && File(root, id).exists().not()) staging.renameTo(File(importRoot, "$id-failed"))
+            throw error
+        }
+    }
+
     fun markdown(note: NoteDocument): String = note.blocks.joinToString("\n\n") { block -> when (block.string("kind")) {
         "markdown" -> block.string("text")
         "photo" -> "![照片](${photoPath(block)})"
@@ -150,9 +248,45 @@ class NoteFileStore(private val root: File) {
 
     companion object {
         const val MAX_PHOTO_BYTES = 32 * 1024 * 1024L
+        private const val MAX_MANIFEST_BYTES = 8 * 1024 * 1024
+        private const val MAX_MARKDOWN_BYTES = 16 * 1024 * 1024
+        private const val MAX_INK_PREVIEW_BYTES = 16 * 1024 * 1024
+        private const val MAX_EXPANDED_BYTES = 192L * 1024 * 1024
+        private const val MAX_ARCHIVE_ENTRIES = 2048
+        private const val MIN_IMPORT_SPACE_BYTES = 64L * 1024 * 1024
+        private val PHOTO_ENTRY = Regex("""assets/[0-9a-f-]{36}\.(?:jpg|png|webp)""")
+        private val INK_ENTRY = Regex("""assets/[0-9a-f-]{36}-[0-9a-f]{64}\.png""")
+        private val PNG_SIGNATURE = byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a)
         private fun photoExtension(mime: String?): String = when (mime) { "image/png" -> "png"; "image/webp" -> "webp"; else -> "jpg" }
         internal fun photoPath(block: JsonObject): String = "assets/${block.string("assetId")}.${photoExtension(block["mimeType"]?.jsonPrimitive?.content)}"
         internal fun inkPath(block: JsonObject): String = "assets/${block.string("id")}-${hash(block.getValue("ink").toString())}.png"
+        private fun validArchivePath(path: String): Boolean =
+            path == path.trim() && !path.startsWith('/') && !path.contains('\\') &&
+                path.split('/').all { it.isNotEmpty() && it != "." && it != ".." }
+        private fun readEntry(zip: ZipInputStream, limit: Int): ByteArray {
+            val output = ByteArrayOutputStream()
+            val buffer = ByteArray(64 * 1024)
+            var total = 0
+            while (true) {
+                val count = zip.read(buffer)
+                if (count < 0) break
+                total += count
+                require(total <= limit) { "Document package entry exceeds the local budget" }
+                output.write(buffer, 0, count)
+            }
+            return output.toByteArray()
+        }
+        private fun InputStream.readNBytesCompat(count: Int): ByteArray {
+            val output = ByteArrayOutputStream(count)
+            val buffer = ByteArray(count)
+            var total = 0
+            while (total < count) {
+                val read = read(buffer, 0, count - total)
+                if (read < 0) break
+                output.write(buffer, 0, read); total += read
+            }
+            return output.toByteArray()
+        }
         private fun hash(text: String) = MessageDigest.getInstance("SHA-256").digest(text.toByteArray(Charsets.UTF_8)).joinToString("") { "%02x".format(it) }
         private fun hashStream(input: InputStream): String {
             val hash = MessageDigest.getInstance("SHA-256")

@@ -150,16 +150,22 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
             else if (!preserveDamagedJournal) editHistory.delete(id)
             synchronized(this@NoteRepository) {
                 val current = state.value
-                val stillCurrent = current.documents[id]?.revision == note.revision
+                val currentNote = current.documents[id]
+                val stillCurrent = currentNote?.revision == note.revision
+                val currentHistory = histories[id]?.takeIf {
+                    currentNote?.let(it::matches) == true
+                }?.availability()
                 mutableState.value = current.copy(
                     savedRevisions = if (stillCurrent) {
                         current.savedRevisions + (id to note.revision)
                     } else {
                         current.savedRevisions
                     },
-                    editHistory = histories[id]?.takeIf { current.documents[id]?.let(it::matches) == true }
-                        ?.let { current.editHistory + (id to it.availability()) }
-                        ?: (current.editHistory - id),
+                    editHistory = if (currentNote != null) {
+                        current.editHistory + (id to (currentHistory ?: NoteHistoryAvailability()))
+                    } else {
+                        current.editHistory - id
+                    },
                     errors = current.errors - id,
                 )
             }
@@ -253,8 +259,7 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
         mutableState.value = old.copy(
             entries = entries,
             documents = old.documents + (note.id to note),
-            editHistory = availability?.let { old.editHistory + (note.id to it) }
-                ?: (old.editHistory - note.id),
+            editHistory = old.editHistory + (note.id to (availability ?: NoteHistoryAvailability())),
             historyUnavailable = unavailable,
             errors = old.errors - note.id,
         )

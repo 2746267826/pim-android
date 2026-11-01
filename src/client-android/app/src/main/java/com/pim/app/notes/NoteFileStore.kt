@@ -26,6 +26,8 @@ data class NoteImportQuarantineSummary(
 )
 
 class NoteFileStore(private val root: File) {
+    private val importLock = Any()
+
     fun saveInsertion(anchor: NoteInsertion): String {
         anchor.validate()
         val token = newNoteId()
@@ -140,7 +142,11 @@ class NoteFileStore(private val root: File) {
         }
     }
 
-    @Synchronized fun importDocument(input: InputStream): NoteDocument {
+    fun importDocument(input: InputStream): NoteDocument = synchronized(importLock) {
+        importDocumentLocked(input)
+    }
+
+    private fun importDocumentLocked(input: InputStream): NoteDocument {
         val id = newNoteId()
         val importRoot = File(root, ".import-failures")
         val stagingRoot = File(root, ".import-staging")
@@ -252,17 +258,17 @@ class NoteFileStore(private val root: File) {
         }
     }
 
-    @Synchronized fun recoverAbandonedImports(): NoteImportQuarantineSummary {
+    fun recoverAbandonedImports(): NoteImportQuarantineSummary = synchronized(importLock) {
         val importRoot = File(root, ".import-failures")
         abandonedImportEntries().forEach { (directory, _) ->
             retainImportFailure(directory, importRoot, directory.name)
         }
-        return importQuarantineSummary()
+        importQuarantineSummary()
     }
 
-    @Synchronized fun importQuarantineSummary(): NoteImportQuarantineSummary {
+    fun importQuarantineSummary(): NoteImportQuarantineSummary = synchronized(importLock) {
         val entries = importFailureEntries() + abandonedImportEntries()
-        return NoteImportQuarantineSummary(
+        NoteImportQuarantineSummary(
             retainedCount = entries.size,
             retainedBytes = entries.sumOf { it.second },
         )

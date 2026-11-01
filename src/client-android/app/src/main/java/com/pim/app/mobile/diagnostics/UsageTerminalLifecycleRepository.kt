@@ -153,6 +153,7 @@ class UsageTerminalLifecycleRepository internal constructor(
             var removed = 0L
             var reclaimedReasons = emptyList<TerminalReasonCount>()
             if (reclaimExpired) {
+                val archivePassId = UUID.randomUUID().toString()
                 var remainingBudget = maxReclaimRowsPerPass
                 while (remainingBudget > 0) {
                     val ids = dao.rejectedUsageSummaryIdsOlderThan(
@@ -169,6 +170,7 @@ class UsageTerminalLifecycleRepository internal constructor(
                             )
                         )
                         val archiveJson = archivePageJson(
+                            passId = archivePassId,
                             archivedAtUtc = now,
                             cutoffUtc = cutoff,
                             ids = ids,
@@ -267,7 +269,7 @@ class UsageTerminalLifecycleRepository internal constructor(
                 entityType = USAGE_TERMINAL_ARCHIVE_ENTITY,
                 limit = MAX_ARCHIVE_HISTORY
             )
-            val durableHistory = archiveRows.mapNotNull(::parseArchiveRow).reversed()
+            val durableHistory = archiveHistory(archiveRows)
             val archiveHistory = if (durableHistory.isNotEmpty()) {
                 durableHistory
             } else {
@@ -335,9 +337,7 @@ class UsageTerminalLifecycleRepository internal constructor(
                     limit = MAX_ARCHIVE_HISTORY
                 )
             }.getOrDefault(emptyList())
-            val fallbackDurableHistory = fallbackArchiveRows
-                .mapNotNull(::parseArchiveRow)
-                .reversed()
+            val fallbackDurableHistory = archiveHistory(fallbackArchiveRows)
             val fallbackHistory = if (fallbackDurableHistory.isNotEmpty()) {
                 fallbackDurableHistory
             } else {
@@ -373,32 +373,65 @@ class UsageTerminalLifecycleRepository internal constructor(
     }
 
     private fun archivePageJson(
+        passId: String,
         archivedAtUtc: Long,
         cutoffUtc: Long,
         ids: List<Long>,
         reasons: List<TerminalReasonCount>
     ): JSONObject = JSONObject()
         .put("version", 1)
+        .put("passId", passId)
         .put("archivedAtUtc", archivedAtUtc)
         .put("cutoffUtc", cutoffUtc)
         .put("rowCount", ids.size)
         .put("reasons", reasonsJson(reasons))
 
-    private fun parseArchiveRow(
+    private fun parseArchivePage(
         row: com.pim.app.data.UsageTerminalArchiveRow
-    ): TerminalArchiveEntry? {
+    ): DurableArchivePage? {
         val json = row.requestJson?.let { raw ->
             runCatching { JSONObject(raw) }.getOrNull()
         }
         val count = maxOf(row.rowCount.toLong(), json?.optLong("rowCount", 0L) ?: 0L)
             .coerceAtLeast(0L)
         if (count <= 0L) return null
-        return TerminalArchiveEntry(
+        return DurableArchivePage(
+            groupKey = json?.optString("passId")
+                ?.takeIf { it.isNotBlank() }
+                ?: "legacy-${row.id}",
             archivedAtUtc = row.createdAtUtc,
             cutoffUtc = json?.optLong("cutoffUtc", 0L) ?: 0L,
             count = count,
             reasons = parseReasons(json?.optJSONArray("reasons"))
         )
+    }
+
+    /**
+     * Room archives every bounded page so an interruption cannot lose the
+     * summary for rows already deleted. The visible history is one entry per
+     * cleanup pass, reconstructed from the durable pages.
+     */
+    private fun archiveHistory(
+        rows: List<com.pim.app.data.UsageTerminalArchiveRow>
+    ): List<TerminalArchiveEntry> {
+        val grouped = linkedMapOf<String, TerminalArchiveEntry>()
+        rows.asReversed().mapNotNull(::parseArchivePage).forEach { page ->
+            val previous = grouped[page.groupKey]
+            grouped[page.groupKey] = if (previous == null) {
+                TerminalArchiveEntry(
+                    archivedAtUtc = page.archivedAtUtc,
+                    cutoffUtc = page.cutoffUtc,
+                    count = page.count,
+                    reasons = page.reasons
+                )
+            } else {
+                previous.copy(
+                    count = previous.count + page.count,
+                    reasons = mergeReasons(previous.reasons, page.reasons)
+                )
+            }
+        }
+        return grouped.values.toList().takeLast(MAX_ARCHIVE_HISTORY)
     }
 
     private fun mergeReasons(
@@ -543,6 +576,14 @@ class UsageTerminalLifecycleRepository internal constructor(
         val lastReclaimedReasons: List<TerminalReasonCount> = emptyList(),
         val lastError: String? = null,
         val history: List<TerminalArchiveEntry> = emptyList()
+    )
+
+    private data class DurableArchivePage(
+        val groupKey: String,
+        val archivedAtUtc: Long,
+        val cutoffUtc: Long,
+        val count: Long,
+        val reasons: List<TerminalReasonCount>
     )
 
     companion object {

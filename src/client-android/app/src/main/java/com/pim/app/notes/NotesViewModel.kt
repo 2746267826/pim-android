@@ -303,6 +303,28 @@ class NotesViewModel @Inject constructor(
         }
     }
 
+    fun retryArtifactSteps(kind: NoteArtifactKind, stepKeys: List<String>, duplicateChargeConfirmed: Boolean) {
+        if (!duplicateChargeConfirmed) return
+        val entry = mutableArtifactEntry.value ?: return
+        val task = latestArtifactTask(kind) ?: run {
+            tell("未找到当前固定材料的原任务；不会另建任务。")
+            return
+        }
+        if (stepKeys.isEmpty() || stepKeys.size > 20 || stepKeys.distinct().size != stepKeys.size) {
+            tell("所选恢复步骤无效；原任务与已有结果保留。")
+            return
+        }
+        viewModelScope.launch {
+            artifacts.retrySelectedSteps(
+                taskId = task.taskId,
+                noteId = entry.noteId,
+                materialVersionId = entry.materialVersionId,
+                stepKeys = stepKeys,
+                duplicateChargeConfirmed = true,
+            )
+        }
+    }
+
     private fun latestArtifactTask(kind: NoteArtifactKind): NoteArtifactTaskRecord? {
         val entry = mutableArtifactEntry.value ?: return null
         return artifacts.state.value.tasks

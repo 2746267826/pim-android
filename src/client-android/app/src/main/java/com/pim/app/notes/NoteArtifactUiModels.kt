@@ -130,6 +130,10 @@ data class NoteArtifactEditorUiState(
     val kind: NoteArtifactKind,
     val draft: NoteArtifactDraft? = null,
     val candidates: List<NoteArtifactCandidateUi> = emptyList(),
+    val taskId: String? = null,
+    val taskPhase: String? = null,
+    val retryReceiptPending: Boolean = false,
+    val recoverySteps: List<NoteArtifactRecoveryStepUi> = emptyList(),
     @Deprecated("Use confirmedHeadCandidateId only after a server head receipt")
     val selectedCandidateId: String? = null,
     /** Candidate confirmed by the server as the artifact head, never a local guess. */
@@ -145,10 +149,18 @@ data class NoteArtifactEditorUiState(
     val isDirty: Boolean get() = draft?.dirty == true
     val canStop: Boolean get() = workPhase == NoteArtifactWorkPhase.Running
     val canRegenerate: Boolean get() = workPhase != NoteArtifactWorkPhase.Running
-    val canRecover: Boolean get() =
+    val canRecover: Boolean get() = retryReceiptPending ||
         workPhase == NoteArtifactWorkPhase.Failed || workPhase == NoteArtifactWorkPhase.Unknown
     val canSaveManualRevision: Boolean
         get() = draft != null && draft.dirty.not() && confirmedHeadCandidate != null
+
+    val retryableSteps: List<NoteArtifactRecoveryStepUi>
+        get() = recoverySteps.filter { it.canRetry }
+
+    val canRetrySelectedSteps: Boolean
+        get() = taskId != null && !retryReceiptPending &&
+            taskPhase?.let(::isRunningTaskPhase) != true &&
+            retryableSteps.isNotEmpty()
 
     val confirmedHeadCandidate: NoteArtifactCandidateUi?
         get() = candidates.firstOrNull { it.candidateId == confirmedHeadCandidateId }
@@ -204,6 +216,10 @@ data class NoteArtifactEditorUiState(
         updatedWorkPhase: NoteArtifactWorkPhase = workPhase,
         updatedWorkDetail: String? = workDetail,
         updatedProblem: String? = problem,
+        updatedTaskId: String? = taskId,
+        updatedTaskPhase: String? = taskPhase,
+        updatedRetryReceiptPending: Boolean = retryReceiptPending,
+        updatedRecoverySteps: List<NoteArtifactRecoveryStepUi> = recoverySteps,
     ): NoteArtifactEditorUiState = copy(
         candidates = updatedCandidates,
         confirmedHeadCandidateId = updatedConfirmedHeadCandidateId,
@@ -212,8 +228,59 @@ data class NoteArtifactEditorUiState(
         workPhase = updatedWorkPhase,
         workDetail = updatedWorkDetail,
         problem = updatedProblem,
+        taskId = updatedTaskId,
+        taskPhase = updatedTaskPhase,
+        retryReceiptPending = updatedRetryReceiptPending,
+        recoverySteps = updatedRecoverySteps,
     )
 }
+
+/**
+ * One server-reported derived step.
+ *
+ * The API retry operation rejects succeeded and running steps. Other reported
+ * statuses remain explicitly retryable, matching the server's own allow rule.
+ */
+@Immutable
+data class NoteArtifactRecoveryStepUi(
+    val key: String,
+    val kind: String,
+    val status: String,
+    val attemptCount: Int,
+    val lastErrorCode: String? = null,
+    val lastErrorMessage: String? = null,
+) {
+    val canRetry: Boolean get() = isRetryableDerivedStepStatus(status)
+
+    val statusLabel: String
+        get() = when (status) {
+            "Succeeded" -> "已完成"
+            "Running" -> "执行中"
+            "Queued" -> "排队中"
+            "Cancelled" -> "已取消"
+            "Unknown" -> "结果未知"
+            "Blocked" -> "受阻断"
+            "Failed" -> "失败"
+            else -> status.ifBlank { "状态未知" }
+        }
+
+    val failureLabel: String?
+        get() {
+            val code = lastErrorCode?.takeIf(String::isNotBlank)
+            val message = lastErrorMessage?.takeIf(String::isNotBlank)
+            return when {
+                code != null && message != null -> "$code：$message"
+                code != null -> code
+                else -> message
+            }
+        }
+}
+
+internal fun isRunningTaskPhase(phase: String): Boolean =
+    phase == "Queued" || phase == "Running"
+
+internal fun isRetryableDerivedStepStatus(status: String): Boolean =
+    status != "Succeeded" && status != "Running"
 
 @Immutable
 data class NoteArtifactCandidateUi(

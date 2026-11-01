@@ -3,6 +3,8 @@ package com.pim.app.notes
 import com.pim.app.TestPimApp
 import com.pim.core.network.BoundUploadSession
 import java.io.IOException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
@@ -88,6 +90,10 @@ class NoteArtifactRepositoryTest {
             expectedHeadVersionId = full.headVersionId,
             contentMarkdown = savedDraft.text,
         )
+        val acceptedDraft = NoteArtifactDraftStore.at(temp.root).read(binding, savedDraft.localDraftId)
+        assertEquals("manual-version", acceptedDraft.baseServerArtifactVersionId)
+        assertEquals("artifact-rev-manual", acceptedDraft.expectedServerRevision)
+        assertFalse(acceptedDraft.dirty)
         repository.selectCandidate(
             artifactId = full.artifactId,
             expectedHeadRevision = requireNotNull(full.revision),
@@ -161,6 +167,249 @@ class NoteArtifactRepositoryTest {
 
         assertTrue(transport.manualRevisionHeads.isEmpty())
         assertTrue(repository.state.value.message.orEmpty().contains("当前账号或服务器"))
+    }
+
+    @Test fun retrySelectedStepsSendsOnlyExplicitFailedKeysAndKeepsSucceededStepsOut() = runBlocking {
+        val task = seedTask()
+        tasks.recordRemote(
+            task.taskId,
+            NoteArtifactRemoteTaskView("task-rev", "Completed", observedAtMillis = 2_000),
+            nowMillis = 2_000,
+        )
+        transport.detail = detailView(
+            NoteArtifactRemoteTaskView("task-rev", "Completed", observedAtMillis = 2_000),
+            steps = listOf(
+                step("image-1", "Succeeded"),
+                step("record-1", "Failed", error = "upstream_timeout"),
+                step("analysis-1", "Blocked", error = "dependency_failed"),
+            ),
+        )
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, task.taskId)
+
+        repository.retrySelectedSteps(
+            taskId = task.taskId,
+            noteId = noteId,
+            materialVersionId = materialVersionId,
+            stepKeys = listOf("record-1"),
+            duplicateChargeConfirmed = true,
+        )
+
+        assertEquals(listOf(listOf("record-1")), transport.retryStepKeys)
+        assertEquals("Completed", tasks.read(task.taskId).remote?.phase)
+        assertEquals("task-rev-retry-1", tasks.read(task.taskId).remote?.revision)
+        assertNull(tasks.read(task.taskId).pendingRetry)
+    }
+
+    @Test fun concurrentStepRetryDoesNotQueueSecondChargedRequest() = runBlocking {
+        val task = seedTask()
+        tasks.recordRemote(
+            task.taskId,
+            NoteArtifactRemoteTaskView("task-rev", "Completed", observedAtMillis = 2_000),
+            nowMillis = 2_000,
+        )
+        transport.detail = detailView(
+            NoteArtifactRemoteTaskView("task-rev", "Completed", observedAtMillis = 2_000),
+            steps = listOf(step("record-1", "Failed", error = "upstream_timeout")),
+        )
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, task.taskId)
+        val enteredTransport = CompletableDeferred<Unit>()
+        val releaseTransport = CompletableDeferred<Unit>()
+        transport.onRetry = {
+            enteredTransport.complete(Unit)
+            releaseTransport.await()
+        }
+
+        val first = async {
+            repository.retrySelectedSteps(
+                taskId = task.taskId,
+                noteId = noteId,
+                materialVersionId = materialVersionId,
+                stepKeys = listOf("record-1"),
+                duplicateChargeConfirmed = true,
+            )
+        }
+        enteredTransport.await()
+        repository.retrySelectedSteps(
+            taskId = task.taskId,
+            noteId = noteId,
+            materialVersionId = materialVersionId,
+            stepKeys = listOf("record-1"),
+            duplicateChargeConfirmed = true,
+        )
+        assertEquals(1, transport.retryStepKeys.size)
+
+        releaseTransport.complete(Unit)
+        first.await()
+        assertEquals(1, transport.retryStepKeys.size)
+        assertNull(tasks.read(task.taskId).pendingRetry)
+    }
+
+    @Test fun unknownRetryReceiptNeedsExplicitReplayWithSameRetryId() = runBlocking {
+        val task = seedTask()
+        tasks.recordRemote(
+            task.taskId,
+            NoteArtifactRemoteTaskView("task-rev", "Completed", observedAtMillis = 2_000),
+            nowMillis = 2_000,
+        )
+        transport.detail = detailView(
+            NoteArtifactRemoteTaskView("task-rev", "Completed", observedAtMillis = 2_000),
+            steps = listOf(step("record-1", "Failed", error = "upstream_timeout")),
+        )
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, task.taskId)
+        transport.retryFailure = IOException("response was lost")
+
+        repository.retrySelectedSteps(
+            taskId = task.taskId,
+            noteId = noteId,
+            materialVersionId = materialVersionId,
+            stepKeys = listOf("record-1"),
+            duplicateChargeConfirmed = true,
+        )
+
+        val pending = requireNotNull(tasks.read(task.taskId).pendingRetry)
+        assertEquals(NoteArtifactIntentPhase.VerificationPending, pending.phase)
+        assertEquals(1, transport.retryStepKeys.size)
+        repository.retrySelectedSteps(
+            taskId = task.taskId,
+            noteId = noteId,
+            materialVersionId = materialVersionId,
+            stepKeys = listOf("record-1"),
+            duplicateChargeConfirmed = true,
+        )
+        assertEquals(1, transport.retryStepKeys.size)
+        assertTrue(repository.state.value.message.orEmpty().contains("核对原恢复请求"))
+
+        repository.replayRetry(task.taskId, freshlyConfirmed = true)
+
+        assertEquals(2, transport.retryStepKeys.size)
+        assertEquals(listOf(pending.retryId, pending.retryId), transport.retryIds)
+        assertNull(tasks.read(task.taskId).pendingRetry)
+    }
+
+    @Test fun retrySelectedStepsRejectsSucceededOrStaleStepsBeforeTransport() = runBlocking {
+        val task = seedTask()
+        tasks.recordRemote(
+            task.taskId,
+            NoteArtifactRemoteTaskView("task-rev-new", "Completed", observedAtMillis = 2_000),
+            nowMillis = 2_000,
+        )
+        transport.detail = detailView(
+            NoteArtifactRemoteTaskView("task-rev-old", "Completed", observedAtMillis = 1_000),
+            steps = listOf(step("done", "Succeeded"), step("failed", "Failed")),
+        )
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, task.taskId)
+        tasks.recordRemote(
+            task.taskId,
+            NoteArtifactRemoteTaskView("task-rev-new", "Completed", observedAtMillis = 2_100),
+            nowMillis = 2_100,
+        )
+
+        repository.retrySelectedSteps(
+            taskId = task.taskId,
+            noteId = noteId,
+            materialVersionId = materialVersionId,
+            stepKeys = listOf("failed"),
+            duplicateChargeConfirmed = true,
+        )
+        assertTrue(transport.retryStepKeys.isEmpty())
+        assertTrue(repository.state.value.message.orEmpty().contains("进度已变化"))
+
+        transport.detail = detailView(
+            NoteArtifactRemoteTaskView("task-rev-new", "Completed", observedAtMillis = 2_100),
+            steps = listOf(step("done", "Succeeded"), step("failed", "Failed")),
+        )
+        repository.refresh(noteId, materialVersionId, task.taskId)
+        repository.retrySelectedSteps(
+            taskId = task.taskId,
+            noteId = noteId,
+            materialVersionId = materialVersionId,
+            stepKeys = listOf("done"),
+            duplicateChargeConfirmed = true,
+        )
+
+        assertTrue(transport.retryStepKeys.isEmpty())
+        assertTrue(repository.state.value.message.orEmpty().contains("已成功或执行中"))
+
+        transport.detail = detailView(
+            NoteArtifactRemoteTaskView("task-rev-running", "Running", observedAtMillis = 2_200),
+            steps = listOf(step("failed", "Failed")),
+        )
+        repository.refresh(noteId, materialVersionId, task.taskId)
+        repository.retrySelectedSteps(
+            taskId = task.taskId,
+            noteId = noteId,
+            materialVersionId = materialVersionId,
+            stepKeys = listOf("failed"),
+            duplicateChargeConfirmed = true,
+        )
+
+        assertTrue(transport.retryStepKeys.isEmpty())
+        assertTrue(repository.state.value.message.orEmpty().contains("仍在执行中"))
+    }
+
+    @Test fun manualRevisionConflictKeepsLocalDraftAndObservedServerHead() = runBlocking {
+        val task = seedTask()
+        transport.artifactFallback = listOf(
+            completeRef(NoteArtifactKind.FullRecord, "artifact-full", "artifact-revision-1", "head-1"),
+        )
+        transport.versionFallback = mapOf(
+            "artifact-full" to listOf(
+                version("head-1", NoteArtifactKind.FullRecord, materialVersionId, true),
+            ),
+        )
+        transport.detail = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-1"))
+        val repository = repository()
+        repository.refresh(noteId, materialVersionId, task.taskId)
+        val initialDraft = repository.state.value.drafts.single { it.kind == NoteArtifactKind.FullRecord }
+        repository.stageText(initialDraft.localDraftId, initialDraft.localRevision, "manual body").also {
+            repository.saveLocalDraft(initialDraft.localDraftId, initialDraft.localRevision + 1, "manual body")
+        }
+        val savedDraft = repository.state.value.drafts.single { it.localDraftId == initialDraft.localDraftId }
+        val draftStore = NoteArtifactDraftStore.at(temp.root)
+        transport.onManualRevision = {
+            draftStore.stageText(binding, savedDraft.localDraftId, savedDraft.localRevision, "newer local edit")
+        }
+        transport.manualReceipt = NoteArtifactMutationProjection(
+            artifactRevision = "artifact-revision-2",
+            versionId = "manual-conflict",
+            hasConflict = true,
+            isHead = false,
+        )
+        transport.versionFallback = mapOf(
+            "artifact-full" to listOf(
+                version("manual-conflict", NoteArtifactKind.FullRecord, materialVersionId, false)
+                    .copy(author = NoteArtifactVersionAuthor.User, hasConflict = true),
+                version("head-1", NoteArtifactKind.FullRecord, materialVersionId, true),
+            ),
+        )
+        transport.artifactFallback = listOf(
+            completeRef(NoteArtifactKind.FullRecord, "artifact-full", "artifact-revision-2", "head-1"),
+        )
+
+        repository.saveManualRevisionToServer(
+            kind = NoteArtifactKind.FullRecord,
+            artifactId = "artifact-full",
+            localDraftId = savedDraft.localDraftId,
+            expectedLocalRevision = savedDraft.localRevision,
+            expectedHeadRevision = "artifact-revision-1",
+            expectedHeadVersionId = "head-1",
+            contentMarkdown = savedDraft.text,
+        )
+
+        val after = draftStore.read(binding, savedDraft.localDraftId)
+        assertEquals("newer local edit", after.text)
+        assertEquals(savedDraft.savedText, after.savedText)
+        assertTrue(after.dirty)
+        assertEquals("head-1", after.baseServerArtifactVersionId)
+        assertEquals("artifact-revision-1", after.expectedServerRevision)
+        assertEquals("head-1", repository.state.value.artifactRefs[NoteArtifactKind.FullRecord]?.headVersionId)
+        assertTrue(repository.state.value.versions[NoteArtifactKind.FullRecord].orEmpty()
+            .any { it.versionId == "manual-conflict" && it.hasConflict && !it.isHead })
+        assertTrue(repository.state.value.message.orEmpty().contains("双方内容均保留"))
     }
 
     @Test fun detailHeadChangeRefreshesFormalArtifactMetadataBeforeExposingIt() = runBlocking {
@@ -695,6 +944,7 @@ class NoteArtifactRepositoryTest {
     private fun detailView(
         view: NoteArtifactRemoteTaskView,
         vararg artifacts: NoteArtifactArtifactRefProjection,
+        steps: List<NoteArtifactStepProjection> = emptyList(),
     ) = NoteArtifactTaskDetail(
         view = view,
         coverage = NoteArtifactCoverageProjection(
@@ -710,9 +960,19 @@ class NoteArtifactRepositoryTest {
             complete = true,
         ),
         issues = emptyList(),
-        steps = emptyList(),
+        steps = steps,
         artifacts = artifacts.toList(),
     )
+
+    private fun step(key: String, status: String, error: String? = null) =
+        NoteArtifactStepProjection(
+            key = key,
+            kind = "RecordSynthesis",
+            status = status,
+            attemptCount = if (error == null) 1 else 2,
+            lastErrorCode = error,
+            lastErrorMessage = error?.replace('_', ' '),
+        )
 
     private class FakeTransport : NoteArtifactTransport {
         val artifactResponses = ArrayDeque<List<NoteArtifactArtifactRefProjection>>()
@@ -721,6 +981,17 @@ class NoteArtifactRepositoryTest {
         val selectHeads = mutableListOf<String>()
         var selectError: Throwable? = null
         val starts = mutableListOf<NoteArtifactTaskRecord>()
+        val retryStepKeys = mutableListOf<List<String>>()
+        val retryIds = mutableListOf<String>()
+        var manualReceipt = NoteArtifactMutationProjection(
+            artifactRevision = "artifact-rev-manual",
+            versionId = "manual-version",
+            hasConflict = false,
+            isHead = true,
+        )
+        var onManualRevision: (() -> Unit)? = null
+        var onRetry: suspend () -> Unit = {}
+        var retryFailure: Throwable? = null
         val detailCalls = mutableListOf<String>()
         val details = mutableMapOf<String, NoteArtifactTaskDetail>()
         var artifactCalls = 0
@@ -777,7 +1048,22 @@ class NoteArtifactRepositoryTest {
         override suspend fun retry(
             record: NoteArtifactTaskRecord,
             retry: NoteArtifactRetryIntent,
-        ): NoteArtifactRemoteTaskView = error("retry is not used by repository tests")
+        ): NoteArtifactRemoteTaskView {
+            retryStepKeys += retry.stepKeys
+            retryIds += retry.retryId
+            onRetry()
+            retryFailure?.let {
+                retryFailure = null
+                throw it
+            }
+            val view = NoteArtifactRemoteTaskView(
+                revision = "task-rev-retry-${retryStepKeys.size}",
+                phase = "Completed",
+                observedAtMillis = 2_200,
+            )
+            (details[record.taskId] ?: detail)?.let { details[record.taskId] = it.copy(view = view) }
+            return view
+        }
 
         override suspend fun saveManualRevision(
             artifactId: String,
@@ -788,12 +1074,8 @@ class NoteArtifactRepositoryTest {
         ): NoteArtifactMutationProjection {
             manualRevisionHeads += expectedHeadRevision
             manualRevisionHeadVersions += expectedHeadVersionId
-            return NoteArtifactMutationProjection(
-                artifactRevision = "artifact-rev-manual",
-                versionId = "manual-version",
-                hasConflict = false,
-                isHead = true,
-            )
+            onManualRevision?.invoke()
+            return manualReceipt
         }
 
         override suspend fun selectVersion(

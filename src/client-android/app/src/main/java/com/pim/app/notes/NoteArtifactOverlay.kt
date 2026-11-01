@@ -49,6 +49,7 @@ fun noteArtifactScreenActions(model: NotesViewModel) = NoteArtifactScreenActions
     regenerate = model::regenerateArtifact,
     stop = model::stopArtifact,
     recover = model::recoverArtifact,
+    retryFailedSteps = model::retryArtifactSteps,
 )
 
 fun noteArtifactEntryActions(model: NotesViewModel) = NoteArtifactEntryActions(

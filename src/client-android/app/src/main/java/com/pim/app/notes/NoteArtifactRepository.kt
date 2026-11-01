@@ -56,6 +56,7 @@ class NoteArtifactRepository(
 ) {
     private val initialization = Mutex()
     private val sync = Mutex()
+    private val retrySelectedStepsMutex = Mutex()
     private val mutableState = MutableStateFlow(NoteArtifactRepositoryState())
     val state = mutableState.asStateFlow()
 
@@ -360,6 +361,105 @@ class NoteArtifactRepository(
             throw error
         } catch (error: Exception) {
             publish(describe(error, "恢复失败步骤"))
+        }
+    }
+
+    /**
+     * Retries only the server-reported steps that are safe to rerun. The
+     * current task detail is required so a stale UI cannot silently resend a
+     * succeeded/running step or attach keys from another task.
+     */
+    suspend fun retrySelectedSteps(
+        taskId: String,
+        noteId: String,
+        materialVersionId: String,
+        stepKeys: List<String>,
+        duplicateChargeConfirmed: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        if (!retrySelectedStepsMutex.tryLock()) {
+            publish("步骤恢复正在提交；不会排队发送重复恢复请求。")
+            return@withContext
+        }
+        try {
+            retrySelectedStepsLocked(
+                taskId = taskId,
+                noteId = noteId,
+                materialVersionId = materialVersionId,
+                stepKeys = stepKeys,
+                duplicateChargeConfirmed = duplicateChargeConfirmed,
+            )
+        } finally {
+            retrySelectedStepsMutex.unlock()
+        }
+    }
+
+    private suspend fun retrySelectedStepsLocked(
+        taskId: String,
+        noteId: String,
+        materialVersionId: String,
+        stepKeys: List<String>,
+        duplicateChargeConfirmed: Boolean,
+    ) {
+        initialize()
+        if (!duplicateChargeConfirmed) {
+            publish("请先确认仅重试失败步骤可能产生额外费用。")
+            return
+        }
+        if (stepKeys.isEmpty() || stepKeys.size > 20 || stepKeys.distinct().size != stepKeys.size) {
+            publish("所选恢复步骤无效；原任务与已有结果保留。")
+            return
+        }
+        val target = targetProvider() ?: return
+        val task = runCatching { tasks.read(taskId) }.getOrElse {
+            publish("未找到原派生任务；不会另建任务。")
+            return
+        }
+        if (task.binding != target.binding) {
+            publish("账号或服务器已变化；未发送恢复请求，原任务与本机稿保留。")
+            return
+        }
+        if (task.noteId != noteId || task.materialVersionId != materialVersionId) {
+            publish("原任务属于其他笔记或固定材料；未发送恢复请求。")
+            return
+        }
+        if (task.pendingRetry?.requiresExplicitReplay() == true) {
+            publish("已有恢复回执尚未确认；请核对原恢复请求，不能创建新的恢复标识。")
+            return
+        }
+        if (task.remote?.phase?.let(::isRunningTaskPhase) == true) {
+            publish("任务仍在执行中；请刷新核对后再选择步骤，不能重跑执行中的步骤。")
+            return
+        }
+        val detail = state.value.detail?.takeIf { state.value.selectedTaskId == taskId }
+            ?: run {
+                publish("当前没有该任务的完整步骤列表；请刷新后再选择。")
+                return
+            }
+        if (task.remote?.revision != detail.view.revision) {
+            publish("任务进度已变化；请刷新后再选择步骤，不会自动重发。")
+            return
+        }
+        val allSteps = detail.steps.associateBy { it.key }
+        val missing = stepKeys.filter { allSteps[it] == null }
+        if (missing.isNotEmpty()) {
+            publish("所选步骤不属于当前任务；请刷新后重试。")
+            return
+        }
+        val notRetryable = stepKeys.filter { key ->
+            !isRetryableDerivedStepStatus(allSteps.getValue(key).status)
+        }
+        if (notRetryable.isNotEmpty()) {
+            publish("包含已成功或执行中的步骤；未发送恢复请求，成功结果不会重发。")
+            return
+        }
+        try {
+            controllerFor(taskId).retry(taskId, stepKeys, duplicateChargeConfirmed = true)
+            publish("已提交所选步骤的恢复；成功步骤未重发。")
+            refresh(noteId, materialVersionId, selectedTaskId = taskId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            publish(describe(error, "恢复所选失败步骤"))
         }
     }
 

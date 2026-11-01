@@ -2,6 +2,7 @@ package com.pim.app.ui.root
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.CheckCircle
+import androidx.compose.material.icons.filled.Dashboard
 import androidx.compose.material.icons.filled.LocationOn
 import androidx.compose.material.icons.filled.MyLocation
 import androidx.compose.material.icons.filled.Security
@@ -20,11 +21,12 @@ enum class PimDestination(
     Location("定位", Icons.Filled.MyLocation),
     Tracks("轨迹", Icons.Filled.LocationOn),
     Schedule("日程", Icons.Filled.CheckCircle),
+    Workbench("工作台", Icons.Filled.Dashboard),
     Status("状态", Icons.Filled.Security),
     Settings("设置", Icons.Filled.Settings);
 
     companion object {
         val primary = listOf(Today, Notes, More, Settings)
-        val more = listOf(Location, Tracks, Schedule, Status)
+        val more = listOf(Workbench, Schedule, Location, Tracks, Status)
     }
 }

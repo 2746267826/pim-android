@@ -7,6 +7,33 @@ import org.junit.Test
 
 class AndroidV2ScreenContentTest {
     @Test
+    fun nativeWorkbenchUsesContractActionsInsteadOfWebViewOnlyRendering() {
+        val src = readSource("nativework", "NativeWorkbenchScreen.kt")
+        for (marker in listOf(
+            "新建任务",
+            "新建日程",
+            "删除设备",
+            "添加根分类",
+            "上下文",
+            "打开本机状态与诊断导出",
+            "打开本机设置",
+            "服务端提醒",
+            "延后",
+            "忽略",
+            "保存正文",
+        )) {
+            assertTrue("Native workbench missing action surface: $marker", src.contains(marker))
+        }
+        assertFalse("Native workbench must not use a WebView as its action implementation",
+            src.contains("PimWebViewScreen"))
+        val root = readSource("ui", "root", "PimRootScreen.kt")
+        assertTrue("Native workbench route is not wired into root navigation",
+            root.contains("PimDestination.Workbench -> NativeWorkbenchScreen"))
+        assertTrue("Native workbench settings action is not wired into root navigation",
+            root.contains("onOpenSettings = { selected = PimDestination.Settings }"))
+    }
+
+    @Test
     fun screensExposeApprovedInformationArchitecture() {
         assertContains("ui/today/TodayScreen.kt", listOf("syncButtonLabel", "syncButtonShowSpinner", "待传总数", "定位待传", "上传中", "已确认", "本轮拒绝", "死信保留", "服务器版本不支持嵌入页面", "打开设置"))
         assertContains("ui/tracks/TracksScreen.kt", listOf("PimWebViewScreen", "/embed/android/tracks", "viewModel.bridge", "服务器版本不支持嵌入页面", "打开设置", "embedSupported"))

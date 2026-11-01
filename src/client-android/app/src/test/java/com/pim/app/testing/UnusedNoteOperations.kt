@@ -6,6 +6,44 @@ import okhttp3.RequestBody
 
 /** Legacy endpoint fixtures must fail if they unexpectedly start any native-note network work. */
 internal interface UnusedNoteOperations : ApiService {
+    override suspend fun getTasksPaged(
+        inbox: Boolean?,
+        search: String?,
+        calendarId: String?,
+        status: String?,
+        priority: Int?,
+        plannedFrom: String?,
+        plannedTo: String?,
+        dueFrom: String?,
+        dueTo: String?,
+        page: Int?,
+        pageSize: Int?
+    ): TaskResponsePagedResultApiResponse = error("Unexpected paged task read")
+    override suspend fun getTaskBooks(): TaskBookDtoIReadOnlyListApiResponse = error("Unexpected task-book read")
+    override suspend fun createTaskBook(request: CreateTaskBookRequest): TaskBookDtoApiResponse = error("Unexpected task-book create")
+    override suspend fun getManagedDevices(sortBy: String?): DeviceListDtoIReadOnlyListApiResponse = error("Unexpected device list")
+    override suspend fun renameManagedDevice(deviceId: String, request: DeviceRenameRequest): DeviceDtoApiResponse = error("Unexpected device rename")
+    override suspend fun getManagedDeviceDeletePreview(deviceId: String): DeviceDeletePreviewDtoApiResponse = error("Unexpected device delete preview")
+    override suspend fun deleteManagedDevice(deviceId: String): DeviceDeleteResultDtoApiResponse = error("Unexpected device delete")
+    override suspend fun getKnowledgeCategoryTree(): CategoryTreeNodeListApiResponse = error("Unexpected category tree")
+    override suspend fun saveKnowledgeCategory(request: CategorySaveRequest): CategoryTreeNodeApiResponse = error("Unexpected category save")
+    override suspend fun deleteKnowledgeCategory(id: String): StringApiResponse = error("Unexpected category delete")
+    override suspend fun getAppKnowledgeApps(search: String?): AppKnowledgeAppDtoListApiResponse = error("Unexpected app knowledge list")
+    override suspend fun getAppKnowledgeContexts(appId: String): AppKnowledgeContextDtoListApiResponse = error("Unexpected app knowledge contexts")
+    override suspend fun saveAppKnowledgeContext(request: SaveAppKnowledgeContextRequest): AppKnowledgeContextDtoApiResponse = error("Unexpected app knowledge save")
+    override suspend fun deleteAppKnowledgeContext(id: String): StringApiResponse = error("Unexpected app knowledge delete")
+    override suspend fun getQuickNotes(status: String?, search: String?, page: Int?, pageSize: Int?): QuickNoteListItemDtoPagedResultApiResponse = error("Unexpected quick-note list")
+    override suspend fun createQuickNote(request: CreateQuickNoteRequest): QuickNoteDetailDtoApiResponse = error("Unexpected quick-note create")
+    override suspend fun getQuickNote(id: String): QuickNoteDetailDtoApiResponse = error("Unexpected quick-note read")
+    override suspend fun updateQuickNote(id: String, request: UpdateQuickNoteRequest): QuickNoteDetailDtoApiResponse = error("Unexpected quick-note update")
+    override suspend fun deleteQuickNote(id: String): StringApiResponse = error("Unexpected quick-note delete")
+    override suspend fun archiveQuickNote(id: String): QuickNoteDetailDtoApiResponse = error("Unexpected quick-note archive")
+    override suspend fun processQuickNote(id: String): QuickNoteDetailDtoApiResponse = error("Unexpected quick-note process")
+    override suspend fun restoreQuickNote(id: String, request: RestoreQuickNoteRequest): QuickNoteDetailDtoApiResponse = error("Unexpected quick-note restore")
+    override suspend fun getReminders(): ReminderResponseIReadOnlyListApiResponse = error("Unexpected reminder list")
+    override suspend fun dismissReminder(id: String): ReminderResponseApiResponse = error("Unexpected reminder dismiss")
+    override suspend fun snoozeReminder(id: String, scheduledAt: String): ReminderResponseApiResponse = error("Unexpected reminder snooze")
+    override suspend fun getSystemStatus(): SystemStatusDetailDtoApiResponse = error("Unexpected system status")
     override suspend fun beginNoteMaterialUpload(request: BeginNoteMaterialUploadRequest): NoteMaterialUploadDtoApiResponse = error("Unexpected note upload")
     override suspend fun getNoteMaterialVersion(versionId: String): NoteMaterialVersionDtoApiResponse = error("Unexpected note read")
     override suspend fun uploadNoteMaterialPart(versionId: String, fileIndex: Int, partIndex: Int, sha256: String, body: RequestBody): StringApiResponse = error("Unexpected note bytes")

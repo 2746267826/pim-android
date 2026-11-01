@@ -23,6 +23,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.verticalScroll
 import com.pim.app.ui.location.LocationScreen
+import com.pim.app.nativework.NativeWorkbenchScreen
 import com.pim.app.ui.schedule.SchedulePolicyScreen
 import com.pim.app.ui.settings.SettingsScreen
 import com.pim.app.ui.status.StatusCenterScreen
@@ -61,6 +62,11 @@ fun PimRootScreen(initialDestination: PimDestination = PimDestination.Today) {
                 PimDestination.Today -> TodayScreen(modifier, onOpenSettings = { selected = PimDestination.Settings })
                 PimDestination.Notes -> com.pim.app.notes.NotesHomeScreen(modifier)
                 PimDestination.More -> PimMoreScreen { selected = it }
+                PimDestination.Workbench -> NativeWorkbenchScreen(
+                    modifier = modifier,
+                    onOpenStatusCenter = { selected = PimDestination.Status },
+                    onOpenSettings = { selected = PimDestination.Settings },
+                )
                 PimDestination.Location -> LocationScreen(
                     modifier = modifier,
                     onOpenSettings = { selected = PimDestination.Settings }
@@ -133,7 +139,7 @@ private fun PimMoreScreen(onSelected: (PimDestination) -> Unit) {
     val d = PimTheme.dimensions
     Column(Modifier.fillMaxSize().verticalScroll(rememberScrollState()).padding(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceMedium)) {
         Text("更多", style = MaterialTheme.typography.headlineMedium)
-        Text("定位、轨迹、日程和设备状态", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        Text("原生工作台、日程、定位、轨迹和设备状态", style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
         PimDestination.more.forEach { destination ->
             OutlinedCard(onClick = { onSelected(destination) }, modifier = Modifier.fillMaxWidth().testTag("pim-more-${destination.name.lowercase()}")) {
                 Row(Modifier.padding(d.spaceLarge), verticalAlignment = Alignment.CenterVertically,

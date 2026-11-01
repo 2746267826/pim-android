@@ -628,7 +628,7 @@ class NoteArtifactRepository(
                 expectedHeadVersionId = expectedHeadVersionId,
                 contentMarkdown = contentMarkdown,
             )
-            if (receipt.isHead) {
+            val completionMessage = if (receipt.isHead) {
                 when (val accepted = drafts.markServerAccepted(
                     target.binding,
                     localDraftId,
@@ -637,18 +637,17 @@ class NoteArtifactRepository(
                     receipt.artifactRevision,
                 )) {
                     is NoteArtifactServerAcceptResult.Accepted ->
-                        publish("人工全文已保存为当前版本，本机编辑基线已同步。")
+                        "人工全文已保存为当前版本，本机编辑基线已同步。"
                     is NoteArtifactServerAcceptResult.StaleRevision ->
-                        publish("人工全文已保存，但本机稿在保存期间又变化；新输入仍保留，未覆盖。")
+                        "人工全文已保存，但本机稿在保存期间又变化；新输入仍保留，未覆盖。"
                 }
             } else {
-                publish(
-                    "服务器已保留本机全文与原版本，但本机稿未成为当前版本；双方内容均保留，" +
-                        "本机编辑基线未改变。",
-                )
+                "服务器已保留本机全文与原版本，但本机稿未成为当前版本；双方内容均保留，" +
+                    "本机编辑基线未改变。"
             }
             val noteId = state.value.noteId
             if (noteId != null) refresh(noteId, selectedTaskId = state.value.selectedTaskId)
+            publish(completionMessage)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {

@@ -1,6 +1,9 @@
 package com.pim.app.nativework
 
 import com.pim.app.nativework.quicknotes.LegacyQuickNoteRepository
+import com.pim.core.contract.OperationConfirmationDto
+import com.pim.core.contract.OperationConfirmationDtoApiResponse
+import com.pim.core.contract.OperationConfirmationDtoIReadOnlyListApiResponse
 import com.pim.core.contract.TaskResponse
 import com.pim.core.contract.TaskResponsePagedResult
 import com.pim.core.contract.TaskResponsePagedResultApiResponse
@@ -85,6 +88,72 @@ class NativeWorkbenchViewModelSessionTest {
         }
     }
 
+    @Test
+    fun delayedConfirmationDetailCannotPopulateAfterOwnerSwitch() = runTest {
+        val mainDispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(mainDispatcher)
+        try {
+            var pendingDetail: Continuation<Any?>? = null
+            val ownerAApi = Proxy.newProxyInstance(
+                ApiService::class.java.classLoader,
+                arrayOf(ApiService::class.java),
+            ) { _, method, args ->
+                when (method.name) {
+                    "getPendingOperationConfirmations" ->
+                        OperationConfirmationDtoIReadOnlyListApiResponse(
+                            code = 200,
+                            data = listOf(confirmation("owner-a")),
+                            message = "ok",
+                            timestamp = "now",
+                        )
+                    "getOperationConfirmation" -> {
+                        pendingDetail = args.last() as Continuation<Any?>
+                        COROUTINE_SUSPENDED
+                    }
+                    else -> error("Unexpected owner-A call ${method.name}")
+                }
+            } as ApiService
+            val transport = ControllableTransport(
+                current = session(ownerA, generation = 1L),
+                api = ownerAApi,
+            )
+            val unusedApi = Proxy.newProxyInstance(
+                ApiService::class.java.classLoader,
+                arrayOf(ApiService::class.java),
+            ) { _, _, _ -> error("Template API must not be called") } as ApiService
+            val viewModel = NativeWorkbenchViewModel(
+                repository = NativeWorkbenchRepository(unusedApi),
+                legacyQuickNotes = LegacyQuickNoteRepository(unusedApi),
+                transport = transport,
+            )
+
+            viewModel.selectSection(NativeWorkbenchSection.Confirmations)
+            runCurrent()
+            viewModel.openConfirmation("owner-a")
+            runCurrent()
+            assertTrue(pendingDetail != null)
+
+            transport.current = session(ownerB, generation = 2L)
+            pendingDetail!!.resumeWith(
+                Result.success(
+                    OperationConfirmationDtoApiResponse(
+                        code = 200,
+                        data = confirmation("owner-a"),
+                        message = "ok",
+                        timestamp = "now",
+                    )
+                )
+            )
+            runCurrent()
+
+            assertTrue(viewModel.state.value.confirmationDetail == null)
+            assertTrue(viewModel.state.value.confirmations.isEmpty())
+            assertTrue(viewModel.state.value.error.orEmpty().contains("账号或服务器已切换"))
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
     private fun session(ownerId: String, generation: Long) = NativeWorkbenchSession(
         binding = BoundUploadSession("https://pim.example", ownerId),
         identityGeneration = generation,
@@ -108,6 +177,19 @@ class NativeWorkbenchViewModelSessionTest {
         taskBookId = null,
         title = "Owner A only",
         uid = "task-uid-a",
+    )
+
+    private fun confirmation(summary: String) = OperationConfirmationDto(
+        createdAt = "2026-11-01T10:00:00Z",
+        expiresAt = "2026-11-02T10:00:00Z",
+        id = "confirmation-1",
+        operationType = "DeleteItem",
+        payloadJson = "private-$summary",
+        previewJson = "private-preview-$summary",
+        riskLevel = 14,
+        source = "test",
+        status = 0,
+        summary = summary,
     )
 
     private class ControllableTransport(

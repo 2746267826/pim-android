@@ -97,6 +97,9 @@
     {"apiService": "getNoteDerivedArtifact", "method": "GET", "path": "/api/v1/native-notes/derived-artifacts/{artifactId}"},
     {"apiService": "getNoteDerivedVersion", "method": "GET", "path": "/api/v1/native-notes/derived-artifacts/{artifactId}/versions/{versionId}"},
     {"apiService": "saveNoteDerivedManualRevision", "method": "POST", "path": "/api/v1/native-notes/derived-artifacts/{artifactId}/manual-revisions"},
-    {"apiService": "selectNoteDerivedVersion", "method": "POST", "path": "/api/v1/native-notes/derived-artifacts/{artifactId}/select"}
+    {"apiService": "selectNoteDerivedVersion", "method": "POST", "path": "/api/v1/native-notes/derived-artifacts/{artifactId}/select"},
+    {"apiService": "getPendingOperationConfirmations", "method": "GET", "path": "/api/v1/operations/confirmations/pending"},
+    {"apiService": "getOperationConfirmation", "method": "GET", "path": "/api/v1/operations/confirmations/{id}"},
+    {"apiService": "rejectOperationConfirmation", "method": "POST", "path": "/api/v1/operations/confirmations/{id}/reject"}
   ]
 }

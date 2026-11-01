@@ -17,6 +17,8 @@ import com.pim.core.contract.NoteDerivedStepsDtoApiResponse
 import com.pim.core.contract.NoteDerivedTaskDtoApiResponse
 import com.pim.core.contract.NoteDerivedTaskDtoIReadOnlyListApiResponse
 import com.pim.core.contract.NoteDerivedVersionDtoApiResponse
+import com.pim.core.contract.OperationConfirmationDtoApiResponse
+import com.pim.core.contract.OperationConfirmationDtoIReadOnlyListApiResponse
 import com.pim.core.contract.RetryNoteAsrRequest
 import com.pim.core.contract.RetryNoteDerivedTaskRequest
 import com.pim.core.contract.SaveNoteDerivedManualRevisionRequest
@@ -229,6 +231,19 @@ interface ApiService {
         @Path("artifactId") artifactId: String,
         @Body request: SelectNoteDerivedVersionRequest
     ): NoteDerivedArtifactDtoApiResponse
+
+    @GET("operations/confirmations/pending")
+    suspend fun getPendingOperationConfirmations(): OperationConfirmationDtoIReadOnlyListApiResponse
+
+    @GET("operations/confirmations/{id}")
+    suspend fun getOperationConfirmation(
+        @Path("id") id: String
+    ): OperationConfirmationDtoApiResponse
+
+    @POST("operations/confirmations/{id}/reject")
+    suspend fun rejectOperationConfirmation(
+        @Path("id") id: String
+    ): OperationConfirmationDtoApiResponse
 
     // Auth
     @POST("auth/login")

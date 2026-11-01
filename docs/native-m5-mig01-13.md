@@ -9,7 +9,7 @@ WebView.
 |---|---|---|---|---|---|
 | MIG01 | 今日工作台 | Native Today, local queue/status, sync submit, embedded today content | Native task/event actions and business summary | Today entry in native workbench: today's usage summary, task/event lists, task create/edit/complete, event create | Embedded-only summaries and continuous collection/sync status remain; not a full Today migration |
 | MIG02 | 日历与任务本 | Native schedule policy/mute; task contract existed but UI was WebView | Task/task-book/calendar/event actions | Task list/search/create/edit/complete/reopen/delete/timers, task-book list/create/assignment, writable calendar selection, event create/edit/delete confirmation | Recurrence-scope editor, drag planning, visual calendar layers, Outlook writeback remain; recurring and Outlook-mirror mutations are blocked |
-| MIG03 | 确认、提醒、习惯、报告 | Native status/action prompts only | Reminder actions, general confirmation inbox, habits and reports | Server reminder list, dismiss and validated future-time snooze; destructive task/event/device/category/note confirmations | General confirmation inbox, habits, reports and audit timeline remain Web-only |
+| MIG03 | 确认、提醒、习惯、报告 | Native reminder actions; confirmation route previously opened Web | General confirmation inbox/detail, habits and reports | Server reminder list, dismiss and validated future-time snooze; contract-backed pending-confirmation inbox, privacy-filtered detail and explicit reject action | Confirm/second-level/strict execution remains Web-only because the preview/payload contract is unstructured; habits, reports and audit timeline remain Web-only |
 | MIG04 | Quick、文件 | No native legacy quick-note module; existing native file surfaces remain elsewhere | Legacy quick-note lifecycle and files actions | Independent quick-note list/detail/create/edit/lifecycle API module; existing attachment IDs are retained on text update | Legacy HTML content is read-only in the native editor; no upload/delete-file implementation or broader files migration |
 | MIG05 | 电脑 | No relevant native computer-management action set | Native computer list/actions | None in this wave | Not migrated; no contract-backed computer actions added |
 | MIG06 | 手机与位置 | Native location collection, tracks and queue status | Native server location/history browser | No changes in this wave | Not migrated here; location roadmap owner retains policy/source/queue/write paths |
@@ -35,6 +35,11 @@ WebView.
 - Workbench reads and mutations are bound to the owner/server identity and monotonic
   session generation captured by the load. A delayed response or stale editor action
   cannot populate or mutate a different account; the user must explicitly refresh.
+- Confirmation UI uses only pending-list/detail/reject operations from the OpenAPI
+  snapshot. It projects a bounded summary and status/risk/timestamps; raw payload,
+  preview, object IDs, audit IDs, and correlation IDs are excluded. Sensitive patterns
+  in summaries are redacted. Confirm/strict-confirm actions are intentionally absent
+  until the server provides a safely renderable preview contract.
 - Outlook mirror events are shown but direct mutation is blocked; Outlook uses
   its dedicated sync/write-back contract.
 

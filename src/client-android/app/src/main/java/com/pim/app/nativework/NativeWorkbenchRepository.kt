@@ -440,6 +440,28 @@ class NativeWorkbenchRepository @Inject constructor(
         )
     }
 
+    suspend fun loadPendingConfirmations(): List<NativeOperationConfirmation> =
+        requireData(
+            api.getPendingOperationConfirmations().data,
+            "服务端未返回待确认列表",
+            "读取待确认操作",
+        ).map(::nativeOperationConfirmation)
+
+    suspend fun loadConfirmation(id: String): NativeOperationConfirmation =
+        requireData(
+            api.getOperationConfirmation(id).data,
+            "待确认操作不存在",
+            "读取操作摘要",
+        ).let(::nativeOperationConfirmation)
+
+    suspend fun rejectConfirmation(id: String) {
+        requireData(
+            api.rejectOperationConfirmation(id).data,
+            "待确认操作不存在或已失效",
+            "拒绝操作",
+        )
+    }
+
     private fun <T> requireData(value: T?, message: String, operation: String): T =
         value ?: throw NativeWorkbenchRequestException(
             message.trim().takeIf { it.isNotEmpty() }

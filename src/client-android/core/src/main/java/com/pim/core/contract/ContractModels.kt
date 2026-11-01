@@ -1819,6 +1819,70 @@ data class NoteMaterialVersionDtoApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.OperationConfirmationDto`（response）。 */
+@Serializable
+data class OperationConfirmationDto(
+    val afterJson: String? = null,
+    val aiRecommendation: String? = null,
+    val allowedActions: List<String>? = null,
+    val auditBatchId: String? = null,
+    val beforeJson: String? = null,
+    val changedFields: List<String>? = null,
+    val confirmedAt: String? = null,
+    val correlationId: String? = null,
+    val createdAt: String,
+    val executedAt: String? = null,
+    val expiresAt: String,
+    val externalEffect: String? = null,
+    val id: String,
+    val objectId: String? = null,
+    val objectType: String? = null,
+    val operationType: String,
+    val payloadJson: String,
+    val previewJson: String,
+    val recoveryPath: String? = null,
+    val requestedByUserId: String? = null,
+    val requiresSecondLevelConfirmation: Boolean? = null,
+    val requiresStrictConfirmation: Boolean? = null,
+    val resultJson: String? = null,
+    val riskLevel: OperationRiskLevel,
+    val source: String,
+    val status: OperationConfirmationStatus,
+    val summary: String,
+)
+
+/** 契约 `components.schemas.OperationConfirmationDtoApiResponse`（response）。 */
+@Serializable
+data class OperationConfirmationDtoApiResponse(
+    val code: Int,
+    val data: OperationConfirmationDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.OperationConfirmationDtoIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class OperationConfirmationDtoIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<OperationConfirmationDto>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.OperationConfirmationStatus`（response）。 */
+/**
+ * 契约枚举 `OperationConfirmationStatus`（整数，取值：0, 1, 2, 3, 4）。
+ * 契约没有给出成员名，臆造名字等于编造接口，因此这里保留契约类型名但按 Int 处理。
+ */
+typealias OperationConfirmationStatus = Int
+
+/** 契约 `components.schemas.OperationRiskLevel`（response）。 */
+/**
+ * 契约枚举 `OperationRiskLevel`（整数，取值：0, 1, 2, 10, 11, 12, 13, 14）。
+ * 契约没有给出成员名，臆造名字等于编造接口，因此这里保留契约类型名但按 Int 处理。
+ */
+typealias OperationRiskLevel = Int
+
 /** 契约 `components.schemas.OutlookAdditionalInfoDto`（response）。 */
 @Serializable
 data class OutlookAdditionalInfoDto(

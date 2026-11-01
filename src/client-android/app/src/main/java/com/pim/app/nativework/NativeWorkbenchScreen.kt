@@ -103,6 +103,7 @@ fun NativeWorkbenchScreen(
     var showQuickNoteCreate by remember { mutableStateOf(false) }
     var showQuickNoteDetail by remember { mutableStateOf(false) }
     var reminderToSnooze by remember { mutableStateOf<NativeReminderAction?>(null) }
+    var confirmationToReject by remember { mutableStateOf<NativeOperationConfirmation?>(null) }
 
     Column(modifier.fillMaxSize()) {
         WorkbenchHeader(
@@ -163,6 +164,12 @@ fun NativeWorkbenchScreen(
                 state = state,
                 onDismiss = viewModel::dismissReminder,
                 onSnooze = { reminderToSnooze = it },
+            )
+            NativeWorkbenchSection.Confirmations -> ConfirmationsNativeContent(
+                state = state,
+                onOpen = viewModel::openConfirmation,
+                onReject = { confirmationToReject = it },
+                onCloseDetail = viewModel::closeConfirmationDetail,
             )
             NativeWorkbenchSection.Devices -> DevicesNativeContent(
                 state = state,
@@ -382,6 +389,29 @@ fun NativeWorkbenchScreen(
             onSave = { scheduledAt ->
                 reminderToSnooze = null
                 viewModel.snoozeReminder(reminder, scheduledAt)
+            },
+        )
+    }
+    confirmationToReject?.let { confirmation ->
+        AlertDialog(
+            onDismissRequest = { confirmationToReject = null },
+            title = { Text("拒绝这项待确认操作？") },
+            text = {
+                Text(
+                    "${confirmation.summary}\n\n" +
+                        "这会拒绝所选请求，不会执行其操作。原始请求和预览内容不会显示。"
+                )
+            },
+            confirmButton = {
+                TextButton(onClick = {
+                    confirmationToReject = null
+                    viewModel.rejectConfirmation(confirmation)
+                }) {
+                    Text("拒绝操作", color = MaterialTheme.colorScheme.error)
+                }
+            },
+            dismissButton = {
+                TextButton(onClick = { confirmationToReject = null }) { Text("取消") }
             },
         )
     }
@@ -745,6 +775,102 @@ private fun RemindersNativeContent(
                     }
                 }
             }
+        }
+    }
+}
+
+@Composable
+private fun ConfirmationsNativeContent(
+    state: NativeWorkbenchUiState,
+    onOpen: (String) -> Unit,
+    onReject: (NativeOperationConfirmation) -> Unit,
+    onCloseDetail: () -> Unit,
+) {
+    val detailId = state.selectedConfirmationId
+    val detail = state.confirmationDetail
+    if (detailId != null) {
+        LazyColumn(
+            Modifier.fillMaxSize(),
+            contentPadding = PaddingValues(16.dp),
+            verticalArrangement = Arrangement.spacedBy(10.dp),
+        ) {
+            item {
+                TextButton(onClick = onCloseDetail) { Text("返回待确认列表") }
+            }
+            when {
+                state.loadingConfirmationDetail -> item {
+                    Text("正在读取安全摘要…", style = MaterialTheme.typography.bodyMedium)
+                }
+                detail == null -> item { EmptyCard("未能读取安全摘要") }
+                else -> item {
+                    OutlinedCard(Modifier.fillMaxWidth()) {
+                        Column(
+                            Modifier.padding(14.dp),
+                            verticalArrangement = Arrangement.spacedBy(8.dp),
+                        ) {
+                            Text(detail.summary, style = MaterialTheme.typography.titleMedium)
+                            Text("操作：${detail.operationType}")
+                            Text("状态：${confirmationStatusLabel(detail.status)}")
+                            Text("风险：${confirmationRiskLabel(detail.riskLevel)}")
+                            Text("创建：${detail.createdAt}", style = MaterialTheme.typography.bodySmall)
+                            Text("到期：${detail.expiresAt}", style = MaterialTheme.typography.bodySmall)
+                            if (detail.requiresSecondLevelConfirmation || detail.requiresStrictConfirmation) {
+                                Text("该请求具有额外确认要求；原生页不会绕过这些要求。")
+                            }
+                            Divider()
+                            Text(
+                                "原始 payload、preview、外部标识和个人数据不会显示。" +
+                                    "当前原生页仅支持查看安全摘要和拒绝，不执行确认。",
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+        return
+    }
+
+    LazyColumn(
+        Modifier.fillMaxSize(),
+        contentPadding = PaddingValues(16.dp),
+        verticalArrangement = Arrangement.spacedBy(10.dp),
+    ) {
+        item {
+            SectionTitle("待确认操作", "${state.confirmations.size} 条")
+        }
+        if (state.confirmations.isEmpty()) item { EmptyCard("暂无待确认操作") }
+        items(state.confirmations, key = { it.id }) { confirmation ->
+            OutlinedCard(Modifier.fillMaxWidth()) {
+                Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(7.dp)) {
+                    Text(confirmation.summary, style = MaterialTheme.typography.titleSmall)
+                    Text(
+                        "${confirmation.operationType} · ${confirmationRiskLabel(confirmation.riskLevel)}",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                    Text(
+                        "${confirmationStatusLabel(confirmation.status)} · 到期 ${confirmation.expiresAt}",
+                        style = MaterialTheme.typography.bodySmall,
+                    )
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        TextButton(onClick = { onOpen(confirmation.id) }) {
+                            Text("查看安全摘要")
+                        }
+                        TextButton(onClick = { onReject(confirmation) }) {
+                            Text("拒绝", color = MaterialTheme.colorScheme.error)
+                        }
+                    }
+                }
+            }
+        }
+        item {
+            Text(
+                "为避免泄露私密负载或误执行，原始预览不会显示；确认执行暂由服务端完整页面处理。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
         }
     }
 }

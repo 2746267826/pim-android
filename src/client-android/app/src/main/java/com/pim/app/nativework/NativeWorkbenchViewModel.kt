@@ -31,6 +31,7 @@ enum class NativeWorkbenchSection(val label: String) {
     Tasks("任务"),
     Calendar("日历"),
     Reminders("提醒"),
+    Confirmations("确认"),
     Devices("设备"),
     Knowledge("知识分类"),
     Diagnostics("诊断"),
@@ -65,6 +66,10 @@ data class NativeWorkbenchUiState(
     val search: String = "",
     val taskBooksError: String? = null,
     val reminders: List<NativeReminderAction> = emptyList(),
+    val confirmations: List<NativeOperationConfirmation> = emptyList(),
+    val selectedConfirmationId: String? = null,
+    val confirmationDetail: NativeOperationConfirmation? = null,
+    val loadingConfirmationDetail: Boolean = false,
 )
 
 @HiltViewModel
@@ -97,6 +102,9 @@ class NativeWorkbenchViewModel @Inject constructor(
             selectedApp = null,
             appContexts = emptyList(),
             quickNoteDetail = null,
+            selectedConfirmationId = null,
+            confirmationDetail = null,
+            loadingConfirmationDetail = false,
         )
         refresh()
     }
@@ -221,6 +229,17 @@ class NativeWorkbenchViewModel @Inject constructor(
                     NativeWorkbenchSection.Reminders -> {
                         val reminders = binding.repository.loadReminders()
                         updateIfCurrent(binding) { it.copy(reminders = reminders) }
+                    }
+                    NativeWorkbenchSection.Confirmations -> {
+                        val confirmations = binding.repository.loadPendingConfirmations()
+                        updateIfCurrent(binding) {
+                            it.copy(
+                                confirmations = confirmations,
+                                selectedConfirmationId = null,
+                                confirmationDetail = null,
+                                loadingConfirmationDetail = false,
+                            )
+                        }
                     }
                 }
                 if (sessionGuard.canApply(binding.session)) {
@@ -480,6 +499,87 @@ class NativeWorkbenchViewModel @Inject constructor(
             "提醒已延后"
         }
 
+    fun openConfirmation(id: String) {
+        val binding = requireLoadedBindingOrShowError() ?: return
+        if (_state.value.section != NativeWorkbenchSection.Confirmations) return
+        _state.value = _state.value.copy(
+            selectedConfirmationId = id,
+            confirmationDetail = null,
+            loadingConfirmationDetail = true,
+            error = null,
+        )
+        viewModelScope.launch {
+            try {
+                val detail = binding.repository.loadConfirmation(id)
+                updateIfCurrent(binding) {
+                    if (it.section == NativeWorkbenchSection.Confirmations &&
+                        it.selectedConfirmationId == id
+                    ) {
+                        it.copy(confirmationDetail = detail, loadingConfirmationDetail = false)
+                    } else {
+                        it
+                    }
+                }
+                if (!sessionGuard.canApply(binding.session)) clearStaleSession()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!sessionGuard.canApply(binding.session)) {
+                    clearStaleSession()
+                } else if (_state.value.selectedConfirmationId == id) {
+                    _state.value = _state.value.copy(
+                        loadingConfirmationDetail = false,
+                        error = e.workbenchMessage(),
+                    )
+                }
+            }
+        }
+    }
+
+    fun closeConfirmationDetail() {
+        _state.value = _state.value.copy(
+            selectedConfirmationId = null,
+            confirmationDetail = null,
+            loadingConfirmationDetail = false,
+        )
+    }
+
+    fun rejectConfirmation(confirmation: NativeOperationConfirmation) {
+        if (confirmation.status != 0 ||
+            _state.value.confirmations.none { it.id == confirmation.id && it.status == 0 }
+        ) return
+        mutate("拒绝待确认操作") { binding ->
+            binding.repository.rejectConfirmation(confirmation.id)
+            val confirmations = try {
+                binding.repository.loadPendingConfirmations()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                updateIfCurrent(binding) {
+                    it.copy(
+                        confirmations = it.confirmations.filterNot { item ->
+                            item.id == confirmation.id
+                        },
+                        selectedConfirmationId = null,
+                        confirmationDetail = null,
+                        loadingConfirmationDetail = false,
+                        error = "拒绝已提交，但列表刷新失败：${e.workbenchMessage()}",
+                    )
+                }
+                return@mutate "待确认操作已拒绝"
+            }
+            updateIfCurrent(binding) {
+                it.copy(
+                    confirmations = confirmations,
+                    selectedConfirmationId = null,
+                    confirmationDetail = null,
+                    loadingConfirmationDetail = false,
+                )
+            }
+            "待确认操作已拒绝"
+        }
+    }
+
     private fun loadTasks(showLoading: Boolean = true) {
         refreshJob?.cancel()
         val binding = requireLoadedBindingOrShowError() ?: return
@@ -679,6 +779,18 @@ class NativeWorkbenchViewModel @Inject constructor(
                     val reminders = binding.repository.loadReminders()
                     updateIfCurrent(binding) {
                         it.copy(reminders = reminders, loading = false)
+                    }
+                }
+                NativeWorkbenchSection.Confirmations -> {
+                    val confirmations = binding.repository.loadPendingConfirmations()
+                    updateIfCurrent(binding) {
+                        it.copy(
+                            confirmations = confirmations,
+                            selectedConfirmationId = null,
+                            confirmationDetail = null,
+                            loadingConfirmationDetail = false,
+                            loading = false,
+                        )
                     }
                 }
             }

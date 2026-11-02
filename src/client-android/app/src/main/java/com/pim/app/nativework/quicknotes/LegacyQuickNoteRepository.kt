@@ -1,5 +1,6 @@
 package com.pim.app.nativework.quicknotes
 
+import com.pim.app.nativework.NativeWorkbenchRequestException
 import com.pim.core.contract.CreateQuickNoteRequest
 import com.pim.core.contract.QuickNoteDetailDto
 import com.pim.core.contract.QuickNoteListItemDto
@@ -92,19 +93,21 @@ class LegacyQuickNoteRepository @Inject constructor(
             page = 1,
             pageSize = 50,
         )
-        val page = requireData(result.data, result.message, "读取快速记录")
+        val page = requireResponse(result.code, result.data, result.message, "读取快速记录")
         return LegacyQuickNotePage(page.items, page.totalCount, page.totalPages)
     }
 
-    suspend fun get(id: String): QuickNoteDetailDto =
-        requireData(api.getQuickNote(id).data, "快速记录不存在", "读取快速记录")
+    suspend fun get(id: String): QuickNoteDetailDto {
+        val result = api.getQuickNote(id)
+        return requireResponse(result.code, result.data, result.message, "读取快速记录", "快速记录不存在")
+    }
 
     suspend fun create(contentMarkdown: String): QuickNoteDetailDto {
         require(contentMarkdown.isNotBlank()) { "快速记录内容不能为空" }
         val result = api.createQuickNote(
             CreateQuickNoteRequest(contentMarkdown = contentMarkdown)
         )
-        return requireData(result.data, result.message, "新建快速记录")
+        return requireResponse(result.code, result.data, result.message, "新建快速记录")
     }
 
     suspend fun update(detail: QuickNoteDetailDto, contentMarkdown: String): QuickNoteDetailDto {
@@ -113,34 +116,43 @@ class LegacyQuickNoteRepository @Inject constructor(
             detail.id,
             legacyQuickNoteUpdateRequest(detail, contentMarkdown)
         )
-        return requireData(result.data, result.message, "修改快速记录")
+        return requireResponse(result.code, result.data, result.message, "修改快速记录")
     }
 
-    suspend fun archive(detail: QuickNoteDetailDto): QuickNoteDetailDto =
-        requireData(api.archiveQuickNote(detail.id).data, "归档失败", "归档快速记录")
+    suspend fun archive(detail: QuickNoteDetailDto): QuickNoteDetailDto {
+        val result = api.archiveQuickNote(detail.id)
+        return requireResponse(result.code, result.data, result.message, "归档快速记录", "归档失败")
+    }
 
-    suspend fun process(detail: QuickNoteDetailDto): QuickNoteDetailDto =
-        requireData(api.processQuickNote(detail.id).data, "处理失败", "处理快速记录")
+    suspend fun process(detail: QuickNoteDetailDto): QuickNoteDetailDto {
+        val result = api.processQuickNote(detail.id)
+        return requireResponse(result.code, result.data, result.message, "处理快速记录", "处理失败")
+    }
 
-    suspend fun restore(detail: QuickNoteDetailDto): QuickNoteDetailDto =
-        requireData(
-            api.restoreQuickNote(
-                detail.id,
-                RestoreQuickNoteRequest(status = "inbox")
-            ).data,
-            "恢复失败",
-            "恢复快速记录",
+    suspend fun restore(detail: QuickNoteDetailDto): QuickNoteDetailDto {
+        val result = api.restoreQuickNote(
+            detail.id,
+            RestoreQuickNoteRequest(status = "inbox")
         )
+        return requireResponse(result.code, result.data, result.message, "恢复快速记录", "恢复失败")
+    }
 
     suspend fun delete(detail: QuickNoteDetailDto) {
         val result = api.deleteQuickNote(detail.id)
-        requireData(result.data, result.message, "删除快速记录")
+        requireResponse(result.code, result.data, result.message, "删除快速记录")
     }
 
-    private fun <T> requireData(value: T?, message: String, operation: String): T =
-        value ?: error(
-            message.trim().takeIf { it.isNotEmpty() }
-                ?.let { "$operation：$it" }
-                ?: "$operation：服务端未返回数据"
-        )
+    private fun <T> requireResponse(
+        code: Int,
+        value: T?,
+        message: String,
+        operation: String,
+        emptyFallback: String = "服务端未返回数据",
+    ): T {
+        val detail = message.trim().takeIf(String::isNotEmpty)
+        if (code != 0) {
+            throw NativeWorkbenchRequestException(detail?.let { "$operation：$it" } ?: "$operation：请求失败（code=$code）")
+        }
+        return value ?: throw NativeWorkbenchRequestException("$operation：$emptyFallback")
+    }
 }

@@ -19,11 +19,97 @@ import kotlinx.coroutines.test.resetMain
 import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.coroutines.test.setMain
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ComputerUsageSessionTest {
+    @Test
+    fun lateResponseFromPreviousFilterCannotPopulateCurrentScope() = runTest {
+        val mainDispatcher = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(mainDispatcher)
+        try {
+            val owner = "11111111-1111-4111-8111-111111111111"
+            val boundApi = BoundUploadSession("https://server.example", owner)
+            val current = NativeWorkbenchSession(boundApi, 1L)
+            var pending: Continuation<Any?>? = null
+            var timelineCalls = 0
+            val detailFilters = mutableListOf<Any?>()
+            lateinit var api: ApiService
+            val transport = object : NativeWorkbenchTransport {
+                override fun currentSession() = current
+                override fun isCurrent(session: NativeWorkbenchSession) = session == current
+                override fun apiFor(session: NativeWorkbenchSession): ApiService {
+                    if (session != current) throw UploadSessionChangedException()
+                    return api
+                }
+            }
+            api = Proxy.newProxyInstance(
+                ApiService::class.java.classLoader,
+                arrayOf(ApiService::class.java),
+            ) { _, method, args ->
+                when (method.name) {
+                    "getPcDetail" -> {
+                        detailFilters += args!![3]
+                        val type = args[3] as String?
+                        val item = com.pim.core.contract.PcDetailRecord(
+                            deviceId = "device-1",
+                            recordType = type ?: "window",
+                            start = "2026-11-02T10:00:00Z",
+                        )
+                        TypedDetailQueryResponseApiResponse(
+                            0,
+                            TypedDetailQueryResponse(listOf(item), 1, 50, 1, 1),
+                            "ok", "now",
+                        )
+                    }
+                    "getBrowserUsageSummary" -> SiteSummaryDtoApiResponse(0, summary(), "ok", "now")
+                    "getBrowserUsageDaily" -> SiteDailyRowDtoListApiResponse(0, emptyList(), "ok", "now")
+                    "getBrowserUsageTimeline" -> {
+                        timelineCalls++
+                        if (timelineCalls == 1) {
+                            pending = args!!.last() as Continuation<Any?>
+                            COROUTINE_SUSPENDED
+                        } else {
+                            SiteTimelineRowDtoListApiResponse(0, emptyList(), "ok", "now")
+                        }
+                    }
+                    "getManagedDevices" -> DeviceListDtoIReadOnlyListApiResponse(0, emptyList(), "ok", "now")
+                    else -> error("Unexpected call ${method.name}")
+                }
+            } as ApiService
+            val unusedApi = Proxy.newProxyInstance(
+                ApiService::class.java.classLoader,
+                arrayOf(ApiService::class.java),
+            ) { _, _, _ -> error("Unbound API must not be used") } as ApiService
+            val viewModel = NativeWorkbenchViewModel(
+                repository = NativeWorkbenchRepository(unusedApi),
+                legacyQuickNotes = com.pim.app.nativework.quicknotes.LegacyQuickNoteRepository(unusedApi),
+                transport = transport,
+            )
+
+            viewModel.selectSection(NativeWorkbenchSection.ComputerUsage)
+            runCurrent()
+            assertTrue(pending != null)
+
+            viewModel.setComputerUsageTypeFilter(ComputerUsageTypeFilter.Browser)
+            pending!!.resumeWith(Result.success(SiteTimelineRowDtoListApiResponse(0, emptyList(), "ok", "now")))
+            runCurrent()
+            assertNull(viewModel.state.value.computerUsage)
+            assertEquals(ComputerUsageTypeFilter.Browser, viewModel.state.value.computerUsageTypeFilter)
+
+            viewModel.searchComputerUsage()
+            runCurrent()
+            assertEquals(setOf(null, "web", "web-page"), detailFilters.toSet())
+            assertEquals(ComputerUsageTypeFilter.Browser, viewModel.state.value.computerUsageTypeFilter)
+            assertTrue(viewModel.state.value.computerUsage != null)
+            assertTrue(viewModel.state.value.computerUsage!!.records.items.all { it.recordType == "web" || it.recordType == "web-page" })
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
     @Test
     fun delayedComputerResponseCannotPopulateAfterOwnerSwitch() = runTest {
         val mainDispatcher = StandardTestDispatcher(testScheduler)

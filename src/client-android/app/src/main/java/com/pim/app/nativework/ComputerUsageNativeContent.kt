@@ -36,6 +36,7 @@ internal fun ComputerUsageNativeContent(
     onFromChange: (String) -> Unit,
     onToChange: (String) -> Unit,
     onDeviceIdChange: (String) -> Unit,
+    onTypeFilterChange: (ComputerUsageTypeFilter) -> Unit,
     onSearch: () -> Unit,
     onPageChange: (Int) -> Unit,
     onSelectRecord: (Int?) -> Unit,
@@ -45,7 +46,8 @@ internal fun ComputerUsageNativeContent(
         verticalArrangement = Arrangement.spacedBy(10.dp),
     ) {
         Text("电脑活动记录", style = MaterialTheme.typography.titleLarge, fontWeight = FontWeight.SemiBold)
-        Text("明细默认包含应用窗口与浏览器活动；URL 仅显示文本，不会自动打开。", style = MaterialTheme.typography.bodySmall)
+        Text("明细可筛选应用窗口、浏览器或全部；URL 仅显示文本，不会自动打开。", style = MaterialTheme.typography.bodySmall)
+        Text("单次查询最多 31 天（含首尾）；每日站点最多显示 500 行。超过预算会明确标注，不会自动截短日期范围；更长历史请使用 Web 完整查询。", style = MaterialTheme.typography.bodySmall)
         Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
             OutlinedTextField(
                 value = state.computerUsageFrom,
@@ -84,6 +86,17 @@ internal fun ComputerUsageNativeContent(
                 )
             }
         }
+        Text("明细类型", style = MaterialTheme.typography.labelLarge)
+        Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            ComputerUsageTypeFilter.values().forEach { filter ->
+                FilterChip(
+                    selected = state.computerUsageTypeFilter == filter,
+                    onClick = { onTypeFilterChange(filter) },
+                    label = { Text(filter.label) },
+                    modifier = Modifier.testTag("computer-type-${filter.name.lowercase(Locale.ROOT)}"),
+                )
+            }
+        }
         Button(onClick = onSearch, enabled = !state.loading, modifier = Modifier.testTag("computer-usage-search")) {
             Text("查询")
         }
@@ -94,24 +107,28 @@ internal fun ComputerUsageNativeContent(
             return@Column
         }
         Text("浏览器统计（全设备）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text("摘要、每日站点与时间线均按所选日期范围统计所有设备；设备筛选只作用于下方明细。", style = MaterialTheme.typography.bodySmall)
+        Text("摘要与每日站点覆盖所选日期范围内已保存的浏览器统计，均为全设备；时间线仅查询开始日，也为全设备。设备和类型筛选只作用于下方明细。", style = MaterialTheme.typography.bodySmall)
+        Text("接口不提供采集覆盖或导入成功状态；统计仅表示已保存的记录，不保证覆盖了全部活动。", style = MaterialTheme.typography.bodySmall)
         Text("${data.summary.from} 至 ${data.summary.to} · ${data.summary.siteCount} 个站点")
         Text("全设备：访问 ${data.summary.totalVisits} 次 · 活跃 ${formatDuration(data.summary.totalFocusMs)} · 媒体 ${formatDuration(data.summary.totalMediaMs)}")
 
         Text("每日站点", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        if (data.daily.isEmpty()) Text("所选日期范围没有浏览器统计。")
+        if (data.daily.isEmpty()) Text("所选日期范围没有已保存的浏览器每日统计行；接口不提供采集覆盖状态，不能据此判断没有活动或数据已成功导入。")
         data.daily.forEach { row ->
             Text("${row.date} · ${row.host} · ${row.visitCount} 次 · ${formatDuration(row.focusMs)} 活跃")
         }
+        if (data.dailyRowsTruncated) {
+            Text("每日站点超过 500 行，仅显示前 500 行；完整列表请使用 Web 查询。上方摘要为所选 31 天内的接口汇总。")
+        }
 
         Text("${state.computerUsageFrom} 时间线（仅开始日，全设备）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        if (data.timeline.isEmpty()) Text("这一天没有浏览器时间线记录。")
+        if (data.timeline.isEmpty()) Text("该开始日没有已保存的浏览器时间线行；接口不提供采集覆盖状态，不能据此判断没有活动或数据已成功导入。")
         data.timeline.forEach { row ->
             Text("${formatInstant(row.startMs)} · ${row.host} · ${formatDuration(row.durationMs)}")
         }
 
-        Text("电脑明细（全部类型）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
-        Text("${data.records.totalCount} 条记录 · 第 ${data.records.page} / ${data.records.totalPages.coerceAtLeast(1)} 页")
+        Text("电脑明细（${state.computerUsageTypeFilter.label}）", style = MaterialTheme.typography.titleMedium, fontWeight = FontWeight.SemiBold)
+        Text("${data.records.totalCount} 条记录 · 第 ${data.records.page} / ${data.records.totalPages.coerceAtLeast(1)} 页${if (data.records.totalCount > data.records.pageSize * ComputerUsageRepository.MAX_VISIBLE_PAGES) " · 已达最多浏览 ${ComputerUsageRepository.MAX_VISIBLE_PAGES} 页，列表为最新记录前缀" else ""}")
         if (data.records.items.isEmpty()) Text("当前筛选条件没有电脑活动明细。")
         data.records.items.forEachIndexed { index, record ->
             Card(

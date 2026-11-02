@@ -9,11 +9,14 @@ import com.pim.core.contract.SiteSummaryDtoApiResponse
 import com.pim.core.contract.SiteTimelineRowDtoListApiResponse
 import com.pim.core.contract.TypedDetailQueryResponse
 import com.pim.core.contract.TypedDetailQueryResponseApiResponse
+import java.time.Instant
+import java.time.temporal.ChronoUnit
 import com.pim.core.network.ApiService
 import java.lang.reflect.Proxy
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class ComputerUsageRepositoryTest {
@@ -111,6 +114,174 @@ class ComputerUsageRepositoryTest {
         assertThrows(IllegalArgumentException::class.java) {
             runBlocking {
                 ComputerUsageRepository(api).load("2026-11-03", "2026-11-02", null, 1)
+            }
+        }
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun rejectsRangesOver31DaysWithoutSilentlyTruncating() {
+        var calls = 0
+        val api = Proxy.newProxyInstance(
+            ApiService::class.java.classLoader,
+            arrayOf(ApiService::class.java),
+        ) { _, _, _ ->
+            calls++
+            error("Over-budget date ranges must be rejected before network")
+        } as ApiService
+
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                ComputerUsageRepository(api).load("2026-09-30", "2026-10-31", null, 1)
+            }
+        }
+        assertEquals(0, calls)
+    }
+
+    @Test
+    fun accepts31InclusiveDaysAndMarksDailyRowsBeyondDisplayBudget() = runBlocking {
+        val calls = mutableListOf<Pair<String, List<Any?>>>()
+        val api = Proxy.newProxyInstance(
+            ApiService::class.java.classLoader,
+            arrayOf(ApiService::class.java),
+        ) { _, method, args ->
+            calls += method.name to args?.toList().orEmpty()
+            when (method.name) {
+                "getPcDetail" -> TypedDetailQueryResponseApiResponse(
+                    0, TypedDetailQueryResponse(emptyList(), 1, 50, 0, 0), "ok", "now",
+                )
+                "getBrowserUsageSummary" -> SiteSummaryDtoApiResponse(0, summary(), "ok", "now")
+                "getBrowserUsageDaily" -> SiteDailyRowDtoListApiResponse(
+                    0,
+                    (0..ComputerUsageRepository.MAX_VISIBLE_DAILY_ROWS).map { index ->
+                        com.pim.core.contract.SiteDailyRowDto(
+                            date = "2026-10-01",
+                            focusMs = index.toLong(),
+                            host = "host-$index.example",
+                            mediaMs = 0,
+                            runMs = index.toLong(),
+                            visitCount = index.toLong(),
+                        )
+                    },
+                    "ok",
+                    "now",
+                )
+                "getBrowserUsageTimeline" -> SiteTimelineRowDtoListApiResponse(0, emptyList(), "ok", "now")
+                "getManagedDevices" -> DeviceListDtoIReadOnlyListApiResponse(0, emptyList(), "ok", "now")
+                else -> error("Unexpected call ${method.name}")
+            }
+        } as ApiService
+
+        val result = ComputerUsageRepository(api).load("2026-10-01", "2026-10-31", null, 1)
+
+        assertEquals(ComputerUsageRepository.MAX_VISIBLE_DAILY_ROWS, result.daily.size)
+        assertTrue(result.dailyRowsTruncated)
+        assertEquals("2026-10-01", calls.first { it.first == "getBrowserUsageDaily" }.second[1])
+        assertEquals("2026-10-31", calls.first { it.first == "getBrowserUsageDaily" }.second[2])
+    }
+
+    @Test
+    fun browserFilterMergesBothEventTypesBeforeGlobalPageAndCapsFetches() = runBlocking {
+        val calls = mutableListOf<List<Any?>>()
+        val base = Instant.parse("2026-11-02T23:59:00Z")
+        val api = Proxy.newProxyInstance(
+            ApiService::class.java.classLoader,
+            arrayOf(ApiService::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "getPcDetail" -> {
+                    val values = args!!.toList()
+                    calls += values
+                    val eventType = values[3] as String
+                    val apiPage = values[8] as Int
+                    val pageRecords = (0 until 450).map { index ->
+                        val minuteOffset = index * 2 + if (eventType == "web") 0 else 1
+                        PcDetailRecord(
+                            deviceId = "device-7",
+                            recordType = eventType,
+                            start = base.minus(minuteOffset.toLong(), ChronoUnit.MINUTES).toString(),
+                            recordKey = "$eventType-$index",
+                        )
+                    }
+                    val start = (apiPage - 1) * 200
+                    val selected = pageRecords.drop(start).take(200)
+                    TypedDetailQueryResponseApiResponse(
+                        0,
+                        TypedDetailQueryResponse(selected, apiPage, 200, 450, 3),
+                        "ok",
+                        "now",
+                    )
+                }
+                "getBrowserUsageSummary" -> SiteSummaryDtoApiResponse(0, summary(), "ok", "now")
+                "getBrowserUsageDaily" -> SiteDailyRowDtoListApiResponse(0, emptyList(), "ok", "now")
+                "getBrowserUsageTimeline" -> SiteTimelineRowDtoListApiResponse(0, emptyList(), "ok", "now")
+                "getManagedDevices" -> DeviceListDtoIReadOnlyListApiResponse(0, listOf(device()), "ok", "now")
+                else -> error("Unexpected call ${method.name}")
+            }
+        } as ApiService
+
+        val result = ComputerUsageRepository(api).load(
+            "2026-11-02", "2026-11-02", null, ComputerUsageRepository.MAX_VISIBLE_PAGES,
+            ComputerUsageTypeFilter.Browser,
+        )
+
+        assertEquals(900, result.records.totalCount)
+        assertEquals(ComputerUsageRepository.MAX_VISIBLE_PAGES, result.records.totalPages)
+        assertEquals(50, result.records.items.size)
+        assertTrue(result.records.items.all { it.recordType == "web" || it.recordType == "web-page" })
+        val expected = (0 until 900).sortedByDescending { index ->
+            base.minus(index.toLong(), ChronoUnit.MINUTES)
+        }.drop(450).take(50)
+        assertEquals(
+            expected.map { index -> if (index % 2 == 0) "web-${index / 2}" else "web-page-${index / 2}" },
+            result.records.items.map { it.recordKey },
+        )
+        assertEquals(setOf("web", "web-page"), calls.map { it[3] as String }.toSet())
+        assertEquals(setOf(1, 2, 3), calls.map { it[8] as Int }.toSet())
+        assertTrue(calls.all { it[9] == 200 })
+        assertEquals(6, calls.size)
+    }
+
+    @Test
+    fun appWindowFilterIsExactAndRejectsPageBeyondBoundBeforeNetwork() = runBlocking {
+        var requestedType: Any? = null
+        val api = Proxy.newProxyInstance(
+            ApiService::class.java.classLoader,
+            arrayOf(ApiService::class.java),
+        ) { _, method, args ->
+            when (method.name) {
+                "getPcDetail" -> {
+                    requestedType = args!![3]
+                    TypedDetailQueryResponseApiResponse(
+                        0,
+                        TypedDetailQueryResponse(listOf(windowRecord()), 1, 50, 1, 1),
+                        "ok", "now",
+                    )
+                }
+                "getBrowserUsageSummary" -> SiteSummaryDtoApiResponse(0, summary(), "ok", "now")
+                "getBrowserUsageDaily" -> SiteDailyRowDtoListApiResponse(0, emptyList(), "ok", "now")
+                "getBrowserUsageTimeline" -> SiteTimelineRowDtoListApiResponse(0, emptyList(), "ok", "now")
+                "getManagedDevices" -> DeviceListDtoIReadOnlyListApiResponse(0, emptyList(), "ok", "now")
+                else -> error("Unexpected call ${method.name}")
+            }
+        } as ApiService
+
+        ComputerUsageRepository(api).load(
+            "2026-11-02", "2026-11-02", null, 1, ComputerUsageTypeFilter.AppWindow,
+        )
+        assertEquals("window", requestedType)
+
+        var calls = 0
+        val noNetworkApi = Proxy.newProxyInstance(
+            ApiService::class.java.classLoader,
+            arrayOf(ApiService::class.java),
+        ) { _, _, _ -> calls++; error("Out-of-bound page must fail before network") } as ApiService
+        assertThrows(IllegalArgumentException::class.java) {
+            runBlocking {
+                ComputerUsageRepository(noNetworkApi).load(
+                    "2026-11-02", "2026-11-02", null,
+                    ComputerUsageRepository.MAX_VISIBLE_PAGES + 1,
+                )
             }
         }
         assertEquals(0, calls)

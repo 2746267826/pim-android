@@ -79,6 +79,7 @@ data class NativeWorkbenchUiState(
     val computerUsageFrom: String = "",
     val computerUsageTo: String = "",
     val computerUsageDeviceId: String = "",
+    val computerUsageTypeFilter: ComputerUsageTypeFilter = ComputerUsageTypeFilter.All,
     val computerUsagePage: Int = 1,
     val selectedComputerRecordIndex: Int? = null,
 )
@@ -305,7 +306,8 @@ class NativeWorkbenchViewModel @Inject constructor(
                         val to = _state.value.computerUsageTo.ifBlank { from }
                         val deviceId = _state.value.computerUsageDeviceId
                         val page = _state.value.computerUsagePage
-                        val result = binding.computerUsage.load(from, to, deviceId, page)
+                        val typeFilter = _state.value.computerUsageTypeFilter
+                        val result = binding.computerUsage.load(from, to, deviceId, page, typeFilter)
                         updateIfCurrent(binding) {
                             if (it.section == NativeWorkbenchSection.ComputerUsage &&
                                 computerUsageVersion == computerUsageRequestVersion
@@ -360,6 +362,11 @@ class NativeWorkbenchViewModel @Inject constructor(
         updateComputerUsageFilters { it.copy(computerUsageDeviceId = value) }
     }
 
+    fun setComputerUsageTypeFilter(value: ComputerUsageTypeFilter) {
+        if (_state.value.computerUsageTypeFilter == value) return
+        updateComputerUsageFilters { it.copy(computerUsageTypeFilter = value) }
+    }
+
     private fun updateComputerUsageFilters(transform: (NativeWorkbenchUiState) -> NativeWorkbenchUiState) {
         if (_state.value.section == NativeWorkbenchSection.ComputerUsage) {
             computerUsageRequestVersion++
@@ -367,6 +374,7 @@ class NativeWorkbenchViewModel @Inject constructor(
         }
         _state.value = transform(_state.value).copy(
             computerUsage = null,
+            computerUsagePage = 1,
             selectedComputerRecordIndex = null,
             loading = if (_state.value.section == NativeWorkbenchSection.ComputerUsage) false else _state.value.loading,
             error = null,
@@ -412,6 +420,7 @@ class NativeWorkbenchViewModel @Inject constructor(
         val deviceId = _state.value.computerUsageDeviceId
         val page = _state.value.computerUsagePage
         val requestVersion = ++computerUsageRequestVersion
+        val typeFilter = _state.value.computerUsageTypeFilter
         _state.value = _state.value.copy(
             loading = true,
             error = null,
@@ -420,7 +429,7 @@ class NativeWorkbenchViewModel @Inject constructor(
         )
         refreshJob = viewModelScope.launch {
             try {
-                val result = binding.computerUsage.load(from, to, deviceId, page)
+                val result = binding.computerUsage.load(from, to, deviceId, page, typeFilter)
                 updateIfCurrent(binding) {
                     if (it.section == NativeWorkbenchSection.ComputerUsage &&
                         requestVersion == computerUsageRequestVersion
@@ -1003,13 +1012,21 @@ class NativeWorkbenchViewModel @Inject constructor(
                 NativeWorkbenchSection.ComputerUsage -> {
                     val from = _state.value.computerUsageFrom.ifBlank { LocalDate.now().toString() }
                     val to = _state.value.computerUsageTo.ifBlank { from }
+                    val deviceId = _state.value.computerUsageDeviceId
+                    val page = _state.value.computerUsagePage
+                    val typeFilter = _state.value.computerUsageTypeFilter
+                    val requestVersion = ++computerUsageRequestVersion
                     val result = binding.computerUsage.load(
-                        from, to, _state.value.computerUsageDeviceId, _state.value.computerUsagePage
+                        from, to, deviceId, page, typeFilter,
                     )
                     updateIfCurrent(binding) {
-                        if (it.section == NativeWorkbenchSection.ComputerUsage) it.copy(
+                        if (it.section == NativeWorkbenchSection.ComputerUsage &&
+                            requestVersion == computerUsageRequestVersion
+                        ) it.copy(
                             computerUsage = result,
                             computerUsageDevices = result.devices,
+                            computerUsageFrom = from,
+                            computerUsageTo = to,
                             selectedComputerRecordIndex = null,
                             loading = false,
                         ) else it

@@ -23,6 +23,7 @@ import kotlinx.serialization.Serializable
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonNull
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -156,7 +157,7 @@ class LegacyQuickNoteMigrationStore private constructor(
         if (!linkExists(file)) return@synchronized false
         val link = readLink(file)
         validate(link, binding)
-        AtomicFile(file).delete()
+        deleteMigrationLinkFile(file)
         true
     }
 
@@ -196,6 +197,15 @@ class LegacyQuickNoteMigrationStore private constructor(
     )
 
     companion object { private const val MAX_LINK_BYTES = 16 * 1024 }
+}
+
+internal fun deleteMigrationLinkFile(file: File, deleteAtomicFile: (File) -> Unit = { AtomicFile(it).delete() }) {
+    deleteAtomicFile(file)
+    val parent = checkNotNull(file.parentFile) { "Migration index has no parent directory" }
+    val remaining = checkNotNull(parent.list()) { "Cannot verify migration index removal" }
+    check(file.name !in remaining && "${file.name}.bak" !in remaining) {
+        "Cannot confirm migration link removal"
+    }
 }
 
 @Singleton
@@ -441,7 +451,7 @@ data class LegacyQuickNoteSource(
             put("status", JsonPrimitive(detail.status))
             put("createdAt", JsonPrimitive(detail.createdAt))
             put("updatedAt", JsonPrimitive(detail.updatedAt))
-            put("archivedAt", detail.archivedAt?.let(::JsonPrimitive))
+            put("archivedAt", detail.archivedAt?.let(::JsonPrimitive) ?: JsonNull)
             put("rawContentMarkdown", JsonPrimitive(detail.contentMarkdown))
             put("rawMetadataJson", JsonPrimitive(detail.metadataJson))
             put("importedAtMillis", JsonPrimitive(importedAtMillis))

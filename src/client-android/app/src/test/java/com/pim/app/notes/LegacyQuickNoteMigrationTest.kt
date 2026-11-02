@@ -18,7 +18,6 @@ import java.io.File
 import java.io.IOException
 import java.lang.reflect.Proxy
 import kotlin.coroutines.Continuation
-import kotlin.coroutines.resumeWith
 import kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
@@ -157,6 +156,18 @@ class LegacyQuickNoteMigrationTest {
 
         assertEquals(savedAfterFailure.source, retry.source)
         assertEquals(identity.noteId, links.find(identity)?.noteId)
+    }
+
+    @Test
+    fun failedAtomicDeleteMustNotReportSuccessfulRevocation() {
+        val file = File(temp.newFolder(), "mapping.json").apply { writeText("keep") }
+
+        val result = runCatching {
+            deleteMigrationLinkFile(file) { /* Simulate AtomicFile.delete failing without throwing. */ }
+        }
+
+        assertTrue(result.isFailure)
+        assertEquals("keep", file.readText())
     }
 
     @Test

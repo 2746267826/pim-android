@@ -48,6 +48,8 @@ fun NativeNotesScreen(
     uploads: NoteUploadsState = NoteUploadsState(), uploadTarget: NoteUploadTarget? = null,
     onUpload: (String, NoteUploadTarget) -> Unit = { _, _ -> }, onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
     asr: NoteAsrRepositoryState = NoteAsrRepositoryState(), asrActions: NoteAsrActions = NoteAsrActions(),
+    legacyMigration: LegacyQuickNoteMigrationState = LegacyQuickNoteMigrationState(),
+    legacyMigrationActions: LegacyQuickNoteMigrationActions = LegacyQuickNoteMigrationActions(),
     initialAsr: Boolean = false,
     artifactOverlay: @Composable () -> Unit = {},
 ) {
@@ -69,7 +71,8 @@ fun NativeNotesScreen(
             if (note == null) {
                 NoteLibraryScreen(state, selectedId, recording, busy, onCreate, onOpen, onExit,
                     uploads = uploads, currentTarget = uploadTarget, onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
-                    asrTaskCount = asr.tasks.size, onAsr = { showAsr = true }, onImport = onImport)
+                    asrTaskCount = asr.tasks.size, onAsr = { showAsr = true }, onImport = onImport,
+                    onLegacyQuickNotes = legacyMigrationActions.open)
             } else key(note.id) {
                 var preview by rememberSaveable { mutableStateOf(false) }
                 val scope = rememberCoroutineScope()
@@ -188,6 +191,7 @@ fun NativeNotesScreen(
                                         "ink" -> InkCard(block.string("id"), inkOf(block), preview || busy || committing) { ink ->
                                             onChange(note.id) { doc -> doc.replaceBlock(block.string("id")) { withInk(it, ink) } }
                                         }
+                                        "legacyQuickNote" -> LegacyQuickNoteSourceBlock(block)
                                         else -> PimStatusBanner("未知扩展块已保留，当前版本不能编辑它。", PimStatusTone.Warning)
                                     }
                                 }
@@ -258,6 +262,17 @@ fun NativeNotesScreen(
                 actions = asrActions,
             )
             artifactOverlay()
+            if (legacyMigration.visible) LegacyQuickNoteMigrationScreen(
+                state = legacyMigration,
+                onRefresh = legacyMigrationActions.refresh,
+                onPage = legacyMigrationActions.page,
+                onSelect = legacyMigrationActions.select,
+                onConfirm = legacyMigrationActions.confirm,
+                onRevoke = legacyMigrationActions.revoke,
+                onDismissPreview = legacyMigrationActions.dismissPreview,
+                onOpenNote = legacyMigrationActions.openNote,
+                onClose = legacyMigrationActions.close,
+            )
         }
     }
 }

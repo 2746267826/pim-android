@@ -25,6 +25,12 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
     val artifactViews by model.artifactViews.collectAsStateWithLifecycle()
     val artifactContentViews by model.artifactContentViews.collectAsStateWithLifecycle()
     val taskSuggestions by model.taskSuggestions.state.collectAsStateWithLifecycle()
+    val legacyMigration by model.legacyQuickNoteMigrationState.collectAsStateWithLifecycle()
+    val legacyMigrationActions = remember(model, context) {
+        legacyQuickNoteMigrationActions(model) { id ->
+            context.startActivity(NativeNotesActivity.intent(context, id, true))
+        }
+    }
     val target = rememberUploadTarget(model.uploads)
     var showAsr by remember { mutableStateOf(false) }
     val asrActions = remember(model) {
@@ -52,7 +58,8 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
             onOpen = { id -> if (id != null) context.startActivity(NativeNotesActivity.intent(context, id, true)) },
             onExit = null, uploads = uploads, currentTarget = target,
             onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload,
-            asrTaskCount = asr.tasks.size, onAsr = { showAsr = true })
+            asrTaskCount = asr.tasks.size, onAsr = { showAsr = true },
+            onLegacyQuickNotes = legacyMigrationActions.open)
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(com.pim.app.ui.theme.PimTheme.dimensions.spaceLarge)
             .padding(bottom = com.pim.app.ui.theme.PimTheme.dimensions.noteDockClearance))
         if (showAsr) NoteAsrSurface(
@@ -78,6 +85,17 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
                 suggestionActions = noteTaskSuggestionsActions(model),
             )
         }
+        if (legacyMigration.visible) LegacyQuickNoteMigrationScreen(
+            state = legacyMigration,
+            onRefresh = legacyMigrationActions.refresh,
+            onPage = legacyMigrationActions.page,
+            onSelect = legacyMigrationActions.select,
+            onConfirm = legacyMigrationActions.confirm,
+            onRevoke = legacyMigrationActions.revoke,
+            onDismissPreview = legacyMigrationActions.dismissPreview,
+            onOpenNote = legacyMigrationActions.openNote,
+            onClose = legacyMigrationActions.close,
+        )
       }
     }
 }

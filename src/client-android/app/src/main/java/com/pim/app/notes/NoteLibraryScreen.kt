@@ -36,6 +36,7 @@ internal fun NoteLibraryScreen(
     currentTarget: NoteUploadTarget? = null,
     onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
     asrTaskCount: Int = 0, onAsr: () -> Unit = {}, onImport: () -> Unit = {},
+    onLegacyQuickNotes: () -> Unit = {},
 ) {
     val d = PimTheme.dimensions
     var search by rememberSaveable { mutableStateOf("") }
@@ -79,6 +80,15 @@ internal fun NoteLibraryScreen(
                     Icon(Icons.Default.GraphicEq, null)
                     Spacer(Modifier.width(d.spaceSmall))
                     Text(if (asrTaskCount > 0) "逐段转写任务 · $asrTaskCount 个" else "逐段转写任务")
+                }
+                Spacer(Modifier.height(d.spaceMedium))
+                OutlinedButton(
+                    onClick = onLegacyQuickNotes,
+                    modifier = Modifier.fillMaxWidth().testTag("legacy-quicknote-migration-open"),
+                ) {
+                    Icon(Icons.Default.MoveToInbox, null)
+                    Spacer(Modifier.width(d.spaceSmall))
+                    Text("迁移旧快速记录到本机笔记")
                 }
                 Spacer(Modifier.height(d.spaceMedium))
                 OutlinedButton(

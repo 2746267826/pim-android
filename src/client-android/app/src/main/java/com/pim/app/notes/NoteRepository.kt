@@ -1,6 +1,8 @@
 package com.pim.app.notes
 
 import android.content.Context
+import com.pim.app.nativework.quicknotes.isLegacyQuickNoteHtml
+import com.pim.core.contract.QuickNoteDetailDto
 import dagger.hilt.android.qualifiers.ApplicationContext
 import java.io.File
 import java.io.InputStream
@@ -13,6 +15,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
+import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
+import kotlinx.serialization.json.jsonPrimitive
+import kotlinx.serialization.json.long
 
 data class NotesState(
     val loaded: Boolean = false,
@@ -43,6 +50,7 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
     private val notesRoot = File(context.noBackupFilesDir, "notes")
     private val store = NoteFileStore(notesRoot)
     private val editHistory = NoteEditHistoryStore(File(notesRoot, ".edit-history"))
+    private val migrationLinks = LegacyQuickNoteMigrationStore(File(context.noBackupFilesDir, "legacy-quicknote-migrations"))
     private val histories = mutableMapOf<String, NoteEditHistory>()
     private val mutableState = MutableStateFlow(NotesState())
     val state = mutableState.asStateFlow()
@@ -205,6 +213,58 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
         }
     }
 
+    suspend fun importLegacyQuickNote(
+        identity: LegacyQuickNoteMigrationIdentity,
+        detail: QuickNoteDetailDto,
+        mappings: LegacyQuickNoteMigrationLinks = migrationLinks,
+        checkActive: () -> Unit = {},
+    ): NoteDocument = withContext(Dispatchers.IO) {
+        initialize()
+        require(detail.id == identity.legacyNoteId) { "Legacy quick-note identity changed" }
+        validateMigrationSize(detail)
+        writes.withLock {
+            val link = mappings.find(identity)
+            if (link != null) {
+                require(link.noteId == identity.noteId)
+                val existing = state.value.documents[link.noteId] ?: store.read(link.noteId)
+                require(existing.hasLegacySource(identity)) { "Mapped native note is unavailable; source record was not changed" }
+                return@withLock existing
+            }
+
+            val importedAt = System.currentTimeMillis()
+            val candidate = createLegacyQuickNoteDocument(identity, detail, importedAt)
+            val existing = state.value.documents[identity.noteId] ?: store.readForCreate(identity.noteId)
+            val document = if (existing == null) candidate else {
+                require(existing.hasLegacySource(identity, detail)) {
+                    "A local note already occupies the stable migration identity; no source record was changed"
+                }
+                existing
+            }
+
+            // The note is written first. If the link write fails, a retry recognizes the same
+            // deterministic note and completes the mapping without changing the remote source.
+            checkActive()
+            if (existing == null) store.save(document)
+            checkActive()
+            mappings.put(
+                LegacyQuickNoteMigrationLink(
+                    serverIdentity = identity.binding.serverIdentity,
+                    ownerId = identity.binding.ownerId,
+                    legacyNoteId = identity.legacyNoteId,
+                    noteId = identity.noteId,
+                    createdAtMillis = importedAt,
+                )
+            )
+            synchronized(this@NoteRepository) {
+                if (state.value.documents[document.id] == null) {
+                    NoteEditHistory.initialOrNull(document)?.let { histories[document.id] = it }
+                    publish(document, recordHistory = false)
+                }
+            }
+            document
+        }
+    }
+
     @Synchronized fun undo(id: String): Boolean = moveHistory(id, forward = false)
     @Synchronized fun redo(id: String): Boolean = moveHistory(id, forward = true)
 
@@ -272,4 +332,44 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
         undoDepth = cursor,
         redoDepth = snapshots.lastIndex - cursor,
     )
+
+    private fun createLegacyQuickNoteDocument(
+        identity: LegacyQuickNoteMigrationIdentity,
+        detail: QuickNoteDetailDto,
+        importedAtMillis: Long,
+    ): NoteDocument {
+        val editableCopy = if (detail.isLegacyQuickNoteHtml()) "" else detail.contentMarkdown
+        val blank = NoteDocument.create()
+        val document = blank.copy(source = JsonObject(blank.source + mapOf(
+            "id" to JsonPrimitive(identity.noteId),
+            "title" to JsonPrimitive("旧快速记录 · ${detail.id.take(8)}"),
+            "createdAtMillis" to JsonPrimitive(importedAtMillis),
+            "blocks" to JsonArray(listOf(
+                LegacyQuickNoteSource(identity, detail, importedAtMillis).block(),
+                markdownBlock(editableCopy),
+            )),
+        )))
+        require(document.source.toString().toByteArray(Charsets.UTF_8).size <= NoteEditHistory.MAX_SNAPSHOT_BYTES) {
+            "旧记录过大，无法安全创建有界本机副本；旧记录保留且未更改。"
+        }
+        return document.also(NoteDocument::validate)
+    }
+
+    private fun NoteDocument.hasLegacySource(
+        identity: LegacyQuickNoteMigrationIdentity,
+        detail: QuickNoteDetailDto? = null,
+    ): Boolean {
+        val block = blocks.firstOrNull { it["kind"]?.jsonPrimitive?.content == "legacyQuickNote" } ?: return false
+        val importedAt = block["importedAtMillis"]?.jsonPrimitive?.long ?: return false
+        val fieldsMatch = block["id"]?.jsonPrimitive?.content == UUIDFromDigest("${identity.stableKey}:source-block") &&
+            block["legacyNoteId"]?.jsonPrimitive?.content == identity.legacyNoteId &&
+            block["ownerId"]?.jsonPrimitive?.content == identity.binding.ownerId &&
+            block["serverIdentity"]?.jsonPrimitive?.content == identity.binding.serverIdentity
+        if (!fieldsMatch) return false
+        return detail == null || block == LegacyQuickNoteSource(
+                identity,
+                detail,
+                importedAt,
+            ).block()
+    }
 }

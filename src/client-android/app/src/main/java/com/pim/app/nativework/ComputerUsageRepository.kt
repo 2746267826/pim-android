@@ -4,6 +4,7 @@ import com.pim.core.contract.SiteDailyRowDto
 import com.pim.core.contract.SiteSummaryDto
 import com.pim.core.contract.SiteTimelineRowDto
 import com.pim.core.contract.TypedDetailQueryResponse
+import com.pim.core.contract.TypedDetailQueryResponseApiResponse
 import com.pim.core.contract.DeviceListDto
 import com.pim.core.contract.PcDetailRecord
 import com.pim.core.network.ApiService

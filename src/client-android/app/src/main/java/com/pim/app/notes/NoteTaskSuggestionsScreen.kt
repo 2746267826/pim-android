@@ -321,7 +321,7 @@ private fun NoteTaskSuggestionCard(
                 )
                 if (draft?.dirty == true) Text("本机修订尚未保存；请先保存或明确放弃，不能直接放弃服务端建议。")
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                    Button(onClick = { scope?.let { s -> actions.save(s, remote.id) }, enabled = scope != null && draft?.dirty == true && !conflicted &&
+                    Button(onClick = { scope?.let { s -> actions.save(s, remote.id) } }, enabled = scope != null && draft?.dirty == true && !conflicted &&
                         !item.confirmationPending, modifier = Modifier.testTag("task-suggestion-save-${remote.id}")) {
                         Text("保存到服务器")
                     }

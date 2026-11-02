@@ -144,7 +144,7 @@ internal fun MobileUsageHistoryContent(
                         if (day.timeline.hasMore == true && page < MOBILE_USAGE_HISTORY_MAX_PAGES_PER_DAY) {
                             TextButton(
                                 onClick = { onLoadMore(day.date) },
-                                enabled = !day.loadingMore,
+                                enabled = state.days.none { it.loadingMore },
                                 modifier = Modifier.testTag("mobile-usage-load-more-${day.date}"),
                             ) {
                                 Text(if (day.loadingMore) "正在读取…" else "读取更多活动记录")

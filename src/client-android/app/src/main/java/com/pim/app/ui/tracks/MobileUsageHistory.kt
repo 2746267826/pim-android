@@ -232,11 +232,11 @@ class MobileUsageHistoryViewModel @Inject constructor(
     }
 
     fun loadMore(date: LocalDate) {
-        queryJob?.cancel()
-        val generation = ++requestGeneration
         val current = mutableState.value
         val session = transport.currentSession()
         if (session == null || loadedSession != session) {
+            queryJob?.cancel()
+            requestGeneration++
             clearAccountData(current)
             mutableState.value = mutableState.value.copy(
                 message = "账号、服务器或登录会话已变化；旧手机使用数据已清除，请重新查询。",
@@ -245,7 +245,14 @@ class MobileUsageHistoryViewModel @Inject constructor(
         }
         val day = current.days.firstOrNull { it.date == date } ?: return
         val nextPage = (day.timeline.page ?: 1) + 1
-        if (day.timeline.hasMore != true || nextPage > MOBILE_USAGE_HISTORY_MAX_PAGES_PER_DAY) return
+        if (current.days.any { it.loadingMore } ||
+            day.timeline.hasMore != true ||
+            nextPage > MOBILE_USAGE_HISTORY_MAX_PAGES_PER_DAY
+        ) {
+            return
+        }
+        val generation = ++requestGeneration
+        queryJob?.cancel()
         mutableState.value = current.copy(
             days = current.days.map { if (it.date == date) it.copy(loadingMore = true) else it },
             error = null,

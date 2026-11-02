@@ -212,6 +212,86 @@ class MobileUsageHistoryTest {
         }
     }
 
+    @Test
+    fun invalidOrOtherDayPaginationDoesNotCancelActivePage() = runTest {
+        val main = StandardTestDispatcher(testScheduler)
+        Dispatchers.setMain(main)
+        try {
+            val firstDate = "2026-11-01"
+            val secondDate = "2026-11-02"
+            val finalDate = "2026-11-03"
+            val requestedPages = mutableListOf<Pair<String, Int>>()
+            var pendingFirstDatePage: Continuation<Any?>? = null
+            val api = apiProxy { method, args ->
+                when (method.name) {
+                    "getManagedDevices" -> DeviceListDtoIReadOnlyListApiResponse(0, emptyList(), "ok", "now")
+                    "getMobileSummary" -> {
+                        val date = args[0] as String
+                        MobileUsageSummaryResponseApiResponse(0, summary(date), "ok", "now")
+                    }
+                    "getMobileTimeline" -> {
+                        val date = args[0] as String
+                        val page = args[2] as Int
+                        requestedPages += date to page
+                        if (date == firstDate && page == 2) {
+                            pendingFirstDatePage = args.last() as Continuation<Any?>
+                            COROUTINE_SUSPENDED
+                        } else {
+                            val hasMore = date != finalDate && page == 1
+                            MobileTimelineResponseApiResponse(
+                                0,
+                                timeline(date, page, hasMore),
+                                "ok",
+                                "now",
+                            )
+                        }
+                    }
+                    else -> error("Unexpected API call ${method.name}")
+                }
+            }
+            val viewModel = MobileUsageHistoryViewModel(FakeTransport(session(ownerA, 1), api))
+            viewModel.setStartDate(firstDate)
+            viewModel.setEndDate(finalDate)
+            viewModel.refresh()
+            runCurrent()
+
+            assertEquals(listOf(firstDate to 1, secondDate to 1, finalDate to 1), requestedPages)
+            val firstDay = LocalDate.parse(firstDate)
+            viewModel.loadMore(firstDay)
+            runCurrent()
+            assertTrue(pendingFirstDatePage != null)
+            assertTrue(viewModel.state.value.days.first { it.date == firstDay }.loadingMore)
+
+            viewModel.loadMore(LocalDate.parse(secondDate))
+            viewModel.loadMore(LocalDate.parse(finalDate))
+            viewModel.loadMore(LocalDate.parse("2026-11-04"))
+            runCurrent()
+
+            assertEquals(
+                listOf(firstDate to 1, secondDate to 1, finalDate to 1, firstDate to 2),
+                requestedPages,
+            )
+            assertTrue(viewModel.state.value.days.first { it.date == firstDay }.loadingMore)
+            assertFalse(viewModel.state.value.days.first { it.date == LocalDate.parse(secondDate) }.loadingMore)
+            assertFalse(viewModel.state.value.days.first { it.date == LocalDate.parse(finalDate) }.loadingMore)
+
+            pendingFirstDatePage!!.resumeWith(
+                Result.success(
+                    MobileTimelineResponseApiResponse(0, timeline(firstDate, 2, false), "ok", "now"),
+                ),
+            )
+            runCurrent()
+
+            val firstDayState = viewModel.state.value.days.first { it.date == firstDay }
+            assertFalse(firstDayState.loadingMore)
+            assertEquals(2, firstDayState.timeline.page)
+            assertEquals(3, firstDayState.timeline.items.size)
+            assertFalse(viewModel.state.value.days.any { it.loadingMore })
+        } finally {
+            Dispatchers.resetMain()
+        }
+    }
+
     private fun apiProxy(block: (java.lang.reflect.Method, Array<out Any?>) -> Any?): ApiService =
         Proxy.newProxyInstance(ApiService::class.java.classLoader, arrayOf(ApiService::class.java)) { _, method, args ->
             block(method, args ?: emptyArray())
@@ -259,13 +339,13 @@ class MobileUsageHistoryTest {
         totalForegroundSeconds = 60,
     )
 
-    private fun timeline(date: String, page: Int) = MobileTimelineResponse(
+    private fun timeline(date: String, page: Int, hasMore: Boolean = page == 1) = MobileTimelineResponse(
         date = date,
         deviceId = "device-a",
         fallbackSummaries = if (page == 1) listOf(item("synthetic-2", "fallback")) else emptyList(),
         fallbackTotalCount = 1,
         generatedAt = "2026-11-02T00:00:00Z",
-        hasMore = page == 1,
+        hasMore = hasMore,
         items = when (page) {
             1 -> listOf(item("synthetic-1", "session"), item("synthetic-2", "fallback"))
             2 -> listOf(item("synthetic-3", "session"))
@@ -280,7 +360,7 @@ class MobileUsageHistoryTest {
             else -> emptyList()
         },
         totalCount = 3,
-        truncated = page == 1,
+        truncated = hasMore,
     )
 
     private fun item(id: String, kind: String) = MobileTimelineItemDto(

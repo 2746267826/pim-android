@@ -36,13 +36,13 @@ class NativeHabitTest {
             calls += (method to args.dropLast(1))
             when (method) {
                 "getHabits" -> HabitRoutineDtoIReadOnlyListApiResponse(
-                    code = 200,
+                    code = 0,
                     data = listOf(habit()),
                     message = "ok",
                     timestamp = "now",
                 )
                 "archiveHabit" -> HabitRoutineDtoApiResponse(
-                    code = 200,
+                    code = 0,
                     data = habit(status = "archived"),
                     message = "ok",
                     timestamp = "now",

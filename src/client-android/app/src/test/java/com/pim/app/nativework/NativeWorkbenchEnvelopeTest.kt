@@ -134,6 +134,22 @@ class NativeWorkbenchEnvelopeTest {
         ).deleteDevice("device-1")
         assertEquals("device-1", deleted.deviceId)
 
+        val wrongDevice = assertThrows(NativeWorkbenchRequestException::class.java) {
+            runBlocking {
+                NativeWorkbenchRepository(
+                    api(
+                        DeviceDeleteResultDtoApiResponse(
+                            code = 0,
+                            data = deviceResult.copy(deviceId = "device-2"),
+                            message = "ok",
+                            timestamp = "now",
+                        )
+                    )
+                ).deleteDevice("device-1")
+            }
+        }
+        assertTrue(wrongDevice.message.orEmpty().contains("与请求不一致"))
+
         val event = event()
         val blankAck = assertThrows(NativeWorkbenchRequestException::class.java) {
             runBlocking {
@@ -147,6 +163,24 @@ class NativeWorkbenchEnvelopeTest {
         NativeWorkbenchRepository(
             api(StringApiResponse(code = 0, data = "deleted", message = "ok", timestamp = "now"))
         ).deleteEvent(event)
+
+        for (confirmation in listOf("false", " FALSE ", "FaLsE")) {
+            val falseAck = assertThrows(NativeWorkbenchRequestException::class.java) {
+                runBlocking {
+                    NativeWorkbenchRepository(
+                        api(
+                            StringApiResponse(
+                                code = 0,
+                                data = confirmation,
+                                message = "ok",
+                                timestamp = "now",
+                            )
+                        )
+                    ).deleteEvent(event)
+                }
+            }
+            assertTrue(falseAck.message.orEmpty().contains("未返回确认信息"))
+        }
 
         val failedAck = assertThrows(NativeWorkbenchRequestException::class.java) {
             runBlocking {

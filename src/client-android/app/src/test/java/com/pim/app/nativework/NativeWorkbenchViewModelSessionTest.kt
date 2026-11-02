@@ -74,7 +74,7 @@ class NativeWorkbenchViewModelSessionTest {
             pendingTasks!!.resumeWith(
                 Result.success(
                     TaskResponsePagedResultApiResponse(
-                        code = 200,
+                        code = 0,
                         data = TaskResponsePagedResult(
                             items = listOf(task()),
                             page = 1,
@@ -111,7 +111,7 @@ class NativeWorkbenchViewModelSessionTest {
                 when (method.name) {
                     "getPendingOperationConfirmations" ->
                         OperationConfirmationDtoIReadOnlyListApiResponse(
-                            code = 200,
+                            code = 0,
                             data = listOf(confirmation("owner-a")),
                             message = "ok",
                             timestamp = "now",
@@ -147,7 +147,7 @@ class NativeWorkbenchViewModelSessionTest {
             pendingDetail!!.resumeWith(
                 Result.success(
                     OperationConfirmationDtoApiResponse(
-                        code = 200,
+                        code = 0,
                         data = confirmation("owner-a"),
                         message = "ok",
                         timestamp = "now",
@@ -177,7 +177,7 @@ class NativeWorkbenchViewModelSessionTest {
             ) { _, method, args ->
                 when (method.name) {
                     "getHabits" -> HabitRoutineDtoIReadOnlyListApiResponse(
-                        code = 200,
+                        code = 0,
                         data = listOf(habit()),
                         message = "ok",
                         timestamp = "now",
@@ -214,7 +214,7 @@ class NativeWorkbenchViewModelSessionTest {
             archiveResponse!!.resumeWith(
                 Result.success(
                     HabitRoutineDtoApiResponse(
-                        code = 200,
+                        code = 0,
                         data = habit(status = "archived"),
                         message = "ok",
                         timestamp = "now",
@@ -247,7 +247,7 @@ class NativeWorkbenchViewModelSessionTest {
             ) { _, method, _ ->
                 when (method.name) {
                     "getTasksPaged" -> TaskResponsePagedResultApiResponse(
-                        code = 200,
+                        code = 0,
                         data = TaskResponsePagedResult(
                             items = listOf(
                                 task(id = "today", title = "Due today", due = todayDue),
@@ -261,16 +261,16 @@ class NativeWorkbenchViewModelSessionTest {
                         message = "ok",
                         timestamp = "now",
                     )
-                    "getTaskBooks" -> TaskBookDtoIReadOnlyListApiResponse(200, emptyList(), "ok", "now")
+                    "getTaskBooks" -> TaskBookDtoIReadOnlyListApiResponse(0, emptyList(), "ok", "now")
                     "getEvents" -> EventResponsePagedResultApiResponse(
-                        200,
+                        0,
                         EventResponsePagedResult(emptyList(), 1, 100, 0, 0),
                         "ok",
                         "now",
                     )
-                    "getCalendars" -> CalendarResponseListApiResponse(200, emptyList(), "ok", "now")
+                    "getCalendars" -> CalendarResponseListApiResponse(0, emptyList(), "ok", "now")
                     "getMobileSummary" -> MobileUsageSummaryResponseApiResponse(
-                        200,
+                        0,
                         MobileUsageSummaryResponse(
                             appRanking = emptyList(),
                             appSwitchCount = 0,
@@ -331,20 +331,20 @@ class NativeWorkbenchViewModelSessionTest {
             ) { _, method, _ ->
                 when (method.name) {
                     "getTasksPaged" -> TaskResponsePagedResultApiResponse(
-                        200,
+                        0,
                         TaskResponsePagedResult(emptyList(), 1, 100, 0, 0),
                         "ok",
                         "now",
                     )
                     "getEvents" -> EventResponsePagedResultApiResponse(
-                        200,
+                        0,
                         EventResponsePagedResult(emptyList(), 1, 100, 0, 0),
                         "ok",
                         "now",
                     )
-                    "getCalendars" -> CalendarResponseListApiResponse(200, emptyList(), "ok", "now")
+                    "getCalendars" -> CalendarResponseListApiResponse(0, emptyList(), "ok", "now")
                     "getMobileSummary" -> MobileUsageSummaryResponseApiResponse(
-                        200,
+                        0,
                         MobileUsageSummaryResponse(
                             appRanking = emptyList(), appSwitchCount = 0, appsUsed = 0,
                             completeness = 1.0, date = today.toString(), fallbackForegroundSeconds = 0,

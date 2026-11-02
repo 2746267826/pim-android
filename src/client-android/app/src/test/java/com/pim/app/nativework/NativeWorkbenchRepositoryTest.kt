@@ -62,7 +62,7 @@ class NativeWorkbenchRepositoryTest {
             when (method) {
                 "createTask" -> {
                     request = args[0] as CreateTaskRequest
-                    TaskResponseApiResponse(200, task(), "ok", "now")
+                    TaskResponseApiResponse(0, task(), "ok", "now")
                 }
                 else -> error("Unexpected $method")
             }
@@ -87,7 +87,7 @@ class NativeWorkbenchRepositoryTest {
             when (method) {
                 "updateTask" -> {
                     request = args[1] as UpdateTaskRequest
-                    TaskResponseApiResponse(200, original, "ok", "now")
+                    TaskResponseApiResponse(0, original, "ok", "now")
                 }
                 else -> error("Unexpected $method")
             }
@@ -141,7 +141,7 @@ class NativeWorkbenchRepositoryTest {
             val api = fakeApi { method, _ ->
                 when (method) {
                     "createEvent" -> EventResponseApiResponse(
-                        201,
+                        0,
                         event().copy(rRule = null),
                         "ok",
                         "now"
@@ -170,7 +170,7 @@ class NativeWorkbenchRepositoryTest {
                 "createTaskBook" -> {
                     taskBookRequest = args[0] as CreateTaskBookRequest
                     TaskBookDtoApiResponse(
-                        201,
+                        0,
                         TaskBookDto(id = "book", name = "工作", kind = "task", status = "active"),
                         "ok",
                         "now"
@@ -179,7 +179,7 @@ class NativeWorkbenchRepositoryTest {
                 "createCalendar" -> {
                     calendarRequest = args[0] as CreateCalendarRequest
                     CalendarResponseApiResponse(
-                        201,
+                        0,
                         CalendarResponse(
                             color = "#2563EB",
                             eventCount = 0,
@@ -213,7 +213,7 @@ class NativeWorkbenchRepositoryTest {
         val api = fakeApi { method, _ ->
             when (method) {
                 "getCalendars" -> CalendarResponseListApiResponse(
-                    200,
+                    0,
                     listOf(
                         CalendarResponse(
                             canEdit = true,
@@ -255,7 +255,7 @@ class NativeWorkbenchRepositoryTest {
                 "getQuickNotes" -> {
                     pageArgs = args.dropLast(1)
                     QuickNoteListItemDtoPagedResultApiResponse(
-                        200,
+                        0,
                         QuickNoteListItemDtoPagedResult(emptyList(), 1, 50, 0, 0),
                         "ok",
                         "now"
@@ -263,12 +263,12 @@ class NativeWorkbenchRepositoryTest {
                 }
                 "createQuickNote" -> {
                     create = args[0] as CreateQuickNoteRequest
-                    QuickNoteDetailDtoApiResponse(201, detail, "ok", "now")
+                    QuickNoteDetailDtoApiResponse(0, detail, "ok", "now")
                 }
-                "getQuickNote" -> QuickNoteDetailDtoApiResponse(200, detail, "ok", "now")
+                "getQuickNote" -> QuickNoteDetailDtoApiResponse(0, detail, "ok", "now")
                 "updateQuickNote" -> {
                     update = args[1] as UpdateQuickNoteRequest
-                    QuickNoteDetailDtoApiResponse(200, detail, "ok", "now")
+                    QuickNoteDetailDtoApiResponse(0, detail, "ok", "now")
                 }
                 else -> error("Unexpected $method")
             }
@@ -297,22 +297,22 @@ class NativeWorkbenchRepositoryTest {
             methods += method
             when (method) {
                 "archiveQuickNote" -> QuickNoteDetailDtoApiResponse(
-                    200,
+                    0,
                     detail.copy(status = "archived"),
                     "ok",
                     "now",
                 )
                 "processQuickNote" -> QuickNoteDetailDtoApiResponse(
-                    200,
+                    0,
                     detail.copy(status = "processed"),
                     "ok",
                     "now",
                 )
                 "restoreQuickNote" -> {
                     restoreRequest = args[1] as RestoreQuickNoteRequest
-                    QuickNoteDetailDtoApiResponse(200, detail, "ok", "now")
+                    QuickNoteDetailDtoApiResponse(0, detail, "ok", "now")
                 }
-                "deleteQuickNote" -> StringApiResponse(200, "deleted", "ok", "now")
+                "deleteQuickNote" -> StringApiResponse(0, "deleted", "ok", "now")
                 else -> error("Unexpected $method")
             }
         }
@@ -336,7 +336,7 @@ class NativeWorkbenchRepositoryTest {
         val api = fakeApi { method, _ ->
             when (method) {
                 "getReminders" -> ReminderResponseIReadOnlyListApiResponse(
-                    200,
+                    0,
                     listOf(reminder),
                     "ok",
                     "now",
@@ -362,7 +362,7 @@ class NativeWorkbenchRepositoryTest {
             calls += mutableListOf<Any?>(method).apply { addAll(args.dropLast(1)) }
             when (method) {
                 "dismissReminder", "snoozeReminder" ->
-                    ReminderResponseApiResponse(200, reminder(), "ok", "now")
+                    ReminderResponseApiResponse(0, reminder(), "ok", "now")
                 else -> error("Unexpected $method")
             }
         }
@@ -420,7 +420,7 @@ class NativeWorkbenchRepositoryTest {
         } as ApiService
 
     private fun taskPage() = TaskResponsePagedResultApiResponse(
-        code = 200,
+        code = 0,
         data = TaskResponsePagedResult(
             items = listOf(task()),
             page = 1,

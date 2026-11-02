@@ -366,7 +366,11 @@ class NativeWorkbenchRepository @Inject constructor(
 
     suspend fun deleteDevice(deviceId: String): DeviceDeleteResultDto {
         val result = api.deleteManagedDevice(deviceId)
-        return requireSuccess(result.code, result.data, result.message, "删除设备")
+        val deleted = requireSuccess(result.code, result.data, result.message, "删除设备")
+        if (deleted.deviceId != deviceId) {
+            throw NativeWorkbenchRequestException("删除设备：服务端确认的设备与请求不一致")
+        }
+        return deleted
     }
 
     suspend fun loadCategoryTree(): List<CategoryTreeNode> {
@@ -513,7 +517,7 @@ class NativeWorkbenchRepository @Inject constructor(
     }
 
     private fun requireNonBlankAcknowledgement(value: String, operation: String) {
-        if (value.isBlank()) {
+        if (value.isBlank() || value.trim().equals("false", ignoreCase = true)) {
             throw NativeWorkbenchRequestException("$operation：服务端未返回确认信息")
         }
     }

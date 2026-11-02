@@ -47,6 +47,39 @@ class LegacyQuickNoteRepositoryEnvelopeTest {
     }
 
     @Test
+    fun deleteRejectsFalseOrBlankSuccessData() {
+        listOf("false", " FALSE ", "  ").forEach { data ->
+            val repository = LegacyQuickNoteRepository(
+                fakeApi { method, _ ->
+                    check(method == "deleteQuickNote")
+                    StringApiResponse(0, data, "ok", "now")
+                },
+            )
+
+            assertThrows(NativeWorkbenchRequestException::class.java) {
+                runBlocking { repository.delete(legacyHtmlNote()) }
+            }
+        }
+    }
+
+    @Test
+    fun rejectedUpdateEnvelopeLeavesDirtyDraftUntouched() {
+        val draft = QuickNoteDraft("server text", "unsaved local text")
+        val repository = LegacyQuickNoteRepository(
+            fakeApi { method, _ ->
+                check(method == "updateQuickNote")
+                detailResponse(code = 41, includeData = true)
+            },
+        )
+
+        assertThrows(NativeWorkbenchRequestException::class.java) {
+            runBlocking { repository.update(editableNote(), draft.content) }
+        }
+        assertEquals("unsaved local text", draft.content)
+        assertTrue(draft.isDirty)
+    }
+
+    @Test
     fun validContractEnvelopesPreserveLegacyLifecycleAndAttachmentIdentity() = runBlocking {
         val calls = mutableListOf<String>()
         var updateRequest: UpdateQuickNoteRequest? = null

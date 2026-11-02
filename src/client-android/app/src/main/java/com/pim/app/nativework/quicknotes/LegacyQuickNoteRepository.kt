@@ -139,7 +139,10 @@ class LegacyQuickNoteRepository @Inject constructor(
 
     suspend fun delete(detail: QuickNoteDetailDto) {
         val result = api.deleteQuickNote(detail.id)
-        requireResponse(result.code, result.data, result.message, "删除快速记录")
+        val confirmation = requireResponse(result.code, result.data, result.message, "删除快速记录")
+        if (confirmation.isBlank() || confirmation.trim().equals("false", ignoreCase = true)) {
+            throw NativeWorkbenchRequestException("删除快速记录：服务端未确认删除")
+        }
     }
 
     private fun <T> requireResponse(

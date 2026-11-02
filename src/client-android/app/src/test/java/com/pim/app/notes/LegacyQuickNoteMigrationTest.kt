@@ -24,6 +24,7 @@ import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.test.runCurrent
 import kotlinx.coroutines.test.runTest
 import kotlinx.serialization.json.jsonArray
 import kotlinx.serialization.json.jsonObject
@@ -219,6 +220,64 @@ class LegacyQuickNoteMigrationTest {
         assertTrue("confirmation bound to old session must fail", result.isFailure)
         assertEquals(firstIdentity.noteId, links.find(firstIdentity)?.noteId)
         assertEquals(secondIdentity.noteId, links.find(secondIdentity)?.noteId)
+    }
+
+    @Test
+    fun revokeWaitingOnRepositoryLockCannotCrossAnAccountSwitch() = runTest {
+        val root = temp.newFolder()
+        val notes = repository(root)
+        notes.initialize()
+        val first = NativeWorkbenchSession(binding, 1)
+        val secondBinding = BoundUploadSession("https://other.example", "22222222-2222-4222-8222-222222222222")
+        val second = NativeWorkbenchSession(secondBinding, 2)
+        val firstIdentity = LegacyQuickNoteMigrationIdentity(binding, legacyId)
+        val secondIdentity = LegacyQuickNoteMigrationIdentity(secondBinding, legacyId)
+        val links = LegacyQuickNoteMigrationStore(File(root, "links"))
+        links.put(LegacyQuickNoteMigrationLink(
+            serverIdentity = binding.serverIdentity,
+            ownerId = owner,
+            legacyNoteId = legacyId,
+            noteId = firstIdentity.noteId,
+            createdAtMillis = 1,
+        ))
+        links.put(LegacyQuickNoteMigrationLink(
+            serverIdentity = secondBinding.serverIdentity,
+            ownerId = secondBinding.ownerId,
+            legacyNoteId = legacyId,
+            noteId = secondIdentity.noteId,
+            createdAtMillis = 2,
+        ))
+        val detailStarted = CompletableDeferred<Unit>()
+        lateinit var pendingDetail: Continuation<Any?>
+        val api = apiProxy { method, args ->
+            when (method) {
+                "getQuickNotes" -> listResponse()
+                "getQuickNote" -> {
+                    pendingDetail = args!!.last() as Continuation<Any?>
+                    detailStarted.complete(Unit)
+                    COROUTINE_SUSPENDED
+                }
+                else -> error("Unexpected API call: $method")
+            }
+        }
+        val transport = MutableTransport(first, api)
+        val repository = LegacyQuickNoteMigrationRepository(transport, notes, links)
+        repository.openForSession(first)
+
+        val selecting = async { repository.select(legacyId) }
+        detailStarted.await()
+        val revoking = async { runCatching { repository.revokeLink(legacyId, first) } }
+        runCurrent() // Ensure revoke is queued behind select's held mutex.
+
+        transport.current = second
+        repository.openForSession(second)
+        pendingDetail.resumeWith(Result.success(detailResponse(detail())))
+        selecting.await()
+
+        assertTrue("revoke tied to the old session must fail", revoking.await().isFailure)
+        assertEquals(firstIdentity.noteId, links.find(firstIdentity)?.noteId)
+        assertEquals(secondIdentity.noteId, links.find(secondIdentity)?.noteId)
+        assertEquals(second, repository.state.value.session)
     }
 
     @Test

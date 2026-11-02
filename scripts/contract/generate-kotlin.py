@@ -224,6 +224,8 @@ def kotlin_type(schema: dict, direction: str) -> str:
     ref = schema.get("$ref")
     if isinstance(ref, str):
         return ref.rsplit("/", 1)[-1]
+    if schema == {"nullable": True}:
+        return "JsonElement"
     all_of_ref = single_ref_all_of_type(schema)
     if all_of_ref is not None:
         return all_of_ref
@@ -355,8 +357,13 @@ def generate_models(contract: dict, operations: list[dict], contract_sha: str) -
     ]
 
     needs_serial_name = any("enum" in schemas[name] and schemas[name].get("type") == "string" for name in closure)
+    needs_json_element = any(
+        has_untyped_nullable_json(schemas[name]) for name in closure
+    )
     if needs_serial_name:
         header.append("import kotlinx.serialization.SerialName")
+    if needs_json_element:
+        header.append("import kotlinx.serialization.json.JsonElement")
     header.append("import kotlinx.serialization.Serializable")
     header.append("")
 
@@ -375,6 +382,16 @@ def generate_models(contract: dict, operations: list[dict], contract_sha: str) -
         body.append("")
 
     return "\n".join(header + body).rstrip("\n") + "\n"
+
+
+def has_untyped_nullable_json(value) -> bool:
+    if isinstance(value, dict):
+        if value == {"nullable": True}:
+            return True
+        return any(has_untyped_nullable_json(child) for child in value.values())
+    if isinstance(value, list):
+        return any(has_untyped_nullable_json(child) for child in value)
+    return False
 
 
 # --------------------------------------------------------------------------- #

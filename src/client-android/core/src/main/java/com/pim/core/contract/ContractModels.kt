@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 e7741cf3a69a30eb178d3a77fa329c71bc657dd2ede186c125816e63b6d2bfb2)
+//   契约快照 : contract/openapi.json (sha256 dc64235541002b043f28e4f8e844aef55d51156d1e517bf040a5b4128d6a84f9)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -12,6 +12,7 @@
 package com.pim.core.contract
 
 import kotlinx.serialization.SerialName
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.Serializable
 
 /** 契约 `components.schemas.AiAsrDestinationConsent`（request+response）。 */
@@ -2127,6 +2128,51 @@ data class OutlookSyncStep(
     val status: String,
 )
 
+/** 契约 `components.schemas.PcDetailRecord`（response）。 */
+@Serializable
+data class PcDetailRecord(
+    val absorbedDurationSeconds: Double? = null,
+    val absorbedShortEventsCount: Int? = null,
+    val appName: String? = null,
+    val audible: Boolean? = null,
+    val browserAppName: String? = null,
+    val browserWindowTitle: String? = null,
+    val bucketType: String? = null,
+    val categoryColor: String? = null,
+    val categoryName: String? = null,
+    val classificationConfidence: Double? = null,
+    val classificationExplanation: String? = null,
+    val classificationSource: String? = null,
+    val deviceId: String,
+    val displayName: String? = null,
+    val domain: String? = null,
+    val durationSeconds: Double? = null,
+    val end: String? = null,
+    val incognito: Boolean? = null,
+    val interpretationVersion: String? = null,
+    val isLocalFile: Boolean? = null,
+    val keyCounts: Map<String, Int>? = null,
+    val keyPresses: Int? = null,
+    val mouseDistance: Double? = null,
+    val path: String? = null,
+    val projectTag: String? = null,
+    val raw: JsonElement? = null,
+    val recordKey: String? = null,
+    val recordKeyStability: String? = null,
+    val recordKeyVersion: String? = null,
+    val recordType: String,
+    val scrollDistance: Double? = null,
+    val sourceBucketIds: List<String>? = null,
+    val sourceType: String? = null,
+    val sourceWebEventIds: List<Long>? = null,
+    val sourceWindowEventIds: List<Long>? = null,
+    val start: String,
+    val tabCount: Int? = null,
+    val title: String? = null,
+    val totalClicks: Int? = null,
+    val url: String? = null,
+)
+
 /** 契约 `components.schemas.PimHealthStatus`（response）。 */
 /**
  * 契约枚举 `PimHealthStatus`（整数，取值：0, 1, 2, 3）。
@@ -2337,6 +2383,74 @@ data class SearchResultPagedResultApiResponse(
 data class SelectNoteDerivedVersionRequest(
     val expectedHeadRevision: String,
     val versionId: String,
+)
+
+/** 契约 `components.schemas.SiteDailyRowDto`（response）。 */
+@Serializable
+data class SiteDailyRowDto(
+    val date: String,
+    val focusMs: Long,
+    val host: String,
+    val mediaMs: Long,
+    val runMs: Long,
+    val visitCount: Long,
+)
+
+/** 契约 `components.schemas.SiteDailyRowDtoListApiResponse`（response）。 */
+@Serializable
+data class SiteDailyRowDtoListApiResponse(
+    val code: Int,
+    val data: List<SiteDailyRowDto>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.SiteSummaryDto`（response）。 */
+@Serializable
+data class SiteSummaryDto(
+    val from: String,
+    val siteCount: Int,
+    val to: String,
+    val topHosts: List<SiteTopHostDto>,
+    val totalFocusMs: Long,
+    val totalMediaMs: Long,
+    val totalRunMs: Long,
+    val totalVisits: Long,
+)
+
+/** 契约 `components.schemas.SiteSummaryDtoApiResponse`（response）。 */
+@Serializable
+data class SiteSummaryDtoApiResponse(
+    val code: Int,
+    val data: SiteSummaryDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.SiteTimelineRowDto`（response）。 */
+@Serializable
+data class SiteTimelineRowDto(
+    val durationMs: Long,
+    val host: String,
+    val startMs: Long,
+)
+
+/** 契约 `components.schemas.SiteTimelineRowDtoListApiResponse`（response）。 */
+@Serializable
+data class SiteTimelineRowDtoListApiResponse(
+    val code: Int,
+    val data: List<SiteTimelineRowDto>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.SiteTopHostDto`（response）。 */
+@Serializable
+data class SiteTopHostDto(
+    val alias: String? = null,
+    val focusMs: Long,
+    val host: String,
+    val visitCount: Long,
 )
 
 /** 契约 `components.schemas.StartNoteAsrRequest`（request）。 */
@@ -2556,6 +2670,25 @@ data class TaskTimerStateResponse(
 data class TaskTimerStateResponseApiResponse(
     val code: Int,
     val data: TaskTimerStateResponse? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.TypedDetailQueryResponse`（response）。 */
+@Serializable
+data class TypedDetailQueryResponse(
+    val items: List<PcDetailRecord>,
+    val page: Int,
+    val pageSize: Int,
+    val totalCount: Int,
+    val totalPages: Int,
+)
+
+/** 契约 `components.schemas.TypedDetailQueryResponseApiResponse`（response）。 */
+@Serializable
+data class TypedDetailQueryResponseApiResponse(
+    val code: Int,
+    val data: TypedDetailQueryResponse? = null,
     val message: String,
     val timestamp: String,
 )

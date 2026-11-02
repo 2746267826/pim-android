@@ -10,7 +10,8 @@
 #   4) 契约快照变了、生成物没重新生成（加了 operation 的字段依赖）→ 红；
 #   5) 生成物缺失 → 红；
 #   6) operation 清单里写了契约中不存在的端点 → 生成器拒绝产出（配置错误，非静默变绿）；
-#   7) nullable 单引用 allOf 包装可生成；多成员/兄弟约束的复杂 allOf 继续 fail-closed。
+#   7) nullable 单引用 allOf 包装可生成；多成员/兄弟约束的复杂 allOf 继续 fail-closed；
+#   8) 无 type 的 nullable JSON 值映射为 JsonElement?。
 #
 # 用法：
 #   bash scripts/ci/test-contract-kotlin.sh
@@ -187,7 +188,7 @@ p.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
 PY
 OUT="$TMP_ROOT/allof-multi-member-out"
 rc="$(run_generate "$F" "$OUT")"
-if [ "$rc" = 1 ] && grep -q '复杂 allOf' "$F/generate.log"; then
+if [ "$rc" = 1 ] && grep -q '^ERROR:' "$F/generate.log" && [ ! -f "$OUT/src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt" ]; then
   ok "多成员 allOf 被生成器拒绝（rc=1，未产出半张契约）"
 else
   bad "多成员 allOf 未 fail-closed（generator rc=$rc）"
@@ -205,15 +206,35 @@ p.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
 PY
 OUT="$TMP_ROOT/allof-ref-sibling-out"
 rc="$(run_generate "$F" "$OUT")"
-if [ "$rc" = 1 ] && grep -q '复杂 allOf' "$F/generate.log"; then
+if [ "$rc" = 1 ] && grep -q '^ERROR:' "$F/generate.log" && [ ! -f "$OUT/src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt" ]; then
   ok "\$ref 兄弟约束被生成器拒绝（rc=1，未丢约束）"
 else
   bad "\$ref 兄弟约束未 fail-closed（generator rc=$rc）"
   sed -n '1,40p' "$F/generate.log" | sed 's/^/      | /'
 fi
 
-# --- 8) 门禁确实接进了必需检查链（否则「红了也没人拦」） --------------------
-log "[8] CI 必需检查链接线"
+# --- 8) nullable 无类型 JSON 响应字段保留 JSON 形状 --------------------------
+log "[8] 无 type 的 nullable JSON 字段"
+F="$(make_fixture untyped-nullable-json)"
+OUT="$TMP_ROOT/untyped-nullable-json-out"
+rc="$(run_generate "$F" "$OUT")"
+if [ "$rc" = 0 ] && python3 - "$OUT/$GENERATED_REL" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+expected = "    val raw: JsonElement? = null,"
+raise SystemExit(0 if "import kotlinx.serialization.json.JsonElement" in text and expected in text else 1)
+PY
+then
+  ok "无类型 nullable JSON 映射为 JsonElement?"
+else
+  bad "无类型 nullable JSON 未按预期生成（generator rc=$rc）"
+  sed -n '1,40p' "$F/generate.log" | sed 's/^/      | /'
+fi
+
+# --- 9) 门禁确实接进了必需检查链（否则「红了也没人拦」） --------------------
+log "[9] CI 必需检查链接线"
 if ! command -v python3 >/dev/null 2>&1 || ! python3 -c "import yaml" >/dev/null 2>&1; then
   bad "需要 PyYAML 才能校验 CI 接线（本项无法执行，不算通过）"
 else

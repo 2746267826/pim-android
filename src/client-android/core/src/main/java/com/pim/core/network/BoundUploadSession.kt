@@ -34,6 +34,12 @@ internal enum class BoundUploadRoute {
                 path.startsWith("/api/v1/mobile/devices/") ||
                 path.startsWith("/api/v1/pc/categories") ||
                 path.startsWith("/api/v1/pc/app-knowledge/") ||
+                request.method == "GET" && (
+                    path == "/api/v1/pc/detail" ||
+                        path == "/api/v1/pc/browser-tt/summary" ||
+                        path == "/api/v1/pc/browser-tt/daily" ||
+                        path == "/api/v1/pc/browser-tt/timeline"
+                    ) ||
                 path.startsWith("/api/v1/quick-notes")
         }
     }

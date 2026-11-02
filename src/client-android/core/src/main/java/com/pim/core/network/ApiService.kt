@@ -57,6 +57,10 @@ import com.pim.core.contract.DeviceDeletePreviewDtoApiResponse
 import com.pim.core.contract.DeviceDeleteResultDtoApiResponse
 import com.pim.core.contract.DeviceDtoApiResponse
 import com.pim.core.contract.DeviceListDtoIReadOnlyListApiResponse
+import com.pim.core.contract.TypedDetailQueryResponseApiResponse
+import com.pim.core.contract.SiteSummaryDtoApiResponse
+import com.pim.core.contract.SiteDailyRowDtoListApiResponse
+import com.pim.core.contract.SiteTimelineRowDtoListApiResponse
 import com.pim.core.contract.DeviceRenameRequest
 import com.pim.core.contract.EndpointHeartbeatRequest
 import com.pim.core.contract.EndpointNotificationActionRequest
@@ -414,6 +418,37 @@ interface ApiService {
 
     @GET("mobile/devices/manage")
     suspend fun getManagedDevices(@Query("sortBy") sortBy: String? = null): DeviceListDtoIReadOnlyListApiResponse
+
+    @GET("pc/detail")
+    suspend fun getPcDetail(
+        @Query("dateFrom") dateFrom: String? = null,
+        @Query("dateTo") dateTo: String? = null,
+        @Query("deviceId") deviceId: String? = null,
+        @Query("eventType") eventType: String? = null,
+        @Query("domain") domain: String? = null,
+        @Query("title") title: String? = null,
+        @Query("url") url: String? = null,
+        @Query("view") view: String? = null,
+        @Query("page") page: Int = 1,
+        @Query("pageSize") pageSize: Int = 50,
+    ): TypedDetailQueryResponseApiResponse
+
+    @GET("pc/browser-tt/summary")
+    suspend fun getBrowserUsageSummary(
+        @Query("date") date: String? = null,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+    ): SiteSummaryDtoApiResponse
+
+    @GET("pc/browser-tt/daily")
+    suspend fun getBrowserUsageDaily(
+        @Query("date") date: String? = null,
+        @Query("from") from: String? = null,
+        @Query("to") to: String? = null,
+    ): SiteDailyRowDtoListApiResponse
+
+    @GET("pc/browser-tt/timeline")
+    suspend fun getBrowserUsageTimeline(@Query("date") date: String): SiteTimelineRowDtoListApiResponse
 
     @POST("mobile/devices/{deviceId}/rename")
     suspend fun renameManagedDevice(

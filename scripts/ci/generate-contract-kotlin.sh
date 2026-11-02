@@ -21,19 +21,20 @@ set -euo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
+. "$HERE/python-runtime.sh"
 
 if [ "$#" -ne 0 ]; then
   echo "generate-contract-kotlin.sh 不接受位置参数（收到：$*）。" >&2
   exit 2
 fi
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "需要 python3（生成器只用标准库，不装任何依赖）。" >&2
+PIM_CONTRACT_PYTHON="$(pim_contract_python)" || {
+  echo "需要可运行的 Python 3（生成器只用标准库，不装任何依赖）。" >&2
   exit 2
-fi
+}
 
 echo "== 从契约快照重新生成 Kotlin DTO =="
-python3 "$ROOT/scripts/contract/generate-kotlin.py" --out-dir "$ROOT"
+"$PIM_CONTRACT_PYTHON" "$ROOT/scripts/contract/generate-kotlin.py" --out-dir "$ROOT"
 
 echo ""
 echo "已更新的文件："

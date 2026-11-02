@@ -38,6 +38,7 @@ enum class NativeWorkbenchSection(val label: String) {
     Knowledge("知识分类"),
     Diagnostics("诊断"),
     QuickNotes("快速记录"),
+    ComputerUsage("电脑与浏览器"),
 }
 
 data class NativeWorkbenchUiState(
@@ -73,6 +74,14 @@ data class NativeWorkbenchUiState(
     val selectedConfirmationId: String? = null,
     val confirmationDetail: NativeOperationConfirmation? = null,
     val loadingConfirmationDetail: Boolean = false,
+    val computerUsage: ComputerUsageSnapshot? = null,
+    val computerUsageDevices: List<DeviceListDto> = emptyList(),
+    val computerUsageFrom: String = "",
+    val computerUsageTo: String = "",
+    val computerUsageDeviceId: String = "",
+    val computerUsageTypeFilter: ComputerUsageTypeFilter = ComputerUsageTypeFilter.All,
+    val computerUsagePage: Int = 1,
+    val selectedComputerRecordIndex: Int? = null,
 )
 
 @HiltViewModel
@@ -85,11 +94,13 @@ class NativeWorkbenchViewModel @Inject constructor(
     val state: StateFlow<NativeWorkbenchUiState> = _state.asStateFlow()
     private val sessionGuard = NativeWorkbenchSessionGuard(transport)
     private var refreshJob: Job? = null
+    private var computerUsageRequestVersion = 0L
 
     private data class BoundWorkbench(
         val session: NativeWorkbenchSession,
         val repository: NativeWorkbenchRepository,
         val quickNotes: LegacyQuickNoteRepository,
+        val computerUsage: ComputerUsageRepository,
     )
 
     init {
@@ -100,6 +111,7 @@ class NativeWorkbenchViewModel @Inject constructor(
         if (_state.value.section == section) return
         _state.value = _state.value.copy(
             section = section,
+            computerUsagePage = if (section == NativeWorkbenchSection.ComputerUsage) 1 else _state.value.computerUsagePage,
             error = null,
             feedback = null,
             tasks = if (section == NativeWorkbenchSection.Today ||
@@ -123,6 +135,9 @@ class NativeWorkbenchViewModel @Inject constructor(
             selectedConfirmationId = null,
             confirmationDetail = null,
             loadingConfirmationDetail = false,
+            computerUsage = if (section == NativeWorkbenchSection.ComputerUsage) null else _state.value.computerUsage,
+            computerUsageDevices = if (section == NativeWorkbenchSection.ComputerUsage) emptyList() else _state.value.computerUsageDevices,
+            selectedComputerRecordIndex = null,
         )
         refresh()
     }
@@ -148,6 +163,7 @@ class NativeWorkbenchViewModel @Inject constructor(
             NativeWorkbenchSection.Tasks -> loadTasks()
             NativeWorkbenchSection.Knowledge -> loadKnowledge()
             NativeWorkbenchSection.QuickNotes -> loadQuickNotes()
+            NativeWorkbenchSection.ComputerUsage -> Unit
             else -> Unit
         }
     }
@@ -174,6 +190,10 @@ class NativeWorkbenchViewModel @Inject constructor(
             clearAccountScopedData()
         }
         _state.value = _state.value.copy(loading = true, error = null)
+        val requestedSection = _state.value.section
+        val computerUsageVersion = if (requestedSection == NativeWorkbenchSection.ComputerUsage) {
+            ++computerUsageRequestVersion
+        } else null
         refreshJob = viewModelScope.launch {
             try {
                 when (_state.value.section) {
@@ -281,9 +301,30 @@ class NativeWorkbenchViewModel @Inject constructor(
                         val habits = binding.repository.loadHabits()
                         updateIfCurrent(binding) { it.copy(habits = habits) }
                     }
+                    NativeWorkbenchSection.ComputerUsage -> {
+                        val from = _state.value.computerUsageFrom.ifBlank { LocalDate.now().toString() }
+                        val to = _state.value.computerUsageTo.ifBlank { from }
+                        val deviceId = _state.value.computerUsageDeviceId
+                        val page = _state.value.computerUsagePage
+                        val typeFilter = _state.value.computerUsageTypeFilter
+                        val result = binding.computerUsage.load(from, to, deviceId, page, typeFilter)
+                        updateIfCurrent(binding) {
+                            if (it.section == NativeWorkbenchSection.ComputerUsage &&
+                                computerUsageVersion == computerUsageRequestVersion
+                            ) it.copy(
+                                computerUsage = result,
+                                computerUsageDevices = result.devices,
+                                computerUsageFrom = from,
+                                computerUsageTo = to,
+                                selectedComputerRecordIndex = null,
+                            ) else it
+                        }
+                    }
                 }
                 if (sessionGuard.canApply(binding.session)) {
-                    _state.value = _state.value.copy(loading = false, error = null)
+                    if (_state.value.section == requestedSection &&
+                        (computerUsageVersion == null || computerUsageVersion == computerUsageRequestVersion)
+                    ) _state.value = _state.value.copy(loading = false, error = null)
                 } else {
                     clearStaleSession()
                 }
@@ -292,7 +333,9 @@ class NativeWorkbenchViewModel @Inject constructor(
             } catch (e: Exception) {
                 if (!sessionGuard.canApply(binding.session)) {
                     clearStaleSession()
-                } else {
+                } else if (_state.value.section == requestedSection &&
+                    (computerUsageVersion == null || computerUsageVersion == computerUsageRequestVersion)
+                ) {
                     _state.value = _state.value.copy(
                         loading = false,
                         error = e.workbenchMessage()
@@ -303,6 +346,110 @@ class NativeWorkbenchViewModel @Inject constructor(
     }
 
     fun refreshTasks() = loadTasks()
+
+    fun setComputerUsageFrom(value: String) {
+        if (_state.value.computerUsageFrom == value) return
+        updateComputerUsageFilters { it.copy(computerUsageFrom = value) }
+    }
+
+    fun setComputerUsageTo(value: String) {
+        if (_state.value.computerUsageTo == value) return
+        updateComputerUsageFilters { it.copy(computerUsageTo = value) }
+    }
+
+    fun setComputerUsageDeviceId(value: String) {
+        if (_state.value.computerUsageDeviceId == value) return
+        updateComputerUsageFilters { it.copy(computerUsageDeviceId = value) }
+    }
+
+    fun setComputerUsageTypeFilter(value: ComputerUsageTypeFilter) {
+        if (_state.value.computerUsageTypeFilter == value) return
+        updateComputerUsageFilters { it.copy(computerUsageTypeFilter = value) }
+    }
+
+    private fun updateComputerUsageFilters(transform: (NativeWorkbenchUiState) -> NativeWorkbenchUiState) {
+        if (_state.value.section == NativeWorkbenchSection.ComputerUsage) {
+            computerUsageRequestVersion++
+            refreshJob?.cancel()
+        }
+        _state.value = transform(_state.value).copy(
+            computerUsage = null,
+            computerUsagePage = 1,
+            selectedComputerRecordIndex = null,
+            loading = if (_state.value.section == NativeWorkbenchSection.ComputerUsage) false else _state.value.loading,
+            error = null,
+        )
+    }
+
+    fun selectComputerRecord(index: Int?) {
+        if (_state.value.section == NativeWorkbenchSection.ComputerUsage &&
+            requireLoadedBindingOrShowError() != null
+        ) _state.value = _state.value.copy(selectedComputerRecordIndex = index)
+    }
+
+    fun searchComputerUsage() {
+        if (_state.value.section != NativeWorkbenchSection.ComputerUsage) return
+        _state.value = _state.value.copy(
+            computerUsagePage = 1,
+            computerUsage = null,
+            selectedComputerRecordIndex = null,
+            loading = false,
+        )
+        loadComputerUsage()
+    }
+
+    fun changeComputerUsagePage(page: Int) {
+        val current = _state.value.computerUsage ?: return
+        if (_state.value.section != NativeWorkbenchSection.ComputerUsage ||
+            page !in 1..current.records.totalPages || page == _state.value.computerUsagePage
+        ) return
+        _state.value = _state.value.copy(
+            computerUsagePage = page,
+            computerUsage = null,
+            selectedComputerRecordIndex = null,
+            loading = false,
+        )
+        loadComputerUsage()
+    }
+
+    private fun loadComputerUsage() {
+        refreshJob?.cancel()
+        val binding = requireLoadedBindingOrShowError() ?: return
+        val from = _state.value.computerUsageFrom.ifBlank { LocalDate.now().toString() }
+        val to = _state.value.computerUsageTo.ifBlank { from }
+        val deviceId = _state.value.computerUsageDeviceId
+        val page = _state.value.computerUsagePage
+        val requestVersion = ++computerUsageRequestVersion
+        val typeFilter = _state.value.computerUsageTypeFilter
+        _state.value = _state.value.copy(
+            loading = true,
+            error = null,
+            computerUsageFrom = from,
+            computerUsageTo = to,
+        )
+        refreshJob = viewModelScope.launch {
+            try {
+                val result = binding.computerUsage.load(from, to, deviceId, page, typeFilter)
+                updateIfCurrent(binding) {
+                    if (it.section == NativeWorkbenchSection.ComputerUsage &&
+                        requestVersion == computerUsageRequestVersion
+                    ) it.copy(
+                        computerUsage = result,
+                        computerUsageDevices = result.devices,
+                        selectedComputerRecordIndex = null,
+                        loading = false,
+                    ) else it
+                }
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!sessionGuard.canApply(binding.session)) clearStaleSession()
+                else if (_state.value.section == NativeWorkbenchSection.ComputerUsage &&
+                    requestVersion == computerUsageRequestVersion
+                ) _state.value = _state.value.copy(loading = false, error = e.workbenchMessage())
+            }
+        }
+    }
 
     fun refreshQuickNotes() = refresh()
 
@@ -862,6 +1009,29 @@ class NativeWorkbenchViewModel @Inject constructor(
                         it.copy(habits = habits, loading = false)
                     }
                 }
+                NativeWorkbenchSection.ComputerUsage -> {
+                    val from = _state.value.computerUsageFrom.ifBlank { LocalDate.now().toString() }
+                    val to = _state.value.computerUsageTo.ifBlank { from }
+                    val deviceId = _state.value.computerUsageDeviceId
+                    val page = _state.value.computerUsagePage
+                    val typeFilter = _state.value.computerUsageTypeFilter
+                    val requestVersion = ++computerUsageRequestVersion
+                    val result = binding.computerUsage.load(
+                        from, to, deviceId, page, typeFilter,
+                    )
+                    updateIfCurrent(binding) {
+                        if (it.section == NativeWorkbenchSection.ComputerUsage &&
+                            requestVersion == computerUsageRequestVersion
+                        ) it.copy(
+                            computerUsage = result,
+                            computerUsageDevices = result.devices,
+                            computerUsageFrom = from,
+                            computerUsageTo = to,
+                            selectedComputerRecordIndex = null,
+                            loading = false,
+                        ) else it
+                    }
+                }
             }
             if (!sessionGuard.canApply(binding.session)) clearStaleSession()
         } catch (e: CancellationException) {
@@ -919,6 +1089,7 @@ class NativeWorkbenchViewModel @Inject constructor(
             session = session,
             repository = repository.boundTo(api),
             quickNotes = legacyQuickNotes.boundTo(api),
+            computerUsage = ComputerUsageRepository(api),
         )
     }
 
@@ -964,6 +1135,9 @@ class NativeWorkbenchViewModel @Inject constructor(
             section = _state.value.section,
             search = _state.value.search,
             deviceSort = _state.value.deviceSort,
+            computerUsage = null,
+            computerUsageDevices = emptyList(),
+            selectedComputerRecordIndex = null,
             error = error,
         )
     }

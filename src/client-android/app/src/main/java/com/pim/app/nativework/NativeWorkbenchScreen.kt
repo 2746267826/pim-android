@@ -232,6 +232,16 @@ fun NativeWorkbenchScreen(
                     viewModel.openQuickNote(item.id)
                 },
             )
+            NativeWorkbenchSection.ComputerUsage -> ComputerUsageNativeContent(
+                state = state,
+                onFromChange = viewModel::setComputerUsageFrom,
+                onToChange = viewModel::setComputerUsageTo,
+                onDeviceIdChange = viewModel::setComputerUsageDeviceId,
+                onTypeFilterChange = viewModel::setComputerUsageTypeFilter,
+                onSearch = viewModel::searchComputerUsage,
+                onPageChange = viewModel::changeComputerUsagePage,
+                onSelectRecord = viewModel::selectComputerRecord,
+            )
         }
     }
 

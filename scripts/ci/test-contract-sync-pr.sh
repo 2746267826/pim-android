@@ -130,7 +130,8 @@ run --refresh-cmd "$(refresh_cmd one)" --contract-ref "$PROBE_REF"
 check "首次刷新 → 退出码 0" "0" "$RC"
 check "首次刷新 → result=pr-opened" "pr-opened" "$(result)"
 check "首次刷新 → 刷新命令收到的是通知里的 ref（不被默认 master 覆盖）" "$PROBE_REF" "$(cat "$REF_SEEN" 2>/dev/null)"
-contains "脚本声明的工作仓就是 fixture（防止跑错仓）" "工作仓：$WORK" "$OUT"
+WORK_ROOT="$($G rev-parse --show-toplevel)"
+contains "脚本声明的工作仓就是 fixture（防止跑错仓）" "工作仓：$WORK_ROOT" "$OUT"
 check "首次刷新 → 分支真的推到 origin 了" "ok" "$([ "$(branch_sha)" != "none" ] && echo ok || echo none)"
 ARTIFACT_RE='^(contract/openapi.json|contract/provenance.json|src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt)$'
 check "首次刷新 → 提交里只有契约产物，没有无关文件" "0" \

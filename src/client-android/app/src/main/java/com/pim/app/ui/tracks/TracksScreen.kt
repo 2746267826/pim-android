@@ -54,20 +54,25 @@ fun TracksScreen(
     onUrlChanged: ((String) -> Unit)? = null,
     viewModel: TodayViewModel = hiltViewModel(),
     historyViewModel: LocationHistoryViewModel = hiltViewModel(),
+    usageHistoryViewModel: MobileUsageHistoryViewModel = hiltViewModel(),
 ) {
     val historyState by historyViewModel.state.collectAsStateWithLifecycle()
+    val usageHistoryState by usageHistoryViewModel.state.collectAsStateWithLifecycle()
     val todayState by viewModel.state.collectAsStateWithLifecycle()
     val refreshVersion by viewModel.refreshVersion.collectAsStateWithLifecycle()
     var showLegacy by remember { mutableStateOf(false) }
+    var showUsageHistory by remember { mutableStateOf(false) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    DisposableEffect(lifecycleOwner, historyViewModel) {
+    DisposableEffect(lifecycleOwner, historyViewModel, usageHistoryViewModel, showUsageHistory) {
         val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) historyViewModel.refresh()
+            if (event == Lifecycle.Event.ON_RESUME) {
+                if (showUsageHistory) usageHistoryViewModel.refresh() else historyViewModel.refresh()
+            }
         }
         lifecycleOwner.lifecycle.addObserver(observer)
         if (lifecycleOwner.lifecycle.currentState.isAtLeast(Lifecycle.State.RESUMED)) {
-            historyViewModel.refresh()
+            if (showUsageHistory) usageHistoryViewModel.refresh() else historyViewModel.refresh()
         }
         onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
     }
@@ -100,7 +105,33 @@ fun TracksScreen(
                 )
             }
         } else {
-            Text("位置历史", style = MaterialTheme.typography.headlineSmall, modifier = Modifier.padding(16.dp))
+            Row(
+                Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+            ) {
+                Text(
+                    if (showUsageHistory) "手机使用历史" else "位置历史",
+                    style = MaterialTheme.typography.headlineSmall,
+                )
+                TextButton(
+                    onClick = { showUsageHistory = !showUsageHistory },
+                    modifier = Modifier.testTag("mobile-history-mode-toggle"),
+                ) {
+                    Text(if (showUsageHistory) "查看位置历史" else "查看手机使用")
+                }
+            }
+            if (showUsageHistory) {
+                MobileUsageHistoryContent(
+                    modifier = Modifier.weight(1f),
+                    state = usageHistoryState,
+                    onStartDateChange = usageHistoryViewModel::setStartDate,
+                    onEndDateChange = usageHistoryViewModel::setEndDate,
+                    onDeviceChange = usageHistoryViewModel::setDevice,
+                    onSearch = usageHistoryViewModel::refresh,
+                    onLoadMore = usageHistoryViewModel::loadMore,
+                )
+                return@Column
+            }
             Row(
                 modifier = Modifier.fillMaxWidth().padding(horizontal = 12.dp),
                 horizontalArrangement = Arrangement.spacedBy(8.dp),

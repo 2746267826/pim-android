@@ -192,24 +192,24 @@ class NativeWorkbenchRepository @Inject constructor(
             page = 1,
             pageSize = 100,
         )
-        val page = requireData(result.data, result.message, "读取任务")
+        val page = requireSuccess(result.code, result.data, result.message, "读取任务")
         return NativeTaskPage(page.items, page.totalCount, page.totalPages)
     }
 
     suspend fun loadTaskBooks(): List<TaskBookDto> {
         val result = api.getTaskBooks()
-        return requireData(result.data, result.message, "读取任务本")
+        return requireSuccess(result.code, result.data, result.message, "读取任务本")
     }
 
     suspend fun createTaskBook(name: String): TaskBookDto {
         require(name.isNotBlank()) { "任务本名称不能为空" }
         val result = api.createTaskBook(CreateTaskBookRequest(name = name.trim()))
-        return requireData(result.data, result.message, "新建任务本")
+        return requireSuccess(result.code, result.data, result.message, "新建任务本")
     }
 
     suspend fun loadCalendars(): List<CalendarResponse> {
         val result = api.getCalendars()
-        return requireData(result.data, result.message, "读取日历")
+        return requireSuccess(result.code, result.data, result.message, "读取日历")
             .filter { it.canEdit != false }
     }
 
@@ -217,7 +217,7 @@ class NativeWorkbenchRepository @Inject constructor(
         require(name.isNotBlank()) { "日历名称不能为空" }
         require(Regex("^#[0-9A-Fa-f]{6}$").matches(color)) { "日历颜色需为 #RRGGBB" }
         val result = api.createCalendar(CreateCalendarRequest(name = name.trim(), color = color))
-        return requireData(result.data, result.message, "新建日历")
+        return requireSuccess(result.code, result.data, result.message, "新建日历")
     }
 
     suspend fun loadEvents(
@@ -231,13 +231,13 @@ class NativeWorkbenchRepository @Inject constructor(
             page = 1,
             pageSize = 100,
         )
-        val page = requireData(result.data, result.message, "读取日程")
+        val page = requireSuccess(result.code, result.data, result.message, "读取日程")
         return NativeEventPage(page.items, page.totalCount, page.totalPages)
     }
 
     suspend fun loadTodayUsage(date: LocalDate): MobileUsageSummaryResponse {
         val result = api.getMobileSummary(date = date.toString())
-        return requireData(result.data, result.message, "读取今日使用摘要")
+        return requireSuccess(result.code, result.data, result.message, "读取今日使用摘要")
     }
 
     suspend fun createTask(draft: NativeTaskDraft): TaskResponse {
@@ -253,13 +253,13 @@ class NativeWorkbenchRepository @Inject constructor(
                 title = draft.title.trim(),
             )
         )
-        return requireData(result.data, result.message, "新建任务")
+        return requireSuccess(result.code, result.data, result.message, "新建任务")
     }
 
     suspend fun updateTask(task: TaskResponse, draft: NativeTaskDraft): TaskResponse {
         require(draft.title.isNotBlank()) { "任务标题不能为空" }
         val result = api.updateTask(task.id, taskUpdateRequest(task, draft))
-        return requireData(result.data, result.message, "修改任务")
+        return requireSuccess(result.code, result.data, result.message, "修改任务")
     }
 
     suspend fun setTaskCompleted(task: TaskResponse, completed: Boolean): TaskResponse {
@@ -269,25 +269,38 @@ class NativeWorkbenchRepository @Inject constructor(
             percentComplete = if (completed) 100 else 0,
         )
         val result = api.updateTask(task.id, request)
-        return requireData(result.data, result.message, if (completed) "完成任务" else "重新打开任务")
+        return requireSuccess(
+            result.code,
+            result.data,
+            result.message,
+            if (completed) "完成任务" else "重新打开任务",
+        )
     }
 
     suspend fun deleteTask(task: TaskResponse) {
         val result = api.deleteTask(task.id)
-        requireData(result.data, result.message, "删除任务")
+        requireSuccess(result.code, result.data, result.message, "删除任务")
     }
 
-    suspend fun startTaskTimer(task: TaskResponse): TaskExecutionSegmentResponse =
-        requireData(api.startTaskTimer(task.id).data, "开始计时失败", "启动任务计时")
+    suspend fun startTaskTimer(task: TaskResponse): TaskExecutionSegmentResponse {
+        val result = api.startTaskTimer(task.id)
+        return requireSuccess(result.code, result.data, result.message, "启动任务计时")
+    }
 
-    suspend fun pauseTaskTimer(task: TaskResponse): TaskExecutionSegmentResponse =
-        requireData(api.pauseTaskTimer(task.id).data, "暂停计时失败", "暂停任务计时")
+    suspend fun pauseTaskTimer(task: TaskResponse): TaskExecutionSegmentResponse {
+        val result = api.pauseTaskTimer(task.id)
+        return requireSuccess(result.code, result.data, result.message, "暂停任务计时")
+    }
 
-    suspend fun stopTaskTimer(task: TaskResponse): TaskExecutionSegmentResponse =
-        requireData(api.stopTaskTimer(task.id).data, "结束计时失败", "结束任务计时")
+    suspend fun stopTaskTimer(task: TaskResponse): TaskExecutionSegmentResponse {
+        val result = api.stopTaskTimer(task.id)
+        return requireSuccess(result.code, result.data, result.message, "结束任务计时")
+    }
 
-    suspend fun getTaskTimer(task: TaskResponse): TaskTimerStateResponse =
-        requireData(api.getTaskTimer(task.id).data, "计时状态为空", "读取任务计时")
+    suspend fun getTaskTimer(task: TaskResponse): TaskTimerStateResponse {
+        val result = api.getTaskTimer(task.id)
+        return requireSuccess(result.code, result.data, result.message, "读取任务计时")
+    }
 
     suspend fun createEvent(draft: NativeEventDraft): EventResponse {
         require(draft.title.isNotBlank()) { "日程标题不能为空" }
@@ -302,7 +315,7 @@ class NativeWorkbenchRepository @Inject constructor(
                 title = draft.title.trim(),
             )
         )
-        return requireData(result.data, result.message, "新建日程")
+        return requireSuccess(result.code, result.data, result.message, "新建日程")
     }
 
     suspend fun updateEvent(event: EventResponse, draft: NativeEventDraft): EventResponse {
@@ -315,7 +328,7 @@ class NativeWorkbenchRepository @Inject constructor(
             throw NativeWorkbenchRequestException("重复日程的本次/整个系列范围尚未在原生编辑器确认，请暂用日历网页编辑。")
         }
         val result = api.updateEvent(event.id, eventUpdateRequest(event, draft))
-        return requireData(result.data, result.message, "修改日程")
+        return requireSuccess(result.code, result.data, result.message, "修改日程")
     }
 
     suspend fun deleteEvent(event: EventResponse) {
@@ -326,12 +339,15 @@ class NativeWorkbenchRepository @Inject constructor(
             throw NativeWorkbenchRequestException("重复日程的本次/整个系列范围尚未在原生页确认，请暂用日历网页删除。")
         }
         val result = api.deleteEvent(event.id)
-        requireData(result.data, result.message, "删除日程")
+        requireNonBlankAcknowledgement(
+            requireSuccess(result.code, result.data, result.message, "删除日程"),
+            "删除日程",
+        )
     }
 
     suspend fun loadDevices(sortBy: String = "active"): List<DeviceListDto> {
         val result = api.getManagedDevices(sortBy)
-        return requireData(result.data, result.message, "读取设备")
+        return requireSuccess(result.code, result.data, result.message, "读取设备")
     }
 
     suspend fun renameDevice(deviceId: String, displayName: String) {
@@ -340,22 +356,22 @@ class NativeWorkbenchRepository @Inject constructor(
             deviceId,
             com.pim.core.contract.DeviceRenameRequest(displayName.trim())
         )
-        requireData(result.data, result.message, "重命名设备")
+        requireSuccess(result.code, result.data, result.message, "重命名设备")
     }
 
     suspend fun deviceDeletePreview(deviceId: String): DeviceDeletePreviewDto {
         val result = api.getManagedDeviceDeletePreview(deviceId)
-        return requireData(result.data, result.message, "读取设备删除影响")
+        return requireSuccess(result.code, result.data, result.message, "读取设备删除影响")
     }
 
     suspend fun deleteDevice(deviceId: String): DeviceDeleteResultDto {
         val result = api.deleteManagedDevice(deviceId)
-        return requireData(result.data, result.message, "删除设备")
+        return requireSuccess(result.code, result.data, result.message, "删除设备")
     }
 
     suspend fun loadCategoryTree(): List<CategoryTreeNode> {
         val result = api.getKnowledgeCategoryTree()
-        return requireData(result.data, result.message, "读取分类树")
+        return requireSuccess(result.code, result.data, result.message, "读取分类树")
     }
 
     suspend fun saveCategory(
@@ -381,23 +397,26 @@ class NativeWorkbenchRepository @Inject constructor(
                 sortOrder = sortOrder,
             )
         )
-        return requireData(result.data, result.message, "保存分类")
+        return requireSuccess(result.code, result.data, result.message, "保存分类")
     }
 
     suspend fun deleteCategory(category: CategoryTreeNode) {
         if (category.isBuiltin) throw NativeWorkbenchRequestException("内置分类不可删除。")
         val result = api.deleteKnowledgeCategory(category.id)
-        requireData(result.data, result.message, "删除分类")
+        requireNonBlankAcknowledgement(
+            requireSuccess(result.code, result.data, result.message, "删除分类"),
+            "删除分类",
+        )
     }
 
     suspend fun loadKnowledgeApps(search: String? = null): List<AppKnowledgeAppDto> {
         val result = api.getAppKnowledgeApps(search?.trim()?.takeIf { it.isNotEmpty() })
-        return requireData(result.data, result.message, "读取应用知识")
+        return requireSuccess(result.code, result.data, result.message, "读取应用知识")
     }
 
     suspend fun loadAppContexts(appId: String): List<AppKnowledgeContextDto> {
         val result = api.getAppKnowledgeContexts(appId)
-        return requireData(result.data, result.message, "读取应用上下文")
+        return requireSuccess(result.code, result.data, result.message, "读取应用上下文")
     }
 
     suspend fun saveAppContext(request: SaveAppKnowledgeContextRequest): AppKnowledgeContextDto {
@@ -409,23 +428,32 @@ class NativeWorkbenchRepository @Inject constructor(
             "置信度需在 0-1 之间"
         }
         val result = api.saveAppKnowledgeContext(request)
-        return requireData(result.data, result.message, "保存应用上下文")
+        return requireSuccess(result.code, result.data, result.message, "保存应用上下文")
     }
 
     suspend fun deleteAppContext(context: AppKnowledgeContextDto) {
         val result = api.deleteAppKnowledgeContext(context.id)
-        requireData(result.data, result.message, "删除应用上下文")
+        requireNonBlankAcknowledgement(
+            requireSuccess(result.code, result.data, result.message, "删除应用上下文"),
+            "删除应用上下文",
+        )
     }
 
-    suspend fun loadSystemStatus(): SystemStatusDetailDto =
-        requireData(api.getSystemStatus().data, "服务端状态为空", "读取系统诊断")
+    suspend fun loadSystemStatus(): SystemStatusDetailDto {
+        val result = api.getSystemStatus()
+        return requireSuccess(result.code, result.data, result.message, "读取系统诊断")
+    }
 
-    suspend fun loadReminders(): List<NativeReminderAction> =
-        requireData(api.getReminders().data, "服务端未返回提醒", "读取提醒")
+    suspend fun loadReminders(): List<NativeReminderAction> {
+        val result = api.getReminders()
+        return requireSuccess(result.code, result.data, result.message, "读取提醒")
             .map(::nativeReminderAction)
+    }
 
-    suspend fun dismissReminder(id: String): ReminderResponse =
-        requireData(api.dismissReminder(id).data, "提醒不存在", "忽略提醒")
+    suspend fun dismissReminder(id: String): ReminderResponse {
+        val result = api.dismissReminder(id)
+        return requireSuccess(result.code, result.data, result.message, "忽略提醒")
+    }
 
     suspend fun snoozeReminder(id: String, scheduledAt: String): ReminderResponse {
         val scheduled = runCatching { Instant.parse(scheduledAt) }.getOrNull()
@@ -433,49 +461,62 @@ class NativeWorkbenchRepository @Inject constructor(
         if (!scheduled.isAfter(Instant.now())) {
             throw NativeWorkbenchRequestException("提醒延后时间必须晚于当前时间。")
         }
-        return requireData(
-            api.snoozeReminder(id, scheduled.toString()).data,
-            "提醒不存在",
-            "延后提醒",
-        )
+        val result = api.snoozeReminder(id, scheduled.toString())
+        return requireSuccess(result.code, result.data, result.message, "延后提醒")
     }
 
-    suspend fun loadPendingConfirmations(): List<NativeOperationConfirmation> =
-        requireData(
-            api.getPendingOperationConfirmations().data,
-            "服务端未返回待确认列表",
-            "读取待确认操作",
-        ).map(::nativeOperationConfirmation)
+    suspend fun loadPendingConfirmations(): List<NativeOperationConfirmation> {
+        val result = api.getPendingOperationConfirmations()
+        return requireSuccess(result.code, result.data, result.message, "读取待确认操作")
+            .map(::nativeOperationConfirmation)
+    }
 
-    suspend fun loadConfirmation(id: String): NativeOperationConfirmation =
-        requireData(
-            api.getOperationConfirmation(id).data,
-            "待确认操作不存在",
-            "读取操作摘要",
-        ).let(::nativeOperationConfirmation)
+    suspend fun loadConfirmation(id: String): NativeOperationConfirmation {
+        val result = api.getOperationConfirmation(id)
+        return requireSuccess(result.code, result.data, result.message, "读取操作摘要")
+            .let(::nativeOperationConfirmation)
+    }
 
     suspend fun rejectConfirmation(id: String) {
-        requireData(
-            api.rejectOperationConfirmation(id).data,
-            "待确认操作不存在或已失效",
-            "拒绝操作",
+        val result = api.rejectOperationConfirmation(id)
+        requireSuccess(result.code, result.data, result.message, "拒绝操作")
+    }
+
+    suspend fun loadHabits(): List<NativeHabit> {
+        val result = api.getHabits()
+        return requireSuccess(result.code, result.data, result.message, "读取习惯")
+            .map(::nativeHabit)
+    }
+
+    suspend fun archiveHabit(id: String): NativeHabit {
+        val result = api.archiveHabit(id)
+        return requireSuccess(result.code, result.data, result.message, "归档习惯")
+            .let(::nativeHabit)
+    }
+
+    private fun <T> requireSuccess(
+        code: Int,
+        value: T?,
+        message: String,
+        operation: String,
+    ): T {
+        if (code != 0) {
+            throw NativeWorkbenchRequestException(
+                message.trim().takeIf { it.isNotEmpty() }
+                    ?.let { "$operation：$it" }
+                    ?: "$operation：服务端返回错误（code=$code）"
+            )
+        }
+        return value ?: throw NativeWorkbenchRequestException(
+            "$operation：服务端未返回数据"
         )
     }
 
-    suspend fun loadHabits(): List<NativeHabit> =
-        requireData(api.getHabits().data, "服务端未返回习惯列表", "读取习惯")
-            .map(::nativeHabit)
-
-    suspend fun archiveHabit(id: String): NativeHabit =
-        requireData(api.archiveHabit(id).data, "习惯不存在或已失效", "归档习惯")
-            .let(::nativeHabit)
-
-    private fun <T> requireData(value: T?, message: String, operation: String): T =
-        value ?: throw NativeWorkbenchRequestException(
-            message.trim().takeIf { it.isNotEmpty() }
-                ?.let { "$operation：$it" }
-                ?: "$operation：服务端未返回数据"
-        )
+    private fun requireNonBlankAcknowledgement(value: String, operation: String) {
+        if (value.isBlank()) {
+            throw NativeWorkbenchRequestException("$operation：服务端未返回确认信息")
+        }
+    }
 
     private fun requireEventTimeOrder(draft: NativeEventDraft) {
         val start = runCatching { Instant.parse(draft.dtStart) }.getOrNull()

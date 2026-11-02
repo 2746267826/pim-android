@@ -22,6 +22,30 @@ internal interface UnusedNoteOperations : ApiService {
     override suspend fun getTaskBooks(): TaskBookDtoIReadOnlyListApiResponse = error("Unexpected task-book read")
     override suspend fun createTaskBook(request: CreateTaskBookRequest): TaskBookDtoApiResponse = error("Unexpected task-book create")
     override suspend fun getManagedDevices(sortBy: String?): DeviceListDtoIReadOnlyListApiResponse = error("Unexpected device list")
+    override suspend fun getPcDetail(
+        dateFrom: String?,
+        dateTo: String?,
+        deviceId: String?,
+        eventType: String?,
+        domain: String?,
+        title: String?,
+        url: String?,
+        view: String?,
+        page: Int,
+        pageSize: Int,
+    ): TypedDetailQueryResponseApiResponse = error("Unexpected computer-usage detail")
+    override suspend fun getBrowserUsageSummary(
+        date: String?,
+        from: String?,
+        to: String?,
+    ): SiteSummaryDtoApiResponse = error("Unexpected browser-usage summary")
+    override suspend fun getBrowserUsageDaily(
+        date: String?,
+        from: String?,
+        to: String?,
+    ): SiteDailyRowDtoListApiResponse = error("Unexpected browser-usage daily rows")
+    override suspend fun getBrowserUsageTimeline(date: String): SiteTimelineRowDtoListApiResponse =
+        error("Unexpected browser-usage timeline")
     override suspend fun renameManagedDevice(deviceId: String, request: DeviceRenameRequest): DeviceDtoApiResponse = error("Unexpected device rename")
     override suspend fun getManagedDeviceDeletePreview(deviceId: String): DeviceDeletePreviewDtoApiResponse = error("Unexpected device delete preview")
     override suspend fun deleteManagedDevice(deviceId: String): DeviceDeleteResultDtoApiResponse = error("Unexpected device delete")

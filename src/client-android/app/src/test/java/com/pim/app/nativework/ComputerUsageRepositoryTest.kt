@@ -45,7 +45,7 @@ class ComputerUsageRepositoryTest {
 
         assertEquals(51, result.records.totalCount)
         assertEquals(setOf("web", "window"), result.records.items.map { it.recordType }.toSet())
-        assertEquals("2026-11-01", calls.first { it.first == "getBrowserUsageTimeline" }.second.single())
+        assertEquals("2026-11-01", calls.first { it.first == "getBrowserUsageTimeline" }.second[0])
         val detailArgs = calls.first { it.first == "getPcDetail" }.second
         assertEquals("2026-11-01", detailArgs[0])
         assertEquals("2026-11-02", detailArgs[1])
@@ -57,7 +57,7 @@ class ComputerUsageRepositoryTest {
         assertEquals("2026-11-01", calls.first { it.first == "getBrowserUsageSummary" }.second[1])
         assertEquals("2026-11-02", calls.first { it.first == "getBrowserUsageSummary" }.second[2])
         assertEquals("device-7", result.devices.single().deviceId)
-        assertEquals("active", calls.first { it.first == "getManagedDevices" }.second.single())
+        assertEquals("active", calls.first { it.first == "getManagedDevices" }.second[0])
     }
 
     @Test

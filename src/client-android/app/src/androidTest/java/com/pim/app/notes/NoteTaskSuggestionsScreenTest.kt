@@ -6,8 +6,10 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertDoesNotExist
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
+import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
@@ -125,6 +127,66 @@ class NoteTaskSuggestionsScreenTest {
         compose.runOnIdle { renderedState.value = next }
         compose.onNodeWithTag("task-suggestion-confirm-dialog-$SUGGESTION_ID").assertDoesNotExist()
         assertEquals(emptyList<String>(), confirmations)
+    }
+
+    @Test
+    fun destinationSelectionUsesModelRevisionAndEndpointNotOnlyModelId() {
+        val suggestion = suggestion()
+        val source = NoteTaskSuggestionSource(
+            noteId = suggestion.noteId,
+            materialVersionId = MATERIAL_ID,
+            artifactId = suggestion.artifactId,
+            versionId = suggestion.versionId,
+            contentSha256 = suggestion.sourceContentSha256,
+            inputSha256 = suggestion.sourceInputSha256,
+            manifestSha256 = suggestion.sourceManifestSha256,
+        )
+        val first = NoteTaskSuggestionDestination(
+            modelId = "model-profile",
+            modelRevision = "revision-1",
+            displayName = "Calendar",
+            model = "text-model",
+            endpoint = "https://models.example/v1/one",
+        )
+        val second = first.copy(
+            modelRevision = "revision-2",
+            endpoint = "https://models.example/v1/two",
+        )
+        val state = NoteTaskSuggestionsState(
+            loaded = true,
+            source = source,
+            binding = com.pim.core.network.BoundUploadSession("https://pim.example/", OWNER_ID),
+            identityGeneration = 9,
+            screenGeneration = 12,
+            destinations = listOf(first, second),
+            destinationsBinding = com.pim.core.network.BoundUploadSession("https://pim.example/", OWNER_ID),
+            sourceVerified = true,
+            sourceCharacterCount = 120,
+            sourceContent = "固定服务端原文",
+        )
+        var submitted: NoteTaskSuggestionDestination? = null
+        compose.setContent {
+            PimTheme {
+                Box(Modifier.size(width = 360.dp, height = 800.dp)) {
+                    NoteTaskSuggestionsScreen(
+                        state = state,
+                        actions = NoteTaskSuggestionsActions(extract = { _, destination, acknowledged ->
+                            assertEquals(true, acknowledged)
+                            submitted = destination
+                        }),
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithTag("task-suggestions-destination").performClick()
+        compose.onNodeWithText("Calendar · text-model · 修订 revision-2").performClick()
+        compose.onNodeWithTag("task-suggestions-destination")
+            .assertTextContains("修订 revision-2")
+        compose.onNodeWithTag("task-suggestions-charge-acknowledgement").performClick()
+        compose.onNodeWithTag("task-suggestions-extract").performScrollTo().performClick()
+
+        assertEquals(second, submitted)
     }
 
     @Test

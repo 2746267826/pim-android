@@ -70,10 +70,10 @@ fun NoteTaskSuggestionsScreen(
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
     }
-    var destinationId by rememberSaveable(state.actionScope) { mutableStateOf<String?>(null) }
+    var destinationKey by rememberSaveable(state.actionScope) { mutableStateOf<String?>(null) }
     var acknowledgeCharge by rememberSaveable(state.actionScope) { mutableStateOf(false) }
     val selectedDestination = state.destinations.firstOrNull {
-        it.modelId == destinationId
+        destinationIdentity(it) == destinationKey
     } ?: state.frozenDestination ?: state.destinations.firstOrNull()
     val activeExtraction = state.extraction?.status in setOf(
         NoteTaskSuggestionExtractionStatusDto.QUEUED,
@@ -145,7 +145,7 @@ fun NoteTaskSuggestionsScreen(
                                 DestinationPicker(
                                     destinations = state.destinations,
                                     selected = selected,
-                                    onSelected = { destinationId = it.modelId },
+                                    onSelected = { destinationKey = destinationIdentity(it) },
                                 )
                             }
                             Row {
@@ -153,6 +153,7 @@ fun NoteTaskSuggestionsScreen(
                                     checked = acknowledgeCharge,
                                     onCheckedChange = { acknowledgeCharge = it },
                                     enabled = !state.frozenExtraction,
+                                    modifier = Modifier.testTag("task-suggestions-charge-acknowledgement"),
                                 )
                                 Text("我确认发送固定服务端版本，且接受可能产生的费用")
                             }
@@ -249,7 +250,7 @@ private fun DestinationPicker(
     var expanded by remember { mutableStateOf(false) }
     ExposedDropdownMenuBox(expanded = expanded, onExpandedChange = { expanded = !expanded }) {
         OutlinedTextField(
-            value = "${selected.displayName} · ${selected.model}",
+            value = selected.destinationLabel(),
             onValueChange = {},
             readOnly = true,
             label = { Text("已验证的文本目标") },
@@ -259,13 +260,19 @@ private fun DestinationPicker(
         ExposedDropdownMenu(expanded = expanded, onDismissRequest = { expanded = false }) {
             destinations.forEach { destination ->
                 DropdownMenuItem(
-                    text = { Text("${destination.displayName} · ${destination.model}") },
+                    text = { Text(destination.destinationLabel()) },
                     onClick = { expanded = false; onSelected(destination) },
                 )
             }
         }
     }
 }
+
+private fun destinationIdentity(destination: NoteTaskSuggestionDestination): String =
+    "${destination.modelId}\u0000${destination.modelRevision}\u0000${destination.endpoint}"
+
+private fun NoteTaskSuggestionDestination.destinationLabel(): String =
+    "$displayName · $model · 修订 ${modelRevision.take(8)}"
 
 @Composable
 private fun NoteTaskSuggestionCard(

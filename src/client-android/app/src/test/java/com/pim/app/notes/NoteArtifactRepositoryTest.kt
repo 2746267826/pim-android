@@ -4,6 +4,7 @@ import com.pim.app.TestPimApp
 import com.pim.core.network.BoundUploadSession
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
 import kotlinx.serialization.json.JsonObject
@@ -1070,7 +1071,7 @@ class NoteArtifactRepositoryTest {
         armed.set(true)
         release.complete(Unit)
         assertTrue(staleProviderEntered.await(5, java.util.concurrent.TimeUnit.SECONDS))
-        val current = async { repo.refresh(noteId, currentMaterial, taskB.taskId) }
+        val current = async(Dispatchers.IO) { repo.refresh(noteId, currentMaterial, taskB.taskId) }
         assertTrue(currentProviderRead.await(5, java.util.concurrent.TimeUnit.SECONDS))
         releaseStaleProvider.countDown()
         old.await()

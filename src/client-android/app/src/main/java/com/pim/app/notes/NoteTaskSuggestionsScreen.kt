@@ -13,7 +13,6 @@ import androidx.compose.material3.AlertDialog
 import androidx.compose.material3.Button
 import androidx.compose.material3.Checkbox
 import androidx.compose.material3.DropdownMenuItem
-import androidx.compose.material3.ExposedDropdownMenu
 import androidx.compose.material3.ExperimentalMaterial3Api
 import androidx.compose.material3.ExposedDropdownMenuBox
 import androidx.compose.material3.ExposedDropdownMenuDefaults
@@ -159,8 +158,9 @@ fun NoteTaskSuggestionsScreen(
                             }
                             Button(
                                 onClick = {
-                                    val scope = state.actionScope ?: return@onClick
-                                    actions.extract(scope, selected, acknowledgeCharge)
+                                    state.actionScope?.let { scope ->
+                                        actions.extract(scope, selected, acknowledgeCharge)
+                                    }
                                 },
                                 enabled = state.sourceVerified && !state.loading && !activeExtraction &&
                                     (state.frozenExtraction || selected in state.destinations) &&

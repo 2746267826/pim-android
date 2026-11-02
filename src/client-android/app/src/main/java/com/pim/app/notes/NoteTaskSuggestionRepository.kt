@@ -150,8 +150,9 @@ class NoteTaskSuggestionRepository(
                     }.sortedBy { it.remote.ordinal }
                 } catch (error: CancellationException) { throw error }
                 catch (error: Exception) { problem = problem ?: describe(error, "读取任务建议") }
-                if (local.extractionId != null) {
-                    try { extraction = transport.extraction(source, local.extractionId) }
+                val extractionId = local.extractionId
+                if (extractionId != null) {
+                    try { extraction = transport.extraction(source, extractionId) }
                     catch (error: CancellationException) { throw error }
                     catch (error: Exception) { problem = problem ?: describe(error, "核对原提取状态") }
                 }
@@ -416,12 +417,12 @@ class NoteTaskSuggestionRepository(
                 "请先保存或放弃本机编辑，再确认创建任务"
             }
             val current = item.draft
-            if (current?.confirmationPending == true) {
-                check(current.confirmRevision == item.remote.revision) {
+            if (item.confirmationPending) {
+                check(checkNotNull(current).confirmRevision == item.remote.revision) {
                     "未确认的创建请求属于旧修订；刷新核对前已锁定，不会使用新修订重复创建"
                 }
             }
-            val frozen = current?.takeIf { it.confirmationPending } ?: NoteTaskSuggestionDraft(
+            val frozen = current?.takeIf { it.confirmRequestId != null } ?: NoteTaskSuggestionDraft(
                 suggestionId = suggestionId,
                 expectedRevision = item.remote.revision,
                 title = item.remote.title,
@@ -472,7 +473,7 @@ class NoteTaskSuggestionRepository(
             val item = requireDraftItem(suggestionId, source)
             val draft = item.draft ?: error("没有待核对的本机修订")
             check(item.hasConflict && item.remote.status == NoteTaskSuggestionStatusDto.DRAFT &&
-                !item.confirmationPending && !draft.confirmationPending) {
+                !item.confirmationPending && draft.confirmRequestId == null) {
                 "当前建议不支持冲突基线更新"
             }
             val rebased = store.rebaseDraft(source, target.binding, draft, item.remote.revision)

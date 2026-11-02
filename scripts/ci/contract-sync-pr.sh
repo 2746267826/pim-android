@@ -44,6 +44,11 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$ROOT" ] || { echo "[contract-sync][错误] 当前目录不在 git 仓库里（先 cd 到仓库工作区）" >&2; exit 2; }
 cd "$ROOT"
+. "$ROOT/scripts/ci/python-runtime.sh"
+PIM_CONTRACT_PYTHON="$(pim_contract_python)" || {
+  echo "[contract-sync][错误] 缺少可运行的 Python 3。" >&2
+  exit 2
+}
 
 BRANCH="contract-sync-linux/refresh-contract"
 BASE_BRANCH="master"
@@ -254,9 +259,9 @@ RESOLVED_REF=""
 BYTES=""
 SHA256=""
 if [ -f contract/provenance.json ]; then
-  RESOLVED_REF="$(python3 -c "import json;print(json.load(open('contract/provenance.json'))['resolvedRef'])" 2>/dev/null || true)"
-  BYTES="$(python3 -c "import json;print(json.load(open('contract/provenance.json'))['bytes'])" 2>/dev/null || true)"
-  SHA256="$(python3 -c "import json;print(json.load(open('contract/provenance.json'))['sha256'])" 2>/dev/null || true)"
+  RESOLVED_REF="$("$PIM_CONTRACT_PYTHON" -c "import json;print(json.load(open('contract/provenance.json'))['resolvedRef'])" 2>/dev/null || true)"
+  BYTES="$("$PIM_CONTRACT_PYTHON" -c "import json;print(json.load(open('contract/provenance.json'))['bytes'])" 2>/dev/null || true)"
+  SHA256="$("$PIM_CONTRACT_PYTHON" -c "import json;print(json.load(open('contract/provenance.json'))['sha256'])" 2>/dev/null || true)"
 fi
 SHORT_REF="${RESOLVED_REF:0:7}"
 [ -n "$SHORT_REF" ] || SHORT_REF="${CONTRACT_REF:0:7}"

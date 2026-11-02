@@ -191,7 +191,8 @@ class NoteArtifactRepository(
                 .getOrElse { NoteArtifactTasksState(loaded = true, loadFailed = true) }
             val inheritedVersionId = materialVersionId ?: previousState.materialVersionId
                 ?.takeIf {
-                    previousState.noteId == noteId && previousState.taskBinding == target.binding
+                    !scopeChanged && previousState.noteId == noteId &&
+                        previousState.taskBinding == target.binding
                 }
             val tasksForNote = taskState.tasks
                 .filter { it.binding == target.binding && it.noteId == noteId }
@@ -859,8 +860,9 @@ class NoteArtifactRepository(
         } else {
             "账号或服务器已变化；旧请求回执未应用到当前页面。"
         }
-        mutableState.update {
-            it.copy(
+        mutableState.update { current ->
+            if (refreshGeneration.get() != requestGeneration) return@update current
+            current.copy(
                 loaded = true,
                 syncing = false,
                 noteId = noteId,

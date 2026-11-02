@@ -963,6 +963,125 @@ class NoteArtifactRepositoryTest {
         assertTrue(NoteArtifactDraftStore.at(temp.root).read(binding, draftA.localDraftId).dirty)
     }
 
+    @Test fun refreshQueuedForOldOwnerDoesNotInheritItsMaterialVersionAfterScopeSwitch() = runBlocking {
+        val materialB = "55555555-5555-4555-8555-555555555555"
+        val taskA = seedTask()
+        val taskB = tasks.createIntent(
+            binding = otherBinding,
+            noteId = noteId,
+            materialVersionId = materialB,
+            kinds = setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis),
+            inputSha256 = "c".repeat(64),
+            manifestSha256 = "d".repeat(64),
+            consent = consent,
+            ownerName = "bob",
+            nowMillis = 3_000,
+        )
+        tasks.recordRemote(taskA.taskId, NoteArtifactRemoteTaskView("a-rev", "Succeeded"), nowMillis = 2_000)
+        tasks.recordRemote(taskB.taskId, NoteArtifactRemoteTaskView("b-rev", "Succeeded"), nowMillis = 3_100)
+        transport.details[taskA.taskId] = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-a"))
+        transport.details[taskB.taskId] = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-b"))
+
+        var signalNextTargetRead: CompletableDeferred<Unit>? = null
+        val repository = repository {
+            val capturedBinding = activeBinding
+            signalNextTargetRead?.also {
+                signalNextTargetRead = null
+                it.complete(Unit)
+            }
+            NoteArtifactTarget(capturedBinding, if (capturedBinding == binding) "alice" else "bob")
+        }
+        repository.refresh(noteId, materialVersionId, taskA.taskId)
+
+        val blockerEntered = CompletableDeferred<Unit>()
+        val releaseBlocker = CompletableDeferred<Unit>()
+        transport.onDestinations = {
+            if (!blockerEntered.isCompleted) {
+                blockerEntered.complete(Unit)
+                releaseBlocker.await()
+            }
+        }
+        val blocker = async { repository.refresh(noteId, materialVersionId, taskA.taskId) }
+        blockerEntered.await()
+
+        val queuedTargetCaptured = CompletableDeferred<Unit>()
+        signalNextTargetRead = queuedTargetCaptured
+        val queuedForA = async { repository.refresh(noteId) }
+        queuedTargetCaptured.await()
+        activeBinding = otherBinding
+        releaseBlocker.complete(Unit)
+        blocker.await()
+        queuedForA.await()
+
+        assertEquals(otherBinding, repository.state.value.taskBinding)
+        assertEquals(materialB, repository.state.value.materialVersionId)
+        assertEquals(listOf(taskB.taskId), repository.state.value.tasks.map { it.taskId })
+    }
+
+    @Test fun staleRefreshCannotClearStateAfterNewGenerationWinsDuringAbandon() = runBlocking {
+        val taskA = seedTask()
+        tasks.recordRemote(taskA.taskId, NoteArtifactRemoteTaskView("a-rev", "Succeeded"), nowMillis = 2_000)
+        transport.details[taskA.taskId] = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-a"))
+        val currentMaterial = "55555555-5555-4555-8555-555555555555"
+        val taskB = tasks.createIntent(
+            binding = otherBinding,
+            noteId = noteId,
+            materialVersionId = currentMaterial,
+            kinds = setOf(NoteArtifactKind.FullRecord, NoteArtifactKind.Analysis),
+            inputSha256 = "c".repeat(64),
+            manifestSha256 = "d".repeat(64),
+            consent = consent,
+            ownerName = "bob",
+            nowMillis = 3_000,
+        )
+        tasks.recordRemote(taskB.taskId, NoteArtifactRemoteTaskView("b-rev", "Succeeded"), nowMillis = 3_100)
+        transport.details[taskB.taskId] = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-b"))
+        val armed = java.util.concurrent.atomic.AtomicBoolean(false)
+        val providerReads = java.util.concurrent.atomic.AtomicInteger(0)
+        val staleProviderEntered = java.util.concurrent.CountDownLatch(1)
+        val releaseStaleProvider = java.util.concurrent.CountDownLatch(1)
+        val currentProviderRead = java.util.concurrent.CountDownLatch(1)
+        val targetProvider: () -> NoteArtifactTarget? = {
+            if (armed.get()) {
+                when (providerReads.incrementAndGet()) {
+                    3 -> {
+                        staleProviderEntered.countDown()
+                        check(releaseStaleProvider.await(5, java.util.concurrent.TimeUnit.SECONDS))
+                    }
+                    4 -> currentProviderRead.countDown()
+                }
+            }
+            NoteArtifactTarget(activeBinding, if (activeBinding == binding) "alice" else "bob")
+        }
+        val repo = repository(targetProvider)
+        repo.refresh(noteId, materialVersionId, taskA.taskId)
+
+        val entered = CompletableDeferred<Unit>()
+        val release = CompletableDeferred<Unit>()
+        transport.onDetail = { id ->
+            if (id == taskA.taskId && !entered.isCompleted) {
+                entered.complete(Unit)
+                release.await()
+            }
+        }
+        val old = async { repo.refresh(noteId, materialVersionId, taskA.taskId) }
+        entered.await()
+        activeBinding = otherBinding
+        armed.set(true)
+        release.complete(Unit)
+        assertTrue(staleProviderEntered.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        val current = async { repo.refresh(noteId, currentMaterial, taskB.taskId) }
+        assertTrue(currentProviderRead.await(5, java.util.concurrent.TimeUnit.SECONDS))
+        releaseStaleProvider.countDown()
+        old.await()
+        current.await()
+
+        assertEquals(otherBinding, repo.state.value.taskBinding)
+        assertEquals(taskB.taskId, repo.state.value.selectedTaskId)
+        assertEquals(listOf(taskB.taskId), repo.state.value.tasks.map { it.taskId })
+        assertFalse(repo.state.value.message.orEmpty().contains("旧请求回执未应用"))
+    }
+
     @Test fun candidateFromAnotherSourceVersionIsRejectedBeforeSelectionRequest() = runBlocking {
         val task = seedTask()
         val otherMaterialVersion = "55555555-5555-4555-8555-555555555555"
@@ -988,11 +1107,13 @@ class NoteArtifactRepositoryTest {
         assertTrue(repository.state.value.message.orEmpty().contains("固定材料"))
     }
 
-    private fun repository() = NoteArtifactRepository(
+    private fun repository(
+        targetProvider: (() -> NoteArtifactTarget?)? = null,
+    ) = NoteArtifactRepository(
         tasks = tasks,
         drafts = NoteArtifactDraftStore.at(temp.root),
         materials = NoteMaterialStore.at(temp.root),
-        targetProvider = { NoteArtifactTarget(activeBinding, "alice") },
+        targetProvider = targetProvider ?: { NoteArtifactTarget(activeBinding, "alice") },
         factory = { transport },
     )
 

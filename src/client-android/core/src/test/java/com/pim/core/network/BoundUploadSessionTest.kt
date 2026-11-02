@@ -294,6 +294,8 @@ class BoundUploadSessionTest {
             "/api/v1/calendar/task-books",
             "/api/v1/calendar/reminders",
             "/api/v1/mobile/devices/manage",
+            "/api/v1/mobile/location/analytics/tracks?rangeStartUtc=2026-11-01T00%3A00%3A00Z&rangeEndUtc=2026-11-02T00%3A00%3A00Z",
+            "/api/v1/mobile/location/analytics/segments/segment-1/points?pageSize=100",
             "/api/v1/pc/categories/tree",
             "/api/v1/pc/app-knowledge/apps",
             "/api/v1/pc/detail?eventType=web&page=1&pageSize=50",
@@ -325,6 +327,21 @@ class BoundUploadSessionTest {
         assertFalse(
             BoundUploadRoute.NativeWorkbench.permits(
                 request("/api/v1/pc/detail", method = "POST")
+            )
+        )
+        assertFalse(
+            BoundUploadRoute.NativeWorkbench.permits(
+                request("/api/v1/mobile/location/analytics/tracks", method = "POST")
+            )
+        )
+        assertFalse(
+            BoundUploadRoute.NativeWorkbench.permits(
+                request("/api/v1/mobile/location/analytics/segments/segment-1/points/extra")
+            )
+        )
+        assertFalse(
+            BoundUploadRoute.NativeWorkbench.permits(
+                request("/api/v1/mobile/location/analytics/segments/segment-1")
             )
         )
     }

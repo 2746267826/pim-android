@@ -32,6 +32,10 @@ internal enum class BoundUploadRoute {
                 path == "/api/v1/mobile/summary" ||
                 path.startsWith("/api/v1/calendar/") ||
                 path.startsWith("/api/v1/mobile/devices/") ||
+                (request.method == "GET" && path == "/api/v1/mobile/location/analytics/tracks") ||
+                (request.method == "GET" &&
+                    Regex("^/api/v1/mobile/location/analytics/segments/[^/]+/points$")
+                        .matches(path)) ||
                 path.startsWith("/api/v1/pc/categories") ||
                 path.startsWith("/api/v1/pc/app-knowledge/") ||
                 request.method == "GET" && (

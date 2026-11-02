@@ -91,10 +91,12 @@ fun NativeWorkbenchScreen(
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     var taskEditor by remember { mutableStateOf<TaskEditorTarget?>(null) }
+    var taskSavePending by remember { mutableStateOf(false) }
     var showTaskBookCreate by remember { mutableStateOf(false) }
     var showCalendarCreate by remember { mutableStateOf(false) }
     var taskToDelete by remember { mutableStateOf<TaskResponse?>(null) }
     var eventEditor by remember { mutableStateOf<EventEditorTarget?>(null) }
+    var eventSavePending by remember { mutableStateOf(false) }
     var eventToDelete by remember { mutableStateOf<EventResponse?>(null) }
     var deviceRename by remember { mutableStateOf<DeviceRenameTarget?>(null) }
     var categoryEditor by remember { mutableStateOf<CategoryEditorTarget?>(null) }
@@ -105,6 +107,19 @@ fun NativeWorkbenchScreen(
     var reminderToSnooze by remember { mutableStateOf<NativeReminderAction?>(null) }
     var confirmationToReject by remember { mutableStateOf<NativeOperationConfirmation?>(null) }
     var habitToArchive by remember { mutableStateOf<NativeHabit?>(null) }
+
+    LaunchedEffect(state.feedback, taskSavePending) {
+        if (taskSavePending && state.feedback in setOf("任务已创建", "任务已保存")) {
+            taskEditor = null
+            taskSavePending = false
+        }
+    }
+    LaunchedEffect(state.feedback, eventSavePending) {
+        if (eventSavePending && state.feedback in setOf("日程已创建", "日程已保存")) {
+            eventEditor = null
+            eventSavePending = false
+        }
+    }
 
     Column(modifier.fillMaxSize()) {
         WorkbenchHeader(
@@ -117,7 +132,7 @@ fun NativeWorkbenchScreen(
             enabled = state.busyAction == null,
             onSelected = viewModel::selectSection
         )
-        if (state.loading) {
+        if (state.section != NativeWorkbenchSection.Today && state.loading) {
             Row(
                 Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
                 verticalAlignment = Alignment.CenterVertically,
@@ -127,24 +142,23 @@ fun NativeWorkbenchScreen(
                 Text("正在读取服务端…", style = MaterialTheme.typography.bodySmall)
             }
         }
-        state.busyAction?.let {
+        if (state.section != NativeWorkbenchSection.Today) state.busyAction?.let {
             Text(
                 "$it…",
                 modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
                 style = MaterialTheme.typography.bodySmall
             )
         }
-        state.error?.let { MessageBanner("操作未完成：$it", isError = true) }
-        state.feedback?.let { MessageBanner(it, isError = false) }
+        if (state.section != NativeWorkbenchSection.Today) {
+            state.error?.let { MessageBanner("操作未完成：$it", isError = true) }
+            state.feedback?.let { MessageBanner(it, isError = false) }
+        }
 
         when (state.section) {
-            NativeWorkbenchSection.Today -> TodayNativeContent(
-                state = state,
-                onNewTask = { taskEditor = TaskEditorTarget() },
-                onEditTask = { taskEditor = TaskEditorTarget(it) },
-                onToggleTask = viewModel::toggleTaskCompleted,
-                onNewEvent = { eventEditor = EventEditorTarget() },
-                onOpenSection = viewModel::selectSection,
+            NativeWorkbenchSection.Today -> NativeWorkbenchTodaySection(
+                modifier = Modifier.weight(1f),
+                viewModel = viewModel,
+                showOperationStatus = false,
             )
             NativeWorkbenchSection.Tasks -> TasksNativeContent(
                 state = state,
@@ -211,9 +225,11 @@ fun NativeWorkbenchScreen(
         TaskEditorDialog(
             task = target.task,
             taskBooks = state.taskBooks,
-            onDismiss = { taskEditor = null },
+            isSaving = state.busyAction != null,
+            operationError = if (taskSavePending) state.error else null,
+            onDismiss = { taskEditor = null; taskSavePending = false },
             onSave = { draft ->
-                taskEditor = null
+                taskSavePending = true
                 if (target.task == null) viewModel.createTask(draft)
                 else viewModel.updateTask(target.task, draft)
             }
@@ -246,9 +262,11 @@ fun NativeWorkbenchScreen(
         EventEditorDialog(
             calendars = state.calendars,
             event = target.event,
-            onDismiss = { eventEditor = null },
+            isSaving = state.busyAction != null,
+            operationError = if (eventSavePending) state.error else null,
+            onDismiss = { eventEditor = null; eventSavePending = false },
             onSave = { draft ->
-                eventEditor = null
+                eventSavePending = true
                 if (target.event == null) viewModel.createEvent(draft)
                 else viewModel.updateEvent(target.event, draft)
             }
@@ -446,6 +464,99 @@ fun NativeWorkbenchScreen(
 }
 
 @Composable
+internal fun NativeWorkbenchTodaySection(
+    modifier: Modifier = Modifier,
+    viewModel: NativeWorkbenchViewModel,
+    showOperationStatus: Boolean = true,
+    onOpenSection: (NativeWorkbenchSection) -> Unit = {},
+) {
+    val state by viewModel.state.collectAsStateWithLifecycle()
+    var taskEditor by remember { mutableStateOf<TaskEditorTarget?>(null) }
+    var eventEditor by remember { mutableStateOf<EventEditorTarget?>(null) }
+    var taskSavePending by remember { mutableStateOf(false) }
+    var eventSavePending by remember { mutableStateOf(false) }
+
+    LaunchedEffect(state.feedback, taskSavePending) {
+        if (taskSavePending && state.feedback in setOf("任务已创建", "任务已保存")) {
+            taskEditor = null
+            taskSavePending = false
+        }
+    }
+    LaunchedEffect(state.feedback, eventSavePending) {
+        if (eventSavePending && state.feedback in setOf("日程已创建", "日程已保存")) {
+            eventEditor = null
+            eventSavePending = false
+        }
+    }
+
+    Column(modifier.fillMaxSize()) {
+        if (showOperationStatus) {
+            if (state.loading) {
+                Row(
+                    Modifier.fillMaxWidth().padding(horizontal = 16.dp, vertical = 8.dp),
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp)
+                ) {
+                    CircularProgressIndicator(Modifier.size(18.dp), strokeWidth = 2.dp)
+                    Text("正在读取服务端…", style = MaterialTheme.typography.bodySmall)
+                }
+            }
+            state.busyAction?.let {
+                Text(
+                    "$it…",
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 4.dp),
+                    style = MaterialTheme.typography.bodySmall
+                )
+            }
+            state.error?.let { MessageBanner("操作未完成：$it", isError = true) }
+            state.feedback?.let { MessageBanner(it, isError = false) }
+        }
+
+        TodayNativeContent(
+            state = state,
+            modifier = Modifier.weight(1f).testTag("today-native-business-content"),
+            onNewTask = { taskEditor = TaskEditorTarget() },
+            onEditTask = { taskEditor = TaskEditorTarget(it) },
+            onToggleTask = viewModel::toggleTaskCompleted,
+            onNewEvent = { eventEditor = EventEditorTarget() },
+            onOpenSection = { section ->
+                viewModel.selectSection(section)
+                onOpenSection(section)
+            },
+        )
+    }
+
+    taskEditor?.let { target ->
+        TaskEditorDialog(
+            task = target.task,
+            taskBooks = state.taskBooks,
+            isSaving = state.busyAction != null,
+            operationError = if (taskSavePending) state.error else null,
+            onDismiss = { taskEditor = null; taskSavePending = false },
+            onSave = { draft ->
+                taskSavePending = true
+                if (target.task == null) viewModel.createTask(draft)
+                else viewModel.updateTask(target.task, draft)
+            }
+        )
+    }
+    eventEditor?.let { target ->
+        EventEditorDialog(
+            calendars = state.calendars,
+            event = target.event,
+            isSaving = state.busyAction != null,
+            operationError = if (eventSavePending) state.error else null,
+            onDismiss = { eventEditor = null; eventSavePending = false },
+            onSave = { draft ->
+                eventSavePending = true
+                if (target.event == null) viewModel.createEvent(draft)
+                else viewModel.updateEvent(target.event, draft)
+            }
+        )
+    }
+}
+
+@Composable
 private fun WorkbenchHeader(
     section: NativeWorkbenchSection,
     busy: String?,
@@ -502,8 +613,9 @@ private fun MessageBanner(text: String, isError: Boolean) {
 }
 
 @Composable
-private fun TodayNativeContent(
+internal fun TodayNativeContent(
     state: NativeWorkbenchUiState,
+    modifier: Modifier = Modifier,
     onNewTask: () -> Unit,
     onEditTask: (TaskResponse) -> Unit,
     onToggleTask: (TaskResponse) -> Unit,
@@ -511,7 +623,7 @@ private fun TodayNativeContent(
     onOpenSection: (NativeWorkbenchSection) -> Unit,
 ) {
     LazyColumn(
-        Modifier.fillMaxSize(),
+        modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -520,8 +632,18 @@ private fun TodayNativeContent(
                 Button(onClick = onNewTask) {
                     Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("新任务")
                 }
-                Button(onClick = onNewEvent) {
+                Button(onClick = onNewEvent, enabled = state.calendars.isNotEmpty()) {
                     Icon(Icons.Filled.Add, null, Modifier.size(18.dp)); Spacer(Modifier.width(6.dp)); Text("新日程")
+                }
+            }
+        }
+        if (state.calendars.isEmpty()) {
+            item {
+                Row(verticalAlignment = Alignment.CenterVertically) {
+                    Text("尚无可写日历", style = MaterialTheme.typography.bodySmall)
+                    TextButton(onClick = { onOpenSection(NativeWorkbenchSection.Calendar) }) {
+                        Text("前往创建日历")
+                    }
                 }
             }
         }
@@ -1353,6 +1475,8 @@ private fun EmptyCard(text: String) {
 private fun TaskEditorDialog(
     task: TaskResponse?,
     taskBooks: List<TaskBookDto>,
+    isSaving: Boolean = false,
+    operationError: String? = null,
     onDismiss: () -> Unit,
     onSave: (NativeTaskDraft) -> Unit,
 ) {
@@ -1363,47 +1487,58 @@ private fun TaskEditorDialog(
     var start by remember(task?.id) { mutableStateOf(toDateTimeInput(task?.dtStart)) }
     var taskBookId by remember(task?.id) { mutableStateOf(task?.taskBookId) }
     var validation by remember(task?.id) { mutableStateOf<String?>(null) }
+    var confirmDiscard by remember(task?.id) { mutableStateOf(false) }
+    val dirty = taskEditorHasChanges(task, title, description, priority, due, start, taskBookId)
+    val requestDismiss = {
+        if (!isSaving) {
+            if (dirty) confirmDiscard = true else onDismiss()
+        }
+    }
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = requestDismiss,
         title = { Text(if (task == null) "新建任务" else "编辑任务") },
         text = {
             Column(
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true)
+                OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, enabled = !isSaving)
                 OutlinedTextField(
                     description,
                     { description = it },
                     label = { Text("描述") },
                     minLines = 2,
-                    maxLines = 5
+                    maxLines = 5,
+                    enabled = !isSaving,
                 )
                 OutlinedTextField(
                     priority,
                     { priority = it.filter(Char::isDigit).take(2) },
                     label = { Text("优先级（1-5）") },
-                    singleLine = true
+                    singleLine = true,
+                    enabled = !isSaving,
                 )
-                DateTimeField("截止时间（可空，YYYY-MM-DDTHH:MM）", due) { due = it }
-                DateTimeField("开始时间（可空）", start) { start = it }
+                DateTimeField("截止时间（可空，YYYY-MM-DDTHH:MM）", due, enabled = !isSaving) { due = it }
+                DateTimeField("开始时间（可空）", start, enabled = !isSaving) { start = it }
                 if (taskBooks.isNotEmpty()) {
                     Text("任务本", style = MaterialTheme.typography.bodySmall)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(taskBooks, key = { it.id }) { book ->
                             FilterChip(
                                 selected = taskBookId == book.id,
-                                onClick = { taskBookId = book.id },
+                                onClick = { if (!isSaving) taskBookId = book.id },
+                                enabled = !isSaving,
                                 label = { Text(book.name) }
                             )
                         }
                     }
                 }
                 validation?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                operationError?.let { Text("保存失败：$it", color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
+            TextButton(enabled = !isSaving, onClick = {
                 val parsedPriority = priority.toIntOrNull()
                 val parsedDue = normalizeDateTimeInput(due)
                 val parsedStart = normalizeDateTimeInput(start)
@@ -1426,16 +1561,44 @@ private fun TaskEditorDialog(
                         )
                     )
                 }
-            }) { Text("保存") }
+            }) { Text(if (isSaving) "正在保存…" else "保存") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+        dismissButton = { TextButton(onClick = requestDismiss, enabled = !isSaving) { Text("取消") } }
     )
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("放弃未保存的任务修改？") },
+            text = { Text("当前编辑内容尚未保存。") },
+            confirmButton = {
+                TextButton(onClick = { confirmDiscard = false; onDismiss() }) { Text("放弃修改") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") } },
+        )
+    }
 }
+
+internal fun taskEditorHasChanges(
+    task: TaskResponse?,
+    title: String,
+    description: String,
+    priority: String,
+    due: String,
+    start: String,
+    taskBookId: String?,
+): Boolean = title != task?.title.orEmpty() ||
+    description != task?.description.orEmpty() ||
+    priority != (task?.priority ?: 3).toString() ||
+    due != toDateTimeInput(task?.due) ||
+    start != toDateTimeInput(task?.dtStart) ||
+    taskBookId != task?.taskBookId
 
 @Composable
 private fun EventEditorDialog(
     calendars: List<com.pim.core.contract.CalendarResponse>,
     event: EventResponse?,
+    isSaving: Boolean = false,
+    operationError: String? = null,
     onDismiss: () -> Unit,
     onSave: (NativeEventDraft) -> Unit,
 ) {
@@ -1443,23 +1606,36 @@ private fun EventEditorDialog(
         LocalDateTime.now().withMinute(0).withSecond(0).withNano(0)
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
     }
-    var calendarId by remember(event?.id) {
-        mutableStateOf(event?.calendarId ?: calendars.firstOrNull()?.id.orEmpty())
+    val initialCalendarId = remember(event?.id, calendars.firstOrNull()?.id) {
+        event?.calendarId ?: calendars.firstOrNull()?.id.orEmpty()
+    }
+    var calendarId by remember(event?.id, calendars.firstOrNull()?.id) {
+        mutableStateOf(initialCalendarId)
     }
     var title by remember(event?.id) { mutableStateOf(event?.title.orEmpty()) }
     var description by remember(event?.id) { mutableStateOf(event?.description.orEmpty()) }
-    var start by remember(event?.id) { mutableStateOf(toDateTimeInput(event?.dtStart) ?: defaultStart) }
-    var end by remember(event?.id) {
-        mutableStateOf(
-            toDateTimeInput(event?.dtEnd)
-                ?: LocalDateTime.now().plusHours(1).withMinute(0).withSecond(0).withNano(0)
-                    .format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
-        )
+    val defaultEnd = remember {
+        LocalDateTime.now().plusHours(1).withMinute(0).withSecond(0).withNano(0)
+            .format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
     }
+    val initialStart = remember(event?.id) { toDateTimeInput(event?.dtStart) ?: defaultStart }
+    val initialEnd = remember(event?.id) { toDateTimeInput(event?.dtEnd) ?: defaultEnd }
+    var start by remember(event?.id) { mutableStateOf(initialStart) }
+    var end by remember(event?.id) { mutableStateOf(initialEnd) }
     var location by remember(event?.id) { mutableStateOf(event?.location.orEmpty()) }
     var validation by remember(event?.id) { mutableStateOf<String?>(null) }
+    var confirmDiscard by remember(event?.id) { mutableStateOf(false) }
+    val dirty = eventEditorHasChanges(
+        event, calendarId, title, description, start, end, location,
+        initialCalendarId, initialStart, initialEnd,
+    )
+    val requestDismiss = {
+        if (!isSaving) {
+            if (dirty) confirmDiscard = true else onDismiss()
+        }
+    }
     AlertDialog(
-        onDismissRequest = onDismiss,
+        onDismissRequest = requestDismiss,
         title = { Text(if (event == null) "新建日程" else "编辑日程") },
         text = {
             Column(
@@ -1475,28 +1651,31 @@ private fun EventEditorDialog(
                         items(calendars, key = { it.id }) { calendar ->
                             FilterChip(
                                 selected = calendar.id == calendarId,
-                                onClick = { calendarId = calendar.id },
+                                onClick = { if (!isSaving) calendarId = calendar.id },
+                                enabled = !isSaving,
                                 label = { Text(calendar.name) }
                             )
                         }
                     }
                 }
-                OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true)
+                OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, enabled = !isSaving)
                 OutlinedTextField(
                     description,
                     { description = it },
                     label = { Text("描述") },
                     minLines = 2,
-                    maxLines = 5
+                    maxLines = 5,
+                    enabled = !isSaving,
                 )
-                DateTimeField("开始（YYYY-MM-DDTHH:MM）", start) { start = it }
-                DateTimeField("结束（YYYY-MM-DDTHH:MM）", end) { end = it }
-                OutlinedTextField(location, { location = it }, label = { Text("地点") }, singleLine = true)
+                DateTimeField("开始（YYYY-MM-DDTHH:MM）", start, enabled = !isSaving) { start = it }
+                DateTimeField("结束（YYYY-MM-DDTHH:MM）", end, enabled = !isSaving) { end = it }
+                OutlinedTextField(location, { location = it }, label = { Text("地点") }, singleLine = true, enabled = !isSaving)
                 validation?.let { Text(it, color = MaterialTheme.colorScheme.error) }
+                operationError?.let { Text("保存失败：$it", color = MaterialTheme.colorScheme.error) }
             }
         },
         confirmButton = {
-            TextButton(onClick = {
+            TextButton(enabled = !isSaving, onClick = {
                 val startIso = normalizeDateTimeInput(start)
                 val endIso = normalizeDateTimeInput(end)
                 validation = when {
@@ -1519,11 +1698,41 @@ private fun EventEditorDialog(
                         )
                     )
                 }
-            }) { Text("保存") }
+            }) { Text(if (isSaving) "正在保存…" else "保存") }
         },
-        dismissButton = { TextButton(onClick = onDismiss) { Text("取消") } }
+        dismissButton = { TextButton(onClick = requestDismiss, enabled = !isSaving) { Text("取消") } }
     )
+    if (confirmDiscard) {
+        AlertDialog(
+            onDismissRequest = { confirmDiscard = false },
+            title = { Text("放弃未保存的日程修改？") },
+            text = { Text("当前编辑内容尚未保存。") },
+            confirmButton = {
+                TextButton(onClick = { confirmDiscard = false; onDismiss() }) { Text("放弃修改") }
+            },
+            dismissButton = { TextButton(onClick = { confirmDiscard = false }) { Text("继续编辑") } },
+        )
+    }
 }
+
+internal fun eventEditorHasChanges(
+    event: EventResponse?,
+    calendarId: String,
+    title: String,
+    description: String,
+    start: String,
+    end: String,
+    location: String,
+    initialCalendarId: String,
+    initialStart: String,
+    initialEnd: String,
+): Boolean =
+    calendarId != (event?.calendarId ?: initialCalendarId) ||
+        title != event?.title.orEmpty() ||
+        description != event?.description.orEmpty() ||
+        start != (event?.let { toDateTimeInput(it.dtStart) } ?: initialStart) ||
+        end != (event?.let { toDateTimeInput(it.dtEnd) } ?: initialEnd) ||
+        location != event?.location.orEmpty()
 
 @Composable
 private fun DeviceRenameDialog(
@@ -1932,12 +2141,18 @@ private fun ConfirmDeleteDialog(
 }
 
 @Composable
-private fun DateTimeField(label: String, value: String, onValueChange: (String) -> Unit) {
+private fun DateTimeField(
+    label: String,
+    value: String,
+    enabled: Boolean = true,
+    onValueChange: (String) -> Unit,
+) {
     OutlinedTextField(
         value = value,
         onValueChange = onValueChange,
         label = { Text(label) },
-        singleLine = true
+        singleLine = true,
+        enabled = enabled,
     )
 }
 

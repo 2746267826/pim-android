@@ -34,6 +34,24 @@ class AndroidV2ScreenContentTest {
     }
 
     @Test
+    fun mainTodayUsesSharedNativeBusinessBodyAndExplicitLegacyEntry() {
+        val today = readSource("ui", "today", "TodayScreen.kt")
+        assertTrue("Today sync and collection status must remain visible", today.contains("TodayStatusBar("))
+        assertTrue("Native Today business body must be the default", today.contains("NativeWorkbenchTodaySection("))
+        assertTrue("Legacy Today must require an explicit user toggle", today.contains("if (showLegacyToday)"))
+        assertTrue("Legacy Today entry must be clearly labeled", today.contains("打开旧版完整今日"))
+        assertTrue("Legacy Today must retain its existing embed route", today.contains("/embed/android/today"))
+
+        val workbench = readSource("nativework", "NativeWorkbenchScreen.kt")
+        assertTrue("Today body should have a stable test tag", workbench.contains("today-native-business-content"))
+        assertTrue("Today and workbench must share the native content body", workbench.contains("TodayNativeContent("))
+        assertTrue("Today must expose native task creation", workbench.contains("onNewTask = { taskEditor = TaskEditorTarget() }"))
+        assertTrue("Today must expose native task completion", workbench.contains("onToggleTask = viewModel::toggleTaskCompleted"))
+        assertTrue("Today must expose native event creation", workbench.contains("onNewEvent = { eventEditor = EventEditorTarget() }"))
+        assertTrue("Missing writable calendars must lead to native calendar setup", workbench.contains("前往创建日历"))
+    }
+
+    @Test
     fun screensExposeApprovedInformationArchitecture() {
         assertContains("ui/today/TodayScreen.kt", listOf("syncButtonLabel", "syncButtonShowSpinner", "待传总数", "定位待传", "上传中", "已确认", "本轮拒绝", "死信保留", "服务器版本不支持嵌入页面", "打开设置"))
         assertContains("ui/tracks/TracksScreen.kt", listOf("PimWebViewScreen", "/embed/android/tracks", "viewModel.bridge", "服务器版本不支持嵌入页面", "打开设置", "embedSupported"))

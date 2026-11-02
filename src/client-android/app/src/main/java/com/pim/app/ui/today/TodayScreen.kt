@@ -20,13 +20,15 @@ import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
+import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.testTag
-import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
@@ -36,18 +38,22 @@ import com.pim.app.ui.components.PimFactChip
 import com.pim.app.ui.components.LegacyOutboxClaimDialog
 import com.pim.app.ui.shell.PimWebViewScreen
 import com.pim.app.ui.theme.PimTheme
+import com.pim.app.nativework.NativeWorkbenchTodaySection
+import com.pim.app.nativework.NativeWorkbenchViewModel
 
 @Composable
 fun TodayScreen(
     modifier: Modifier = Modifier,
     onOpenSettings: () -> Unit = {},
+    onOpenWorkbench: () -> Unit = {},
     viewModel: TodayViewModel = hiltViewModel()
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val syncFeedback by viewModel.syncFeedback.collectAsStateWithLifecycle()
     val legacyOutboxClaimPrompt by viewModel.legacyOutboxClaimPrompt.collectAsStateWithLifecycle()
     val refreshVersion by viewModel.refreshVersion.collectAsStateWithLifecycle()
-    val context = LocalContext.current
+    val workbenchViewModel: NativeWorkbenchViewModel = hiltViewModel()
+    var showLegacyToday by rememberSaveable { mutableStateOf(false) }
 
     Column(modifier = modifier.fillMaxSize()) {
         TodayStatusBar(
@@ -56,24 +62,46 @@ fun TodayScreen(
             onSyncNow = { viewModel.syncNow() }
         )
 
-        when (state.embedSupported) {
-            false -> {
-                EmbedUnsupportedBanner(onOpenSettings = onOpenSettings)
+        Row(
+            Modifier.fillMaxWidth().padding(horizontal = PimTheme.dimensions.spaceMedium),
+            horizontalArrangement = Arrangement.End,
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            TextButton(
+                modifier = Modifier.testTag("today-legacy-toggle"),
+                onClick = { showLegacyToday = !showLegacyToday },
+            ) {
+                Text(if (showLegacyToday) "返回原生今日" else "打开旧版完整今日")
             }
-            else -> {
-                PimWebViewScreen(
-                    route = "/embed/android/today",
-                    serverUrl = viewModel.serverUrl,
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .weight(1f),
-                    bridge = viewModel.bridge,
-                    reloadKey = refreshVersion,
-                    okHttpClient = viewModel.embedOkHttpClient,
-                    authSessionStore = viewModel.embedSessionStore,
-                    settingsStore = viewModel.embedSettingsStore
-                )
+        }
+
+        if (showLegacyToday) {
+            when (state.embedSupported) {
+                false -> EmbedUnsupportedBanner(onOpenSettings = onOpenSettings)
+                else -> {
+                    PimWebViewScreen(
+                        route = "/embed/android/today",
+                        serverUrl = viewModel.serverUrl,
+                        modifier = Modifier
+                            .fillMaxWidth()
+                            .weight(1f),
+                        bridge = viewModel.bridge,
+                        reloadKey = refreshVersion,
+                        okHttpClient = viewModel.embedOkHttpClient,
+                        authSessionStore = viewModel.embedSessionStore,
+                        settingsStore = viewModel.embedSettingsStore
+                    )
+                }
             }
+        } else {
+            NativeWorkbenchTodaySection(
+                modifier = Modifier.weight(1f),
+                viewModel = workbenchViewModel,
+                showOperationStatus = true,
+                onOpenSection = { _ ->
+                    onOpenWorkbench()
+                },
+            )
         }
     }
 

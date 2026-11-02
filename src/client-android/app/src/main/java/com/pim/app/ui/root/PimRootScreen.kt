@@ -59,7 +59,11 @@ fun PimRootScreen(initialDestination: PimDestination = PimDestination.Today) {
             Box(Modifier.weight(1f).fillMaxHeight()) {
             val modifier = Modifier.fillMaxSize()
             when (selected) {
-                PimDestination.Today -> TodayScreen(modifier, onOpenSettings = { selected = PimDestination.Settings })
+                PimDestination.Today -> TodayScreen(
+                    modifier = modifier,
+                    onOpenSettings = { selected = PimDestination.Settings },
+                    onOpenWorkbench = { selected = PimDestination.Workbench },
+                )
                 PimDestination.Notes -> com.pim.app.notes.NotesHomeScreen(modifier)
                 PimDestination.More -> PimMoreScreen { selected = it }
                 PimDestination.Workbench -> NativeWorkbenchScreen(

@@ -37,7 +37,7 @@ class NoteTaskSuggestionRepositoryTest {
         inputSha256 = "b".repeat(64),
         manifestSha256 = "c".repeat(64),
     )
-    private val binding = BoundUploadSession("https://pim.example/api/v1/", OWNER_ID)
+    private val binding = BoundUploadSession("https://pim.example", OWNER_ID)
     private var target = NoteTaskSuggestionTarget(binding, "tester", identityGeneration = 7)
     private val transport = FakeSuggestionTransport()
 

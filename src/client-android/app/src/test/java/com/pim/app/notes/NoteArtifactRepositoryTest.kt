@@ -959,7 +959,7 @@ class NoteArtifactRepositoryTest {
         assertTrue(current.drafts.all { it.binding == otherBinding })
         assertEquals(1, transport.detailCalls.drop(detailCallsBefore.size).count { it == taskA.taskId })
         assertEquals(1, transport.detailCalls.drop(detailCallsBefore.size).count { it == taskB.taskId })
-        assertEquals("Succeeded", tasks.read(taskA.taskId).remote?.phase)
+        assertEquals("Completed", tasks.read(taskA.taskId).remote?.phase)
         assertEquals("dirty owner A", NoteArtifactDraftStore.at(temp.root).read(binding, draftA.localDraftId).text)
         assertTrue(NoteArtifactDraftStore.at(temp.root).read(binding, draftA.localDraftId).dirty)
     }

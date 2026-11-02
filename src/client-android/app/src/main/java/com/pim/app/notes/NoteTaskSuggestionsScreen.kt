@@ -26,6 +26,7 @@ import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.remember
@@ -71,10 +72,16 @@ fun NoteTaskSuggestionsScreen(
         onDispose { lifecycle.removeObserver(observer) }
     }
     var destinationKey by rememberSaveable(state.actionScope) { mutableStateOf<String?>(null) }
-    var acknowledgeCharge by rememberSaveable(state.actionScope) { mutableStateOf(false) }
-    val selectedDestination = state.destinations.firstOrNull {
-        destinationIdentity(it) == destinationKey
-    } ?: state.frozenDestination ?: state.destinations.firstOrNull()
+    val selectedDestination = if (state.frozenExtraction) {
+        state.frozenDestination ?: state.destinations.firstOrNull()
+    } else {
+        state.destinations.firstOrNull { destinationIdentity(it) == destinationKey }
+            ?: state.destinations.firstOrNull()
+    }
+    var acknowledgeCharge by rememberSaveable(
+        state.actionScope,
+        selectedDestination?.let(::destinationIdentity),
+    ) { mutableStateOf(false) }
     val activeExtraction = state.extraction?.status in setOf(
         NoteTaskSuggestionExtractionStatusDto.QUEUED,
         NoteTaskSuggestionExtractionStatusDto.RUNNING,
@@ -288,6 +295,36 @@ private fun NoteTaskSuggestionCard(
     var description by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(item.description) }
     var priority by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(item.priority) }
     var due by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(item.due) }
+    var lastDraftRevision by remember(scope, remote.id, remote.revision) {
+        mutableStateOf(item.draft?.expectedRevision)
+    }
+    var locallyEdited by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(false) }
+    LaunchedEffect(item.draft?.expectedRevision) {
+        val currentDraft = item.draft
+        val currentRevision = currentDraft?.expectedRevision
+        when {
+            currentDraft == null && lastDraftRevision != null -> {
+                title = remote.title
+                description = remote.description.orEmpty()
+                priority = remote.priority
+                due = suggestionDueInput(remote.due)
+                locallyEdited = false
+            }
+            currentDraft != null && lastDraftRevision == null && !locallyEdited -> {
+                title = currentDraft.title
+                description = currentDraft.description
+                priority = currentDraft.priority
+                due = currentDraft.due
+            }
+            currentDraft != null && lastDraftRevision != null && lastDraftRevision != currentRevision -> {
+                title = currentDraft.title
+                description = currentDraft.description
+                priority = currentDraft.priority
+                due = currentDraft.due
+            }
+        }
+        lastDraftRevision = currentRevision
+    }
     val editable = remote.status == NoteTaskSuggestionStatusDto.DRAFT && scope != null
     val conflicted = item.hasConflict
     OutlinedCard(Modifier.fillMaxWidth().testTag("task-suggestion-${remote.id}")) {
@@ -299,20 +336,22 @@ private fun NoteTaskSuggestionCard(
             } else if (remote.status == NoteTaskSuggestionStatusDto.DISMISSED) {
                 Text("已放弃的建议只读。")
             } else {
-                OutlinedTextField(title, { title = it; scope?.let { s -> actions.edit(s, remote.id, it, description, priority, due) } },
+                OutlinedTextField(title, { title = it; locallyEdited = true; scope?.let { s -> actions.edit(s, remote.id, it, description, priority, due) } },
                     label = { Text("标题") }, enabled = editable && !item.confirmationPending,
                     modifier = Modifier.fillMaxWidth().testTag("task-suggestion-title-${remote.id}"))
-                OutlinedTextField(description, { description = it; scope?.let { s -> actions.edit(s, remote.id, title, it, priority, due) } },
+                OutlinedTextField(description, { description = it; locallyEdited = true; scope?.let { s -> actions.edit(s, remote.id, title, it, priority, due) } },
                     label = { Text("说明") }, enabled = editable && !item.confirmationPending,
                     modifier = Modifier.fillMaxWidth().testTag("task-suggestion-description-${remote.id}"))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                     OutlinedTextField(priority.toString(), {
                         it.toIntOrNull()?.takeIf { value -> value == 1 || value == 5 || value == 9 }?.let { value ->
+                            priority = value
+                            locallyEdited = true
                             scope?.let { s -> actions.edit(s, remote.id, title, description, value, due) }
                         }
                     }, label = { Text("优先级 1 / 5 / 9") }, enabled = editable && !item.confirmationPending,
                         modifier = Modifier.weight(1f).testTag("task-suggestion-priority-${remote.id}"))
-                    OutlinedTextField(due, { due = it; scope?.let { s -> actions.edit(s, remote.id, title, description, priority, it) } },
+                    OutlinedTextField(due, { due = it; locallyEdited = true; scope?.let { s -> actions.edit(s, remote.id, title, description, priority, it) } },
                         label = { Text("截止时间（本地）") }, enabled = editable && !item.confirmationPending,
                         modifier = Modifier.weight(2f).testTag("task-suggestion-due-${remote.id}"))
                 }

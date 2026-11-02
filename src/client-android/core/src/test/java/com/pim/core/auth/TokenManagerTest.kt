@@ -56,6 +56,68 @@ class TokenManagerTest {
     }
 
     @Test
+    fun identityGenerationChangesOnLogoutAndOwnerSwitchButNotTokenRefresh() {
+        val manager = manager(nowMillis = 1_000L)
+        val ownerA = "11111111-1111-4111-8111-111111111111"
+        val ownerB = "22222222-2222-4222-8222-222222222222"
+        val initialGeneration = manager.sessionIdentityGeneration()
+
+        assertTrue(
+            manager.saveOwned(
+                "access-a",
+                "refresh-a",
+                2_000L,
+                "https://pim.example",
+                ownerA,
+                "alice",
+            )
+        )
+        val firstOwnerGeneration = manager.sessionIdentityGeneration()
+        assertTrue(firstOwnerGeneration > initialGeneration)
+
+        assertTrue(
+            manager.saveOwned(
+                "access-refreshed",
+                "refresh-refreshed",
+                3_000L,
+                "https://pim.example",
+                ownerA,
+                "alice",
+            )
+        )
+        assertEquals(firstOwnerGeneration, manager.sessionIdentityGeneration())
+
+        assertTrue(
+            manager.saveOwned(
+                "access-b",
+                "refresh-b",
+                3_000L,
+                "https://pim-b.example",
+                ownerA,
+                "alice",
+            )
+        )
+        val serverSwitchGeneration = manager.sessionIdentityGeneration()
+        assertTrue(serverSwitchGeneration > firstOwnerGeneration)
+
+        assertTrue(
+            manager.saveOwned(
+                "access-owner-b",
+                "refresh-owner-b",
+                3_000L,
+                "https://pim-b.example",
+                ownerB,
+                "bob",
+            )
+        )
+        val secondOwnerGeneration = manager.sessionIdentityGeneration()
+        assertTrue(secondOwnerGeneration > serverSwitchGeneration)
+
+        assertTrue(manager.clear())
+        assertTrue(manager.sessionIdentityGeneration() > secondOwnerGeneration)
+    }
+
+    @Test
     fun legacyEncryptedSessionWithoutServerIdentityFailsClosed() {
         val preferences = InMemorySharedPreferences().apply {
             edit()

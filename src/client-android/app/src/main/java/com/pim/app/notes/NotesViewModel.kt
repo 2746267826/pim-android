@@ -27,6 +27,7 @@ class NotesViewModel @Inject constructor(
     val uploads: NoteUploadRepository,
     val asr: NoteAsrRepository,
     val artifacts: NoteArtifactRepository,
+    val taskSuggestions: NoteTaskSuggestionRepository,
 ) : ViewModel() {
     val selectedId = saved.getStateFlow<String?>("noteId", null)
     private val mutableMessage = MutableStateFlow<String?>(null)
@@ -50,6 +51,8 @@ class NotesViewModel @Inject constructor(
     private val mutableArtifactContentViews =
         MutableStateFlow<Map<NoteArtifactKind, NoteArtifactContentView>>(emptyMap())
     val artifactContentViews = mutableArtifactContentViews.asStateFlow()
+    private val mutableTaskSuggestionsSource = MutableStateFlow<NoteTaskSuggestionSource?>(null)
+    val taskSuggestionsSource = mutableTaskSuggestionsSource.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -115,6 +118,7 @@ class NotesViewModel @Inject constructor(
     fun replayAsrRetry(id: String) { viewModelScope.launch { asr.replayRetry(id, true) } }
 
     fun openArtifacts(versionId: String, noteId: String, asrTaskId: String?, title: String) {
+        closeTaskSuggestions()
         mutableArtifactEntry.value = NoteArtifactEntry(noteId, versionId, asrTaskId, title)
         mutableArtifactPendingSelections.value = emptyMap()
         mutableArtifactViews.value = emptyMap()
@@ -128,6 +132,7 @@ class NotesViewModel @Inject constructor(
     }
 
     fun closeArtifacts() {
+        closeTaskSuggestions()
         mutableArtifactEntry.value = null
         mutableArtifactConsentDone.value = false
         mutableArtifactStarting.value = false
@@ -250,6 +255,86 @@ class NotesViewModel @Inject constructor(
             mutableArtifactContentViews.value + (kind to NoteArtifactContentView.ServerOriginal)
     }
 
+    fun openTaskSuggestions(kind: NoteArtifactKind, candidateId: String) {
+        val entry = mutableArtifactEntry.value ?: return
+        val version = artifacts.state.value.versions[kind].orEmpty().singleOrNull {
+            it.versionId == candidateId && it.artifactId == artifacts.state.value.artifactRefs[kind]?.artifactId &&
+                it.sourceVersionId == entry.materialVersionId
+        } ?: run {
+            tell("只可从当前固定材料对应的已加载服务端版本提取；材料或版本不匹配。")
+            return
+        }
+        if (version.contentMarkdown.isBlank() || !version.contentSha256.matches(Regex("[a-fA-F0-9]{64}")) ||
+            !version.inputSha256.matches(Regex("[a-fA-F0-9]{64}")) ||
+            !version.manifestSha256.matches(Regex("[a-fA-F0-9]{64}"))
+        ) {
+            tell("固定版本内容或摘要不完整；未打开付费提取流程。")
+            return
+        }
+        val source = NoteTaskSuggestionClient.sourceFrom(
+            noteId = entry.noteId,
+            materialVersionId = entry.materialVersionId,
+            version = version,
+            title = entry.title,
+        )
+        mutableTaskSuggestionsSource.value = source
+        taskSuggestions.selectSource(source)
+        viewModelScope.launch { taskSuggestions.open(source) }
+    }
+
+    fun refreshTaskSuggestions() {
+        val source = mutableTaskSuggestionsSource.value ?: return
+        viewModelScope.launch { taskSuggestions.refresh(source) }
+    }
+
+    fun revalidateTaskSuggestionSession() = taskSuggestions.invalidateIfTargetChanged()
+
+    fun extractTaskSuggestions(
+        scope: NoteTaskSuggestionActionScope,
+        destination: NoteTaskSuggestionDestination,
+        chargeAcknowledged: Boolean,
+    ) {
+        viewModelScope.launch { taskSuggestions.extract(scope, destination, chargeAcknowledged) }
+    }
+
+    fun editTaskSuggestion(
+        scope: NoteTaskSuggestionActionScope,
+        suggestionId: String,
+        title: String,
+        description: String,
+        priority: Int,
+        due: String,
+    ) {
+        viewModelScope.launch {
+            taskSuggestions.stageDraft(scope, suggestionId, title, description, priority, due)
+        }
+    }
+
+    fun saveTaskSuggestion(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.saveDraft(scope, suggestionId) }
+    }
+
+    fun discardTaskSuggestionDraft(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.discardDraft(scope, suggestionId) }
+    }
+
+    fun rebaseTaskSuggestionDraft(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.rebaseDraftAfterConflict(scope, suggestionId) }
+    }
+
+    fun dismissTaskSuggestion(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.dismiss(scope, suggestionId) }
+    }
+
+    fun confirmTaskSuggestion(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.confirm(scope, suggestionId) }
+    }
+
+    fun closeTaskSuggestions() {
+        mutableTaskSuggestionsSource.value = null
+        taskSuggestions.close()
+    }
+
     fun changeArtifactContentView(kind: NoteArtifactKind, view: NoteArtifactContentView) {
         mutableArtifactContentViews.value = mutableArtifactContentViews.value + (kind to view)
     }
@@ -303,6 +388,28 @@ class NotesViewModel @Inject constructor(
         }
     }
 
+    fun retryArtifactSteps(kind: NoteArtifactKind, stepKeys: List<String>, duplicateChargeConfirmed: Boolean) {
+        if (!duplicateChargeConfirmed) return
+        val entry = mutableArtifactEntry.value ?: return
+        val task = latestArtifactTask(kind) ?: run {
+            tell("未找到当前固定材料的原任务；不会另建任务。")
+            return
+        }
+        if (stepKeys.isEmpty() || stepKeys.size > 20 || stepKeys.distinct().size != stepKeys.size) {
+            tell("所选恢复步骤无效；原任务与已有结果保留。")
+            return
+        }
+        viewModelScope.launch {
+            artifacts.retrySelectedSteps(
+                taskId = task.taskId,
+                noteId = entry.noteId,
+                materialVersionId = entry.materialVersionId,
+                stepKeys = stepKeys,
+                duplicateChargeConfirmed = true,
+            )
+        }
+    }
+
     private fun latestArtifactTask(kind: NoteArtifactKind): NoteArtifactTaskRecord? {
         val entry = mutableArtifactEntry.value ?: return null
         return artifacts.state.value.tasks
@@ -353,6 +460,24 @@ class NotesViewModel @Inject constructor(
             catch (error: CancellationException) { throw error }
             catch (_: Exception) { tell("导出失败，目标可能是不完整文件；原材料保留在本机。请重试，不要将该文件视为完整备份") }
             finally { mutableBusy.value = false }
+        }
+    }
+
+    fun importDocument(open: () -> java.io.InputStream, onImported: (String) -> Unit = {}) {
+        if (busy.value) return
+        mutableBusy.value = true
+        viewModelScope.launch {
+            try {
+                val imported = notes.importDocument(open)
+                onImported(imported.id)
+                tell("文档包已安全导入为新笔记；原始文件未被替换。")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                tell("文档包导入失败；未发布不完整笔记。请检查压缩包、照片校验和及本机空间。")
+            } finally {
+                mutableBusy.value = false
+            }
         }
     }
 

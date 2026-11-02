@@ -19,13 +19,31 @@ data class NotesState(
     val entries: List<NoteEntry> = emptyList(),
     val documents: Map<String, NoteDocument> = emptyMap(),
     val savedRevisions: Map<String, Long> = emptyMap(),
+    val editHistory: Map<String, NoteHistoryAvailability> = emptyMap(),
+    val historyUnavailable: Map<String, NoteHistoryUnavailableReason> = emptyMap(),
+    val importQuarantine: NoteImportQuarantineSummary = NoteImportQuarantineSummary(),
     val errors: Set<String> = emptySet(),
     val loadFailed: Boolean = false
 )
 
+data class NoteHistoryAvailability(
+    val canUndo: Boolean = false,
+    val canRedo: Boolean = false,
+    val undoDepth: Int = 0,
+    val redoDepth: Int = 0,
+)
+
+enum class NoteHistoryUnavailableReason {
+    SnapshotTooLarge,
+    DamagedJournal,
+}
+
 @Singleton
 class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
-    private val store = NoteFileStore(File(context.noBackupFilesDir, "notes"))
+    private val notesRoot = File(context.noBackupFilesDir, "notes")
+    private val store = NoteFileStore(notesRoot)
+    private val editHistory = NoteEditHistoryStore(File(notesRoot, ".edit-history"))
+    private val histories = mutableMapOf<String, NoteEditHistory>()
     private val mutableState = MutableStateFlow(NotesState())
     val state = mutableState.asStateFlow()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
@@ -52,8 +70,40 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
             try {
                 val entries = store.entries()
                 val documents = entries.filterNot { it.damaged }.associate { it.id to store.read(it.id) }
+                runCatching { store.recoverAbandonedImports() }
+                val importQuarantine = runCatching { store.importQuarantineSummary() }
+                    .getOrDefault(NoteImportQuarantineSummary())
+                val restoredHistories = mutableMapOf<String, NoteEditHistory>()
+                val unavailableHistories = mutableMapOf<String, NoteHistoryUnavailableReason>()
+                documents.forEach { (id, document) ->
+                    if (!NoteEditHistory.canStore(document)) {
+                        unavailableHistories[id] = NoteHistoryUnavailableReason.SnapshotTooLarge
+                    } else if (!editHistory.exists(id)) {
+                        restoredHistories[id] = NoteEditHistory.initial(document)
+                    } else {
+                        val result = runCatching { editHistory.read(id)?.reconcile(document) }
+                        val restored = result.getOrNull()
+                        if (restored == null || restored.noteId != id) {
+                            unavailableHistories[id] = NoteHistoryUnavailableReason.DamagedJournal
+                        } else {
+                            restoredHistories[id] = restored
+                        }
+                    }
+                }
                 synchronized(this@NoteRepository) {
-                    mutableState.value = NotesState(true, entries, documents, documents.mapValues { it.value.revision })
+                    histories.clear()
+                    histories.putAll(restoredHistories)
+                    mutableState.value = NotesState(
+                        loaded = true,
+                        entries = entries,
+                        documents = documents,
+                        savedRevisions = documents.mapValues { it.value.revision },
+                        editHistory = documents.mapValues { (id, _) ->
+                            histories[id]?.availability() ?: NoteHistoryAvailability()
+                        },
+                        historyUnavailable = unavailableHistories,
+                        importQuarantine = importQuarantine,
+                    )
                 }
             } catch (error: CancellationException) { throw error }
             catch (_: Exception) { mutableState.value = state.value.copy(loadFailed = true) }
@@ -84,11 +134,40 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
 
     suspend fun checkpoint(id: String): NoteDocument = withContext(Dispatchers.IO) {
         writes.withLock {
-            val note = checkNotNull(state.value.documents[id])
+            // Capture the note and its journal under the same repository lock. A history
+            // snapshot can then never be paired with a different note revision.
+            val (note, history) = synchronized(this@NoteRepository) {
+                val note = checkNotNull(state.value.documents[id])
+                val history = histories[id]?.takeIf {
+                    it.matches(note) && NoteEditHistory.canStore(note)
+                }
+                note to history
+            }
             if (state.value.savedRevisions[id] != note.revision) store.save(note)
+            val preserveDamagedJournal = state.value.historyUnavailable[id] ==
+                NoteHistoryUnavailableReason.DamagedJournal
+            if (history != null) editHistory.save(history)
+            else if (!preserveDamagedJournal) editHistory.delete(id)
             synchronized(this@NoteRepository) {
                 val current = state.value
-                mutableState.value = current.copy(savedRevisions = current.savedRevisions + (id to note.revision), errors = current.errors - id)
+                val currentNote = current.documents[id]
+                val stillCurrent = currentNote?.revision == note.revision
+                val currentHistory = histories[id]?.takeIf {
+                    currentNote?.let(it::matches) == true
+                }?.availability()
+                mutableState.value = current.copy(
+                    savedRevisions = if (stillCurrent) {
+                        current.savedRevisions + (id to note.revision)
+                    } else {
+                        current.savedRevisions
+                    },
+                    editHistory = if (currentNote != null) {
+                        current.editHistory + (id to (currentHistory ?: NoteHistoryAvailability()))
+                    } else {
+                        current.editHistory - id
+                    },
+                    errors = current.errors - id,
+                )
             }
             note
         }
@@ -106,10 +185,91 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
         open().use { store.exportDocument(note, it) }
     }
 
+    suspend fun importDocument(open: () -> InputStream): NoteDocument = withContext(Dispatchers.IO) {
+        initialize()
+        try {
+            val imported = open().use(store::importDocument)
+            writes.withLock {
+                synchronized(this@NoteRepository) {
+                    NoteEditHistory.initialOrNull(imported)?.let { histories[imported.id] = it }
+                        ?: histories.remove(imported.id)
+                    publish(imported, recordHistory = false)
+                }
+                imported
+            }
+        } finally {
+            val importQuarantine = store.importQuarantineSummary()
+            synchronized(this@NoteRepository) {
+                mutableState.value = state.value.copy(importQuarantine = importQuarantine)
+            }
+        }
+    }
+
+    @Synchronized fun undo(id: String): Boolean = moveHistory(id, forward = false)
+    @Synchronized fun redo(id: String): Boolean = moveHistory(id, forward = true)
+
+    private fun moveHistory(id: String, forward: Boolean): Boolean {
+        val current = state.value.documents[id] ?: return false
+        val history = histories[id]?.takeIf { it.matches(current) }
+            ?: NoteEditHistory.initialOrNull(current)?.also { histories[id] = it }
+            ?: return false
+        val target = if (forward) history.cursor + 1 else history.cursor - 1
+        if (target !in history.snapshots.indices) return false
+        val next = current.withHistoryContent(history.movedTo(target).current())
+        val nextHistory = history.movedTo(target, next.revision)
+        histories[id] = nextHistory
+        publish(next, recordHistory = false)
+        return true
+    }
+
     private fun publish(note: NoteDocument) {
+        publish(note, recordHistory = true)
+    }
+
+    @Synchronized
+    private fun publish(note: NoteDocument, recordHistory: Boolean) {
         val old = state.value
+        if (recordHistory) {
+            val previous = old.documents[note.id]
+            if (previous != null) {
+                if (!NoteEditHistory.canStore(note)) {
+                    histories.remove(note.id)
+                } else if (!NoteEditHistory.canStore(previous)) {
+                    // A note that comes back below the budget starts a fresh history at this
+                    // revision; recreating the oversized previous snapshot would defeat the cap.
+                    histories[note.id] = NoteEditHistory.initial(note)
+                } else {
+                    val history = histories[note.id]?.takeIf { it.matches(previous) }
+                        ?: NoteEditHistory.initial(previous)
+                    val key = previous.historyEditKey(note)
+                    if (key.isNotEmpty()) histories[note.id] = history.record(note, key, System.currentTimeMillis())
+                }
+            } else {
+                NoteEditHistory.initialOrNull(note)?.let { histories[note.id] = it }
+            }
+        }
         val entries = listOf(NoteEntry(note.id, note.title)) + old.entries.filterNot { it.id == note.id }
-        mutableState.value = old.copy(entries = entries, documents = old.documents + (note.id to note), errors = old.errors - note.id)
+        val availability = histories[note.id]?.takeIf { it.matches(note) }?.availability()
+        val unavailable = when {
+            availability != null -> old.historyUnavailable - note.id
+            !NoteEditHistory.canStore(note) -> old.historyUnavailable +
+                (note.id to NoteHistoryUnavailableReason.SnapshotTooLarge)
+            else -> old.historyUnavailable
+        }
+        mutableState.value = old.copy(
+            entries = entries,
+            documents = old.documents + (note.id to note),
+            editHistory = old.editHistory + (note.id to (availability ?: NoteHistoryAvailability())),
+            historyUnavailable = unavailable,
+            errors = old.errors - note.id,
+        )
         pending.trySend(note.id)
     }
+
+    private fun NoteEditHistory.availability() = NoteHistoryAvailability(
+        canUndo = canUndo,
+        canRedo = canRedo,
+        undoDepth = cursor,
+        redoDepth = snapshots.lastIndex - cursor,
+    )
 }

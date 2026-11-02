@@ -23,6 +23,7 @@ import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.WarningAmber
 import androidx.compose.material3.Button
 import androidx.compose.material3.AlertDialog
+import androidx.compose.material3.Checkbox
 import androidx.compose.material3.Icon
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.LinearProgressIndicator
@@ -64,6 +65,7 @@ data class NoteArtifactScreenActions(
     val refresh: (NoteArtifactKind) -> Unit = {},
     val changeContentView: (NoteArtifactKind, NoteArtifactContentView) -> Unit = { _, _ -> },
     val viewCandidateSource: (NoteArtifactKind, String) -> Unit = { _, _ -> },
+    val openTaskSuggestions: (NoteArtifactKind, String) -> Unit = { _, _ -> },
     val selectCandidate: (NoteArtifactKind, String) -> Unit = { _, _ -> },
     val changeDraftText: (NoteArtifactDraftEditRequest) -> Unit = {},
     val saveLocalDraft: (NoteArtifactDraftSaveRequest) -> Unit = {},
@@ -71,6 +73,7 @@ data class NoteArtifactScreenActions(
     val regenerate: (NoteArtifactKind) -> Unit = {},
     val stop: (NoteArtifactKind) -> Unit = {},
     val recover: (NoteArtifactKind) -> Unit = {},
+    val retryFailedSteps: (NoteArtifactKind, List<String>, Boolean) -> Unit = { _, _, _ -> },
 )
 
 @Composable
@@ -141,6 +144,9 @@ fun NoteArtifactScreen(
                         onRegenerate = { actions.regenerate(kind) },
                         onStop = { actions.stop(kind) },
                         onRecover = { actions.recover(kind) },
+                        onRetrySteps = { keys, confirmed ->
+                            actions.retryFailedSteps(kind, keys, confirmed)
+                        },
                     )
                 }
                 item(key = "note-artifact-content-switch-${kind.name}") {
@@ -192,6 +198,9 @@ fun NoteArtifactScreen(
                         editor = editor,
                         candidate = candidate,
                         onViewSource = { actions.viewCandidateSource(kind, candidate.candidateId) },
+                        onTaskSuggestions = {
+                            actions.openTaskSuggestions(kind, candidate.candidateId)
+                        },
                         onSelect = { actions.selectCandidate(kind, candidate.candidateId) },
                     )
                 }
@@ -455,9 +464,17 @@ private fun ArtifactWorkCard(
     onRegenerate: () -> Unit,
     onStop: () -> Unit,
     onRecover: () -> Unit,
+    onRetrySteps: (List<String>, Boolean) -> Unit,
 ) {
     val dimensions = PimTheme.dimensions
     var confirmRegenerate by rememberSaveable(editor.kind) { mutableStateOf(false) }
+    var confirmRetry by rememberSaveable(editor.kind, editor.taskId) { mutableStateOf(false) }
+    var selectedStepKeys by rememberSaveable(editor.kind, editor.taskId) {
+        mutableStateOf(emptyList<String>())
+    }
+    val selectedRetryableStepKeys = selectedStepKeys.filter { key ->
+        editor.retryableSteps.any { it.key == key }
+    }
     if (confirmRegenerate) {
         AlertDialog(
             onDismissRequest = { confirmRegenerate = false },
@@ -498,6 +515,32 @@ private fun ArtifactWorkCard(
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                 )
             }
+            if (confirmRetry) {
+                AlertDialog(
+                    onDismissRequest = { confirmRetry = false },
+                    title = { Text("仅重试所选步骤？") },
+                    text = {
+                        Text(
+                            "只会重跑已选中的非成功、非执行中步骤；成功和执行中的步骤不会重发。" +
+                                "这可能产生额外费用，并可能重复调用同一模型端点。" +
+                                "原任务、成功结果与本机稿都会保留。",
+                        )
+                    },
+                    confirmButton = {
+                        TextButton(
+                            onClick = {
+                                confirmRetry = false
+                                onRetrySteps(selectedRetryableStepKeys, true)
+                            },
+                            enabled = selectedRetryableStepKeys.isNotEmpty() && editor.canRetrySelectedSteps,
+                            modifier = Modifier.testTag("note-artifact-confirm-retry-${editor.kind.name}"),
+                        ) { Text("确认仅重试") }
+                    },
+                    dismissButton = {
+                        TextButton(onClick = { confirmRetry = false }) { Text("取消") }
+                    },
+                )
+            }
             editor.problem?.let { problem ->
                 PimStatusBanner(
                     text = problem,
@@ -531,7 +574,11 @@ private fun ArtifactWorkCard(
             }
             if (editor.canRecover) {
                 PimStatusBanner(
-                    text = "上次结果${editor.workPhase.displayName()}。系统不会自动重发；请按显式恢复核对原任务标识后再继续。",
+                    text = if (editor.retryReceiptPending) {
+                        "恢复回执尚未确认；必须使用原恢复标识核对，不会自动创建新的恢复请求。"
+                    } else {
+                        "上次结果${editor.workPhase.displayName()}。系统不会自动重发；可先核对原任务状态。"
+                    },
                     tone = PimStatusTone.Warning,
                     modifier = Modifier.testTag("note-artifact-recovery-notice-${editor.kind.name}"),
                 )
@@ -540,8 +587,106 @@ private fun ArtifactWorkCard(
                     modifier = Modifier.fillMaxWidth()
                         .testTag("note-artifact-recover-${editor.kind.name}"),
                 ) {
-                    Text("恢复失败或未知任务")
+                    Text(if (editor.retryReceiptPending) "核对原恢复请求" else "核对原任务状态")
                 }
+            }
+            if (editor.recoverySteps.isNotEmpty()) {
+                StepRecoveryPanel(
+                    editor = editor,
+                    selectedStepKeys = selectedRetryableStepKeys,
+                    onSelectionChanged = { selectedStepKeys = it },
+                    onAskConfirm = { confirmRetry = true },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun StepRecoveryPanel(
+    editor: NoteArtifactEditorUiState,
+    selectedStepKeys: List<String>,
+    onSelectionChanged: (List<String>) -> Unit,
+    onAskConfirm: () -> Unit,
+) {
+    val dimensions = PimTheme.dimensions
+    val retryableCount = editor.retryableSteps.size
+    OutlinedCard(
+        Modifier.fillMaxWidth().testTag("note-artifact-step-recovery-${editor.kind.name}"),
+    ) {
+        Column(
+            modifier = Modifier.padding(dimensions.spaceLarge),
+            verticalArrangement = Arrangement.spacedBy(dimensions.spaceSmall),
+        ) {
+            Text("步骤恢复", style = MaterialTheme.typography.titleMedium)
+            Text(
+                if (editor.taskPhase == "Blocked") {
+                    "任务存在输入级阻断；服务端不接受步骤重试，请先修复固定输入问题。"
+                } else {
+                    "服务器当前报告 ${editor.recoverySteps.size} 个步骤；仅非成功、非执行中步骤可选，每次最多20步。"
+                },
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+            editor.recoverySteps.forEach { step ->
+                Row(
+                    Modifier.fillMaxWidth(),
+                    verticalAlignment = Alignment.Top,
+                    horizontalArrangement = Arrangement.spacedBy(dimensions.spaceSmall),
+                ) {
+                    Checkbox(
+                        checked = step.key in selectedStepKeys,
+                        onCheckedChange = { checked ->
+                            if (step.canRetry) onSelectionChanged(
+                                if (checked) selectedStepKeys + step.key
+                                else selectedStepKeys - step.key,
+                            )
+                        },
+                        enabled = step.canRetry && editor.taskPhase != "Blocked" &&
+                            !isRunningTaskPhase(editor.taskPhase.orEmpty()) &&
+                            (step.key in selectedStepKeys || selectedStepKeys.size < 20),
+                        modifier = Modifier.testTag(
+                            "note-artifact-step-select-${editor.kind.name}-${step.key}",
+                        ),
+                    )
+                    Column(
+                        Modifier.weight(1f),
+                        verticalArrangement = Arrangement.spacedBy(dimensions.spaceExtraSmall),
+                    ) {
+                        Text(
+                            "${step.key} · ${step.statusLabel} · 尝试 ${step.attemptCount} 次",
+                            style = MaterialTheme.typography.titleSmall,
+                        )
+                        step.failureLabel?.let { failure ->
+                            Text(
+                                failure,
+                                style = MaterialTheme.typography.bodySmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                        if (!step.canRetry) {
+                            Text(
+                                "该步骤不会被重发。",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+            Button(
+                onClick = onAskConfirm,
+                enabled = editor.canRetrySelectedSteps && selectedStepKeys.isNotEmpty(),
+                modifier = Modifier.fillMaxWidth()
+                    .testTag("note-artifact-retry-steps-${editor.kind.name}"),
+            ) {
+                Text(
+                    when {
+                        retryableCount == 0 -> "没有可重试步骤"
+                        selectedStepKeys.isEmpty() -> "选择要重试的失败步骤"
+                        else -> "仅重试已选 ${selectedStepKeys.size} 个步骤"
+                    },
+                )
             }
         }
     }
@@ -749,6 +894,7 @@ private fun CandidateCard(
     editor: NoteArtifactEditorUiState,
     candidate: NoteArtifactCandidateUi,
     onViewSource: () -> Unit,
+    onTaskSuggestions: () -> Unit,
     onSelect: () -> Unit,
 ) {
     val dimensions = PimTheme.dimensions
@@ -838,6 +984,13 @@ private fun CandidateCard(
                     .testTag("note-artifact-view-source-${editor.kind.name}-${candidate.candidateId}"),
             ) {
                 Text("查看服务端原文")
+            }
+            OutlinedButton(
+                onClick = onTaskSuggestions,
+                modifier = Modifier.fillMaxWidth()
+                    .testTag("note-artifact-task-suggestions-${editor.kind.name}-${candidate.candidateId}"),
+            ) {
+                Text("从此版本提取任务建议")
             }
             Button(
                 onClick = onSelect,

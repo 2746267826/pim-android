@@ -130,6 +130,30 @@ class NoteArtifactUiModelsTest {
         assertSame(analysisEditor, updated.analysis)
     }
 
+    @Test
+    fun recoveryOnlyExcludesSucceededAndRunningAndNeverEnablesWhileTaskRuns() {
+        val editor = NoteArtifactEditorUiState(
+            kind = NoteArtifactKind.FullRecord,
+            taskId = "task-1",
+            taskPhase = "NeedsAttention",
+            recoverySteps = listOf(
+                NoteArtifactRecoveryStepUi("done", "RecordSynthesis", "Succeeded", 1),
+                NoteArtifactRecoveryStepUi("running", "RecordSynthesis", "Running", 1),
+                NoteArtifactRecoveryStepUi("failed", "RecordSynthesis", "Failed", 2),
+                NoteArtifactRecoveryStepUi("blocked", "RecordSynthesis", "Blocked", 1),
+                NoteArtifactRecoveryStepUi("cancelled", "RecordSynthesis", "Cancelled", 1),
+            ),
+        )
+
+        assertEquals(listOf("failed", "blocked", "cancelled"), editor.retryableSteps.map { it.key })
+        assertTrue(editor.canRetrySelectedSteps)
+        assertFalse(editor.copy(taskPhase = "Running").canRetrySelectedSteps)
+        assertFalse(editor.copy(taskPhase = "Blocked").canRetrySelectedSteps)
+        val pendingReceipt = editor.copy(taskPhase = "Succeeded", retryReceiptPending = true)
+        assertTrue(pendingReceipt.canRecover)
+        assertFalse(pendingReceipt.canRetrySelectedSteps)
+    }
+
     private fun dirtyDraft() = NoteArtifactDraft(
         localDraftId = "11111111-1111-4111-8111-111111111111",
         serverIdentity = "https://pim.example",

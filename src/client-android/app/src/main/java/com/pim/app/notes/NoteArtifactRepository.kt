@@ -3,6 +3,7 @@ package com.pim.app.notes
 import com.pim.core.network.BoundUploadSession
 import com.pim.core.network.UploadSessionChangedException
 import java.io.IOException
+import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -56,6 +57,8 @@ class NoteArtifactRepository(
 ) {
     private val initialization = Mutex()
     private val sync = Mutex()
+    private val retrySelectedStepsMutex = Mutex()
+    private val refreshGeneration = AtomicLong()
     private val mutableState = MutableStateFlow(NoteArtifactRepositoryState())
     val state = mutableState.asStateFlow()
 
@@ -75,8 +78,45 @@ class NoteArtifactRepository(
         materialVersionId: String? = null,
         selectedTaskId: String? = null,
     ) = withContext(Dispatchers.IO) {
+        val requestGeneration = refreshGeneration.incrementAndGet()
+        val requestedTarget = targetProvider()
+        val requestedBinding = requestedTarget?.binding
+        val currentState = state.value
+        val requestedScopeChanged = requestedTarget == null ||
+            currentState.noteId?.let { it != noteId } == true ||
+            listOfNotNull(
+                currentState.taskBinding,
+                currentState.destinationBinding,
+                currentState.artifactBinding,
+            ).any { it != requestedBinding }
+        if (requestedScopeChanged) {
+            val scopeMessage = if (requestedTarget == null) {
+                "请先登录；旧派生结果仍保留本机，但不会用当前或空账号访问。"
+            } else null
+            mutableState.update {
+                it.copy(
+                    loaded = true,
+                    syncing = requestedTarget != null,
+                    noteId = noteId,
+                    materialVersionId = null,
+                    taskBinding = null,
+                    tasks = emptyList(),
+                    drafts = emptyList(),
+                    destinations = emptyList(),
+                    destinationProblem = scopeMessage,
+                    destinationBinding = null,
+                    artifactBinding = null,
+                    artifactRefs = emptyMap(),
+                    versions = emptyMap(),
+                    selectedTaskId = null,
+                    detail = null,
+                    message = scopeMessage,
+                )
+            }
+        }
         initialize()
         sync.withLock {
+            if (refreshGeneration.get() != requestGeneration) return@withLock
             val previousState = state.value
             val target = targetProvider()
             if (target == null) {
@@ -102,7 +142,37 @@ class NoteArtifactRepository(
                 }
                 return@withLock
             }
-            mutableState.update { it.copy(loaded = true, syncing = true, noteId = noteId, message = null) }
+            val scopeChanged = previousState.noteId?.let { it != noteId } == true ||
+                listOfNotNull(
+                    previousState.taskBinding,
+                    previousState.destinationBinding,
+                    previousState.artifactBinding,
+                ).any { it != target.binding }
+            mutableState.update { current ->
+                val scoped = if (scopeChanged) current.copy(
+                    materialVersionId = null,
+                    taskBinding = null,
+                    tasks = emptyList(),
+                    drafts = emptyList(),
+                    destinations = emptyList(),
+                    destinationProblem = null,
+                    destinationBinding = null,
+                    artifactBinding = null,
+                    artifactRefs = emptyMap(),
+                    versions = emptyMap(),
+                    selectedTaskId = null,
+                    detail = null,
+                ) else current
+                scoped.copy(loaded = true, syncing = true, noteId = noteId, message = null)
+            }
+            val isCurrentRefresh = {
+                refreshGeneration.get() == requestGeneration && targetProvider()?.binding == target.binding
+            }
+            fun abandonIfStale() {
+                if (refreshGeneration.get() == requestGeneration && targetProvider()?.binding != target.binding) {
+                    abandonStaleRefresh(requestGeneration, noteId)
+                }
+            }
             val transport = factory.create(target)
             var destinationProblem: String? = null
             val destinations = try {
@@ -113,11 +183,16 @@ class NoteArtifactRepository(
                 destinationProblem = describe(error, "读取派生目标目录")
                 emptyList()
             }
+            if (!isCurrentRefresh()) {
+                abandonIfStale()
+                return@withLock
+            }
             val taskState = runCatching { tasks.load() }
                 .getOrElse { NoteArtifactTasksState(loaded = true, loadFailed = true) }
             val inheritedVersionId = materialVersionId ?: previousState.materialVersionId
                 ?.takeIf {
-                    previousState.noteId == noteId && previousState.taskBinding == target.binding
+                    !scopeChanged && previousState.noteId == noteId &&
+                        previousState.taskBinding == target.binding
                 }
             val tasksForNote = taskState.tasks
                 .filter { it.binding == target.binding && it.noteId == noteId }
@@ -142,7 +217,7 @@ class NoteArtifactRepository(
             var artifactProblem: String? = null
             var metadataLoaded = false
             try {
-                val metadata = loadArtifactMetadata(transport, noteId)
+                val metadata = loadArtifactMetadata(transport, noteId, isCurrentRefresh)
                 refs = metadata.refs
                 versions = metadata.versions
                 metadataLoaded = true
@@ -151,12 +226,20 @@ class NoteArtifactRepository(
             } catch (error: Exception) {
                 artifactProblem = describeArtifactMetadataProblem(error)
             }
+            if (!isCurrentRefresh()) {
+                abandonIfStale()
+                return@withLock
+            }
             var detail: NoteArtifactTaskDetail? = null
             var detailProblem: String? = null
             var displayedTasks = currentTasks
             if (chosen != null) {
                 try {
                     detail = transport.detail(chosen.taskId)
+                    if (!isCurrentRefresh()) {
+                        abandonIfStale()
+                        return@withLock
+                    }
                     val persisted = tasks.recordRemote(chosen.taskId, detail.view)
                     displayedTasks = currentTasks.map {
                         if (it.taskId == persisted.taskId) persisted else it
@@ -172,6 +255,10 @@ class NoteArtifactRepository(
                     }
                 }
             }
+            if (!isCurrentRefresh()) {
+                abandonIfStale()
+                return@withLock
+            }
             val partialRefs = detail?.artifacts.orEmpty()
             val needsMetadataRefresh = partialRefs.any { partial ->
                 val complete = refs[partial.kind]
@@ -182,7 +269,7 @@ class NoteArtifactRepository(
             }
             if (needsMetadataRefresh && metadataLoaded) {
                 try {
-                    val metadata = loadArtifactMetadata(transport, noteId)
+                    val metadata = loadArtifactMetadata(transport, noteId, isCurrentRefresh)
                     refs = metadata.refs
                     versions = metadata.versions
                     artifactProblem = null
@@ -191,6 +278,10 @@ class NoteArtifactRepository(
                 } catch (error: Exception) {
                     artifactProblem = describeArtifactMetadataProblem(error)
                 }
+            }
+            if (!isCurrentRefresh()) {
+                abandonIfStale()
+                return@withLock
             }
             if (partialRefs.any { partial ->
                     val complete = refs[partial.kind]
@@ -218,8 +309,13 @@ class NoteArtifactRepository(
                 runCatching { drafts.drafts(target.binding).filter { draft -> draft.noteId == noteId } }
                     .getOrDefault(emptyList())
             }
-            mutableState.update {
-                it.copy(
+            if (!isCurrentRefresh()) {
+                abandonIfStale()
+                return@withLock
+            }
+            mutableState.update { current ->
+                if (!isCurrentRefresh()) return@update current
+                current.copy(
                     loaded = true,
                     syncing = false,
                     noteId = noteId,
@@ -245,6 +341,7 @@ class NoteArtifactRepository(
                     loadFailed = taskState.loadFailed,
                 )
             }
+            if (!isCurrentRefresh()) abandonIfStale()
         }
     }
 
@@ -360,6 +457,109 @@ class NoteArtifactRepository(
             throw error
         } catch (error: Exception) {
             publish(describe(error, "恢复失败步骤"))
+        }
+    }
+
+    /**
+     * Retries only the server-reported steps that are safe to rerun. The
+     * current task detail is required so a stale UI cannot silently resend a
+     * succeeded/running step or attach keys from another task.
+     */
+    suspend fun retrySelectedSteps(
+        taskId: String,
+        noteId: String,
+        materialVersionId: String,
+        stepKeys: List<String>,
+        duplicateChargeConfirmed: Boolean,
+    ) = withContext(Dispatchers.IO) {
+        if (!retrySelectedStepsMutex.tryLock()) {
+            publish("步骤恢复正在提交；不会排队发送重复恢复请求。")
+            return@withContext
+        }
+        try {
+            retrySelectedStepsLocked(
+                taskId = taskId,
+                noteId = noteId,
+                materialVersionId = materialVersionId,
+                stepKeys = stepKeys,
+                duplicateChargeConfirmed = duplicateChargeConfirmed,
+            )
+        } finally {
+            retrySelectedStepsMutex.unlock()
+        }
+    }
+
+    private suspend fun retrySelectedStepsLocked(
+        taskId: String,
+        noteId: String,
+        materialVersionId: String,
+        stepKeys: List<String>,
+        duplicateChargeConfirmed: Boolean,
+    ) {
+        initialize()
+        if (!duplicateChargeConfirmed) {
+            publish("请先确认仅重试失败步骤可能产生额外费用。")
+            return
+        }
+        if (stepKeys.isEmpty() || stepKeys.size > 20 || stepKeys.distinct().size != stepKeys.size) {
+            publish("所选恢复步骤无效；原任务与已有结果保留。")
+            return
+        }
+        val target = targetProvider() ?: return
+        val task = runCatching { tasks.read(taskId) }.getOrElse {
+            publish("未找到原派生任务；不会另建任务。")
+            return
+        }
+        if (task.binding != target.binding) {
+            publish("账号或服务器已变化；未发送恢复请求，原任务与本机稿保留。")
+            return
+        }
+        if (task.noteId != noteId || task.materialVersionId != materialVersionId) {
+            publish("原任务属于其他笔记或固定材料；未发送恢复请求。")
+            return
+        }
+        if (task.pendingRetry?.requiresExplicitReplay() == true) {
+            publish("已有恢复回执尚未确认；请核对原恢复请求，不能创建新的恢复标识。")
+            return
+        }
+        if (task.remote?.phase == "Blocked") {
+            publish("任务存在输入级阻断，服务端不接受步骤重试；原任务和本机稿保留。")
+            return
+        }
+        if (task.remote?.phase?.let(::isRunningTaskPhase) == true) {
+            publish("任务仍在执行中；请刷新核对后再选择步骤，不能重跑执行中的步骤。")
+            return
+        }
+        val detail = state.value.detail?.takeIf { state.value.selectedTaskId == taskId }
+            ?: run {
+                publish("当前没有该任务的完整步骤列表；请刷新后再选择。")
+                return
+            }
+        if (task.remote?.revision != detail.view.revision) {
+            publish("任务进度已变化；请刷新后再选择步骤，不会自动重发。")
+            return
+        }
+        val allSteps = detail.steps.associateBy { it.key }
+        val missing = stepKeys.filter { allSteps[it] == null }
+        if (missing.isNotEmpty()) {
+            publish("所选步骤不属于当前任务；请刷新后重试。")
+            return
+        }
+        val notRetryable = stepKeys.filter { key ->
+            !isRetryableDerivedStepStatus(allSteps.getValue(key).status)
+        }
+        if (notRetryable.isNotEmpty()) {
+            publish("包含已成功或执行中的步骤；未发送恢复请求，成功结果不会重发。")
+            return
+        }
+        try {
+            controllerFor(taskId).retry(taskId, stepKeys, duplicateChargeConfirmed = true)
+            publish("已提交所选步骤的恢复；成功步骤未重发。")
+            refresh(noteId, materialVersionId, selectedTaskId = taskId)
+        } catch (error: CancellationException) {
+            throw error
+        } catch (error: Exception) {
+            publish(describe(error, "恢复所选失败步骤"))
         }
     }
 
@@ -528,7 +728,7 @@ class NoteArtifactRepository(
                 expectedHeadVersionId = expectedHeadVersionId,
                 contentMarkdown = contentMarkdown,
             )
-            if (receipt.isHead) {
+            val completionMessage = if (receipt.isHead) {
                 when (val accepted = drafts.markServerAccepted(
                     target.binding,
                     localDraftId,
@@ -537,18 +737,28 @@ class NoteArtifactRepository(
                     receipt.artifactRevision,
                 )) {
                     is NoteArtifactServerAcceptResult.Accepted ->
-                        publish("人工全文已保存为当前版本，本机编辑基线已同步。")
+                        "人工全文已保存为当前版本，本机编辑基线已同步。"
                     is NoteArtifactServerAcceptResult.StaleRevision ->
-                        publish("人工全文已保存，但本机稿在保存期间又变化；新输入仍保留，未覆盖。")
+                        "人工全文已保存，但本机稿在保存期间又变化；新输入仍保留，未覆盖。"
                 }
             } else {
-                publish(
-                    "服务器已保留本机全文与原版本，但本机稿未成为当前版本；双方内容均保留，" +
-                        "本机编辑基线未改变。",
-                )
+                "服务器已保留本机全文与原版本，但本机稿未成为当前版本；双方内容均保留，" +
+                    "本机编辑基线未改变。"
             }
-            val noteId = state.value.noteId
-            if (noteId != null) refresh(noteId, selectedTaskId = state.value.selectedTaskId)
+            if (targetProvider()?.binding != target.binding) {
+                clearStaleScope(target.binding, draft.noteId)
+                return@withContext
+            }
+            val current = state.value
+            if (current.taskBinding != target.binding || current.noteId != draft.noteId ||
+                current.materialVersionId != draft.materialVersionId
+            ) return@withContext
+            refresh(draft.noteId, draft.materialVersionId, selectedTaskId = current.selectedTaskId)
+            if (targetProvider()?.binding != target.binding ||
+                state.value.taskBinding != target.binding || state.value.noteId != draft.noteId ||
+                state.value.materialVersionId != draft.materialVersionId
+            ) return@withContext
+            publish(completionMessage)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -562,12 +772,27 @@ class NoteArtifactRepository(
         versionId: String,
     ) = withContext(Dispatchers.IO) {
         val target = targetProvider() ?: return@withContext
+        val snapshot = state.value
+        val artifact = snapshot.artifactRefs.values.firstOrNull { it.artifactId == artifactId }
+        val candidate = snapshot.versions.values.flatten().firstOrNull { it.versionId == versionId }
+        if (snapshot.taskBinding != target.binding || snapshot.noteId == null ||
+            artifact?.revision != expectedHeadRevision || candidate == null || candidate.artifactId != artifactId ||
+            candidate.sourceVersionId != snapshot.materialVersionId
+        ) {
+            publish("账号、固定材料或服务端版本基线已变化；未选择候选，本机稿保留。")
+            return@withContext
+        }
         try {
             factory.create(target).selectVersion(artifactId, expectedHeadRevision, versionId)
-            publish("已显式选用该版本；本机稿文字与编辑基线没有被改写。")
-            state.value.noteId?.let { noteId ->
-                refresh(noteId, selectedTaskId = state.value.selectedTaskId)
+            if (targetProvider()?.binding != target.binding) {
+                clearStaleScope(target.binding, snapshot.noteId)
+                return@withContext
             }
+            if (state.value.taskBinding != snapshot.taskBinding || state.value.noteId != snapshot.noteId ||
+                state.value.materialVersionId != snapshot.materialVersionId
+            ) return@withContext
+            publish("已显式选用该版本；本机稿文字与编辑基线没有被改写。")
+            refresh(snapshot.noteId, snapshot.materialVersionId, selectedTaskId = snapshot.selectedTaskId)
         } catch (error: CancellationException) {
             throw error
         } catch (error: Exception) {
@@ -585,10 +810,78 @@ class NoteArtifactRepository(
     private suspend fun loadArtifactMetadata(
         transport: NoteArtifactTransport,
         noteId: String,
+        isCurrentRefresh: () -> Boolean,
     ): ArtifactMetadata {
         val refs = transport.artifacts(noteId).associateBy { it.kind }
-        val versions = refs.mapValues { (_, ref) -> transport.versions(ref.artifactId) }
+        requireCurrentRefresh(isCurrentRefresh)
+        val versions = buildMap {
+            refs.forEach { (kind, ref) ->
+                put(kind, transport.versions(ref.artifactId))
+                requireCurrentRefresh(isCurrentRefresh)
+            }
+        }
         return ArtifactMetadata(refs = refs, versions = versions)
+    }
+
+    private fun requireCurrentRefresh(isCurrentRefresh: () -> Boolean) {
+        if (!isCurrentRefresh()) throw NoteArtifactBindingChangedException()
+    }
+
+    private fun clearStaleScope(binding: BoundUploadSession, noteId: String) {
+        if (targetProvider()?.binding == binding) return
+        mutableState.update { current ->
+            val stillShowsBinding = current.taskBinding == binding ||
+                current.destinationBinding == binding || current.artifactBinding == binding
+            if (!stillShowsBinding || targetProvider()?.binding == binding) current else current.copy(
+                loaded = true,
+                syncing = false,
+                noteId = noteId,
+                materialVersionId = null,
+                taskBinding = null,
+                tasks = emptyList(),
+                drafts = emptyList(),
+                destinations = emptyList(),
+                destinationProblem = "账号或服务器已变化；旧请求回执未应用到当前页面。",
+                destinationBinding = null,
+                artifactBinding = null,
+                artifactRefs = emptyMap(),
+                versions = emptyMap(),
+                selectedTaskId = null,
+                detail = null,
+                message = "账号或服务器已变化；旧请求回执未应用到当前页面。",
+            )
+        }
+    }
+
+    private fun abandonStaleRefresh(requestGeneration: Long, noteId: String) {
+        if (refreshGeneration.get() != requestGeneration) return
+        val message = if (targetProvider() == null) {
+            "请先登录；旧派生结果仍保留本机，但不会用当前或空账号访问。"
+        } else {
+            "账号或服务器已变化；旧请求回执未应用到当前页面。"
+        }
+        mutableState.update { current ->
+            if (refreshGeneration.get() != requestGeneration) return@update current
+            current.copy(
+                loaded = true,
+                syncing = false,
+                noteId = noteId,
+                materialVersionId = null,
+                taskBinding = null,
+                tasks = emptyList(),
+                drafts = emptyList(),
+                destinations = emptyList(),
+                destinationProblem = message,
+                destinationBinding = null,
+                artifactBinding = null,
+                artifactRefs = emptyMap(),
+                versions = emptyMap(),
+                selectedTaskId = null,
+                detail = null,
+                message = message,
+                loadFailed = false,
+            )
+        }
     }
 
     private fun ensureDrafts(
@@ -635,16 +928,21 @@ class NoteArtifactRepository(
         val taskState = runCatching { tasks.load() }
             .getOrElse { NoteArtifactTasksState(loaded = true, loadFailed = true) }
         val current = state.value
+        val foreignScope = target == null || listOfNotNull(
+            current.taskBinding,
+            current.destinationBinding,
+            current.artifactBinding,
+        ).any { it != target.binding }
         val scopedVersionId = current.materialVersionId?.takeIf {
-            target != null && current.taskBinding == target.binding
+            !foreignScope && current.taskBinding == target?.binding
         }
-        val visibleTasks = if (target == null) emptyList() else taskState.tasks
+        val visibleTasks = if (foreignScope) emptyList() else taskState.tasks
             .filter {
-                it.binding == target.binding && it.noteId == current.noteId &&
+                it.binding == target?.binding && it.noteId == current.noteId &&
                     (scopedVersionId == null || it.materialVersionId == scopedVersionId)
             }
-        val visibleDrafts = if (target == null) emptyList() else runCatching {
-            drafts.drafts(target.binding).filter {
+        val visibleDrafts = if (foreignScope) emptyList() else runCatching {
+            drafts.drafts(requireNotNull(target).binding).filter {
                 it.noteId == current.noteId &&
                     (scopedVersionId == null || it.materialVersionId == scopedVersionId)
             }
@@ -655,6 +953,16 @@ class NoteArtifactRepository(
                 syncing = false,
                 tasks = visibleTasks,
                 drafts = visibleDrafts,
+                materialVersionId = if (foreignScope) null else it.materialVersionId,
+                taskBinding = if (foreignScope) null else it.taskBinding,
+                destinations = if (foreignScope) emptyList() else it.destinations,
+                destinationProblem = if (foreignScope) "账号或服务器已变化；请刷新当前账号的数据。" else it.destinationProblem,
+                destinationBinding = if (foreignScope) null else it.destinationBinding,
+                artifactBinding = if (foreignScope) null else it.artifactBinding,
+                artifactRefs = if (foreignScope) emptyMap() else it.artifactRefs,
+                versions = if (foreignScope) emptyMap() else it.versions,
+                selectedTaskId = if (foreignScope) null else it.selectedTaskId,
+                detail = if (foreignScope) null else it.detail,
                 loadFailed = taskState.loadFailed,
                 message = message,
             )

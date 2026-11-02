@@ -41,6 +41,8 @@ fun NativeNotesScreen(
     onPauseResume: () -> Unit, onFinish: (String) -> Unit,
     onPlay: (RecordingSession, Int) -> Unit, onExport: (NoteDocument) -> Unit,
     onRetryMaterial: (String) -> Unit, onExportMaterial: (String) -> Unit,
+    onImport: () -> Unit = {},
+    onUndo: (String) -> Unit = {}, onRedo: (String) -> Unit = {},
     onExit: () -> Unit = {}, onStopRecording: () -> Unit = {},
     completion: NoteCompletion? = null, onDismissCompletion: () -> Unit = {}, onDismissMessage: (String) -> Unit = {},
     uploads: NoteUploadsState = NoteUploadsState(), uploadTarget: NoteUploadTarget? = null,
@@ -67,7 +69,7 @@ fun NativeNotesScreen(
             if (note == null) {
                 NoteLibraryScreen(state, selectedId, recording, busy, onCreate, onOpen, onExit,
                     uploads = uploads, currentTarget = uploadTarget, onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
-                    asrTaskCount = asr.tasks.size, onAsr = { showAsr = true })
+                    asrTaskCount = asr.tasks.size, onAsr = { showAsr = true }, onImport = onImport)
             } else key(note.id) {
                 var preview by rememberSaveable { mutableStateOf(false) }
                 val scope = rememberCoroutineScope()
@@ -141,6 +143,17 @@ fun NativeNotesScreen(
                                             PimStatusBanner("保存失败，当前更改尚未可靠落盘。请检查存储空间后重试。", PimStatusTone.Error)
                                             TextButton(onClick = { onRetry(note.id) }) { Text("重试本地保存") }
                                         }
+                                        when (state.historyUnavailable[note.id]) {
+                                            NoteHistoryUnavailableReason.SnapshotTooLarge -> PimStatusBanner(
+                                                "本篇超过整篇撤销存储预算（源快照最多 ${NoteEditHistory.MAX_SNAPSHOT_BYTES / (1024 * 1024)} MiB、journal 最多 ${NoteEditHistory.MAX_ENCODED_BYTES / (1024 * 1024)} MiB），仍会正常保存；为避免内存和磁盘无界，本篇不提供整篇撤销记录。",
+                                                PimStatusTone.Warning,
+                                            )
+                                            NoteHistoryUnavailableReason.DamagedJournal -> PimStatusBanner(
+                                                "本篇的撤销记录无法通过完整性校验，已暂停使用且保留原文件；笔记正文正常读写。",
+                                                PimStatusTone.Warning,
+                                            )
+                                            null -> Unit
+                                        }
                                         recording.problem?.takeIf { ownSession != null }?.let { PimStatusBanner(it.message, PimStatusTone.Error) }
                                         if (ownActive && !notificationsVisible) PimStatusBanner("系统通知权限或录音渠道已关闭，后台录音状态可能不可见。", PimStatusTone.Warning)
                                         if (recording.active && !ownActive) PimStatusBanner("另一篇笔记正在录音，本页编辑不会改变录音归属。", PimStatusTone.Info)
@@ -197,7 +210,12 @@ fun NativeNotesScreen(
                         },
                         onPreview = { afterInput { preview = !preview } }, onFinish = { afterInput { confirmFinish = true } },
                         onMaterials = { leaveInput(); showMaterials = true }, onRecordings = { leaveInput(); showRecordings = true },
-                        onExport = { afterInput(onExport) }, onAbout = { leaveInput(); showAbout = true }, needsReview = editor.reviewIds.isNotEmpty())
+                        onExport = { afterInput(onExport) }, onImport = onImport, onAbout = { leaveInput(); showAbout = true },
+                        needsReview = editor.reviewIds.isNotEmpty(),
+                        canUndo = state.editHistory[note.id]?.canUndo == true,
+                        canRedo = state.editHistory[note.id]?.canRedo == true,
+                        onUndo = { afterInput { onUndo(note.id) } },
+                        onRedo = { afterInput { onRedo(note.id) } })
                     NoteEditorDock(recording, ownActive, saved && !busy && !committing && !recording.active && !recording.preparing,
                         !busy && !committing && !preview && lastMarkdown != null,
                         onRecord = { afterInput { onRecord(it.id) } }, onPauseResume = onPauseResume,

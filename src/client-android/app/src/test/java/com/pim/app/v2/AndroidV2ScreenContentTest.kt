@@ -7,6 +7,55 @@ import org.junit.Test
 
 class AndroidV2ScreenContentTest {
     @Test
+    fun nativeWorkbenchUsesContractActionsInsteadOfWebViewOnlyRendering() {
+        val src = readSource("nativework", "NativeWorkbenchScreen.kt")
+        for (marker in listOf(
+            "新建任务",
+            "新建日程",
+            "删除设备",
+            "添加根分类",
+            "上下文",
+            "打开本机状态与诊断导出",
+            "打开本机设置",
+            "服务端提醒",
+            "延后",
+            "忽略",
+            "保存正文",
+        )) {
+            assertTrue("Native workbench missing action surface: $marker", src.contains(marker))
+        }
+        assertFalse("Native workbench must not use a WebView as its action implementation",
+            src.contains("PimWebViewScreen"))
+        val root = readSource("ui", "root", "PimRootScreen.kt")
+        assertTrue("Native workbench route is not wired into root navigation",
+            root.contains("PimDestination.Workbench -> NativeWorkbenchScreen"))
+        assertTrue("Native workbench settings action is not wired into root navigation",
+            root.contains("onOpenSettings = { selected = PimDestination.Settings }"))
+    }
+
+    @Test
+    fun mainTodayUsesSharedNativeBusinessBodyAndExplicitLegacyEntry() {
+        val today = readSource("ui", "today", "TodayScreen.kt")
+        assertTrue("Today sync and collection status must remain visible", today.contains("TodayStatusBar("))
+        assertTrue("Native Today business body must be the default", today.contains("NativeWorkbenchTodaySection("))
+        assertTrue("Today must restore the shared workbench section", today.contains("workbenchViewModel.enterToday()"))
+        assertTrue("Legacy Today must require an explicit user toggle", today.contains("if (showLegacyToday)"))
+        assertTrue("Legacy Today entry must be clearly labeled", today.contains("打开旧版完整今日"))
+        assertTrue("Legacy Today must retain its existing embed route", today.contains("/embed/android/today"))
+
+        val workbench = readSource("nativework", "NativeWorkbenchScreen.kt")
+        assertTrue("Today body should have a stable test tag", workbench.contains("today-native-business-content"))
+        assertTrue("Today and workbench must share the native content body", workbench.contains("TodayNativeContent("))
+        assertTrue("Today must capture the owner/session when opening a task editor",
+            workbench.contains("TaskEditorTarget(session = viewModel.currentEditorSession())"))
+        assertTrue("Today must expose native task completion", workbench.contains("onToggleTask = viewModel::toggleTaskCompleted"))
+        assertTrue("Today must capture the owner/session when opening an event editor",
+            workbench.contains("EventEditorTarget(session = viewModel.currentEditorSession())"))
+        assertTrue("Missing writable calendars must lead to native calendar setup", workbench.contains("前往创建日历"))
+        assertTrue("Workbench Today must show its own operation status", workbench.contains("showOperationStatus = true"))
+    }
+
+    @Test
     fun screensExposeApprovedInformationArchitecture() {
         assertContains("ui/today/TodayScreen.kt", listOf("syncButtonLabel", "syncButtonShowSpinner", "待传总数", "定位待传", "上传中", "已确认", "本轮拒绝", "死信保留", "服务器版本不支持嵌入页面", "打开设置"))
         assertContains("ui/tracks/TracksScreen.kt", listOf("PimWebViewScreen", "/embed/android/tracks", "viewModel.bridge", "服务器版本不支持嵌入页面", "打开设置", "embedSupported"))

@@ -24,8 +24,10 @@ import com.pim.app.ui.theme.PimTheme
 internal fun NoteEditorTopBar(
     saved: Boolean, saveFailed: Boolean, busy: Boolean, preview: Boolean,
     onBack: () -> Unit, onSaveStatus: () -> Unit, onPreview: () -> Unit, onFinish: () -> Unit,
-    onMaterials: () -> Unit, onRecordings: () -> Unit, onExport: () -> Unit, onAbout: () -> Unit,
-    needsReview: Boolean = false
+    onMaterials: () -> Unit, onRecordings: () -> Unit, onExport: () -> Unit, onImport: () -> Unit,
+    onAbout: () -> Unit,
+    needsReview: Boolean = false, canUndo: Boolean = false, canRedo: Boolean = false,
+    onUndo: () -> Unit = {}, onRedo: () -> Unit = {},
 ) {
     val d = PimTheme.dimensions
     var menu by remember { mutableStateOf(false) }
@@ -53,12 +55,21 @@ internal fun NoteEditorTopBar(
             Box {
                 IconButton(onClick = { menu = true }, enabled = !busy, modifier = Modifier.size(d.minimumTouchTarget)) { Icon(Icons.Default.MoreHoriz, "更多文档操作") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text("撤销整篇操作") }, leadingIcon = { Icon(Icons.Default.Undo, null) },
+                        enabled = canUndo && !busy, modifier = Modifier.testTag("note-undo"),
+                        onClick = { menu = false; onUndo() })
+                    DropdownMenuItem(text = { Text("重做整篇操作") }, leadingIcon = { Icon(Icons.Default.Redo, null) },
+                        enabled = canRedo && !busy, modifier = Modifier.testTag("note-redo"),
+                        onClick = { menu = false; onRedo() })
+                    Divider()
                     DropdownMenuItem(text = { Text("本篇录音") }, leadingIcon = { Icon(Icons.Default.GraphicEq, null) },
                         onClick = { menu = false; onRecordings() })
                     DropdownMenuItem(text = { Text("材料版本与上传") }, leadingIcon = { Icon(Icons.Default.Layers, null) },
                         modifier = Modifier.testTag("note-material-versions"), onClick = { menu = false; onMaterials() })
                     DropdownMenuItem(text = { Text("导出文档包（不含录音）") }, leadingIcon = { Icon(Icons.Default.FileDownload, null) },
                         enabled = saved, onClick = { menu = false; onExport() })
+                    DropdownMenuItem(text = { Text("导入文档包为新笔记") }, leadingIcon = { Icon(Icons.Default.FileUpload, null) },
+                        enabled = !busy, modifier = Modifier.testTag("note-import"), onClick = { menu = false; onImport() })
                     DropdownMenuItem(text = { Text("关于笔记") }, onClick = { menu = false; onAbout() })
                 }
             }

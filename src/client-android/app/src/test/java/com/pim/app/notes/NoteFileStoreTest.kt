@@ -77,6 +77,94 @@ class NoteFileStoreTest {
         assertEquals(setOf("note.json", "document.md", NoteFileStore.photoPath(photoBlock), NoteFileStore.inkPath(ink)), files.keys)
     }
 
+    @Test fun editablePackageImportPreservesBlockOrderVectorIdentitySizeAndMaterialHashes() {
+        var note = NoteDocument.create()
+        val photoBytes = ByteArrayOutputStream().also { output ->
+            val bitmap = Bitmap.createBitmap(11, 7, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(android.graphics.Color.GREEN)
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            bitmap.recycle()
+        }.toByteArray()
+        val photo = store.importPhoto(note.id, ByteArrayInputStream(photoBytes))
+        val firstInk = withInk(
+            inkBlock(320f),
+            InkData(
+                width = 320f,
+                height = 240f,
+                strokes = listOf(InkStroke(listOf(InkPoint(20f, 30f, 0.4f), InkPoint(120f, 90f, 0.8f)))),
+            ),
+        )
+        val secondInk = withInk(
+            inkBlock(480f),
+            InkData(width = 480f, height = 300f, strokes = listOf(InkStroke(listOf(InkPoint(10f, 10f))))),
+        )
+        note = note.withTitle("可编辑材料包").withBlocks(
+            listOf(markdownBlock("# 原稿\n"), firstInk, photo, markdownBlock("中间"), secondInk, markdownBlock("结尾"))
+        ).nextRevision()
+        store.save(note)
+        val packageBytes = ByteArrayOutputStream().also { store.exportDocument(note, it) }.toByteArray()
+        val importedRoot = temp.newFolder("imported-root")
+        val imported = NoteFileStore(importedRoot).importDocument(ByteArrayInputStream(packageBytes))
+
+        assertNotEquals(note.id, imported.id)
+        assertEquals(0L, imported.revision)
+        assertEquals(note.title, imported.title)
+        assertEquals(note.blocks, imported.blocks)
+        assertEquals(
+            JsonObject(note.source - "id" - "revision"),
+            JsonObject(imported.source - "id" - "revision"),
+        )
+        val importedPhoto = imported.blocks.single { it.string("kind") == "photo" }
+        assertArrayEquals(photoBytes, File(importedRoot, "${imported.id}/${NoteFileStore.photoPath(importedPhoto)}").readBytes())
+        imported.blocks.filter { it.string("kind") == "ink" }.forEach { block ->
+            val png = File(importedRoot, "${imported.id}/${NoteFileStore.inkPath(block)}")
+            assertTrue(png.isFile)
+            assertArrayEquals(
+                byteArrayOf(0x89.toByte(), 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a),
+                png.readBytes().take(8).toByteArray(),
+            )
+        }
+        assertEquals(
+            listOf("markdown", "ink", "photo", "markdown", "ink", "markdown"),
+            imported.blocks.map { it.string("kind") },
+        )
+    }
+
+    @Test fun maliciousOrTamperedDocumentsDoNotPublishAPartialNote() {
+        val note = NoteDocument.create().withTitle("保留原稿")
+        store.save(note)
+        val root = temp.newFolder("unsafe-import-root")
+        val importedStore = NoteFileStore(root)
+        val traversal = buildZip(
+            linkedMapOf(
+                "note.json" to note.source.toString().toByteArray(),
+                "document.md" to store.markdown(note).toByteArray(),
+                "../escape.png" to byteArrayOf(1, 2, 3),
+            )
+        )
+        assertThrows(IllegalArgumentException::class.java) {
+            importedStore.importDocument(ByteArrayInputStream(traversal))
+        }
+        assertTrue(importedStore.entries().isEmpty())
+        assertFalse(File(root.parentFile, "escape.png").exists())
+
+        val photoBytes = ByteArrayOutputStream().also { output ->
+            val bitmap = Bitmap.createBitmap(8, 8, Bitmap.Config.ARGB_8888)
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            bitmap.recycle()
+        }.toByteArray()
+        val photo = store.importPhoto(note.id, ByteArrayInputStream(photoBytes))
+        val attached = note.withBlocks(listOf(photo)).nextRevision().also(store::save)
+        val exported = ByteArrayOutputStream().also { store.exportDocument(attached, it) }.toByteArray()
+        val tampered = unzip(exported).toMutableMap()
+        tampered[NoteFileStore.photoPath(photo)] = tampered.getValue(NoteFileStore.photoPath(photo)) + byteArrayOf(1)
+        assertThrows(IllegalArgumentException::class.java) {
+            importedStore.importDocument(ByteArrayInputStream(buildZip(tampered)))
+        }
+        assertTrue(importedStore.entries().isEmpty())
+        assertEquals("保留原稿", store.read(note.id).title)
+    }
+
     @Test fun staleSaveIsRejectedAndExportOfOldSnapshotDoesNotReplaceNewSource() {
         val old = NoteDocument.create()
         val newer = old.withTitle("新稿").nextRevision()
@@ -191,5 +279,43 @@ class NoteFileStoreTest {
         store.photoFile(note.id, photo.string("assetId")).appendText("tampered")
         assertThrows(IllegalArgumentException::class.java) { store.exportDocument(attached, ByteArrayOutputStream()) }
         assertEquals(attached, store.read(note.id))
+    }
+
+    @Test fun failedImportQuarantineIsBoundedWithoutDeletingPublishedNotes() {
+        val note = NoteDocument.create().withTitle("不能回收的已保存笔记")
+        store.save(note)
+
+        repeat(NoteFileStore.MAX_QUARANTINE_ENTRIES + 2) {
+            assertThrows(IllegalArgumentException::class.java) {
+                store.importDocument(ByteArrayInputStream(byteArrayOf(1, 2, 3)))
+            }
+        }
+
+        val summary = store.importQuarantineSummary()
+        assertTrue(summary.retainedCount <= NoteFileStore.MAX_QUARANTINE_ENTRIES)
+        assertTrue(summary.retainedBytes <= NoteFileStore.MAX_QUARANTINE_BYTES)
+        assertEquals(note, store.read(note.id))
+        assertTrue(File(temp.root, ".import-staging").listFiles().orEmpty().isEmpty())
+    }
+
+    private fun buildZip(files: Map<String, ByteArray>): ByteArray = ByteArrayOutputStream().also { output ->
+        java.util.zip.ZipOutputStream(output).use { zip ->
+            files.forEach { (name, bytes) ->
+                zip.putNextEntry(java.util.zip.ZipEntry(name))
+                zip.write(bytes)
+                zip.closeEntry()
+            }
+        }
+    }.toByteArray()
+
+    private fun unzip(bytes: ByteArray): Map<String, ByteArray> {
+        val files = linkedMapOf<String, ByteArray>()
+        ZipInputStream(ByteArrayInputStream(bytes)).use { zip ->
+            while (true) {
+                val entry = zip.nextEntry ?: break
+                files[entry.name] = zip.readBytes()
+            }
+        }
+        return files
     }
 }

@@ -108,10 +108,24 @@ private fun NoteArtifactRepositoryState.editor(
         ?.takeIf { id -> candidates.any { it.candidateId == id } }
     val viewed = viewedCandidateIds[kind]?.takeIf { id -> candidates.any { it.candidateId == id } }
     val taskDetail = detail?.takeIf { selectedTaskId == task?.taskId }
+    val taskSteps = taskDetail?.steps.orEmpty()
     return NoteArtifactEditorUiState(
         kind = kind,
         draft = draft,
         candidates = candidates,
+        taskId = task?.taskId,
+        taskPhase = task?.remote?.phase,
+        retryReceiptPending = task?.pendingRetry?.requiresExplicitReplay() == true,
+        recoverySteps = taskSteps.map { step ->
+            NoteArtifactRecoveryStepUi(
+                key = step.key,
+                kind = step.kind,
+                status = step.status,
+                attemptCount = step.attemptCount,
+                lastErrorCode = step.lastErrorCode,
+                lastErrorMessage = step.lastErrorMessage,
+            )
+        },
         confirmedHeadCandidateId = confirmedHead,
         pendingSelectionCandidateId = pendingSelection,
         viewedCandidateId = viewed,
@@ -119,9 +133,8 @@ private fun NoteArtifactRepositoryState.editor(
         workPhase = task.workPhase(),
         workDetail = task?.let { record ->
             val phase = record.remote?.phase ?: record.localPhase.name
-            val steps = taskDetail?.steps.orEmpty()
-            val attempts = steps.sumOf { it.attemptCount }
-            "TaskId ${record.taskId.take(8)} · $phase · ${steps.size} 个步骤 / $attempts 次尝试"
+            val attempts = taskSteps.sumOf { it.attemptCount }
+            "TaskId ${record.taskId.take(8)} · $phase · ${taskSteps.size} 个步骤 / $attempts 次尝试"
         },
         problem = task?.lastProblem,
     )

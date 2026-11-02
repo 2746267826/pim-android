@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 e5c555e2864e182f98242b0bbe50b156f755e9ea18dd5c57724518edd6bd8d76)
+//   契约快照 : contract/openapi.json (sha256 e7741cf3a69a30eb178d3a77fa329c71bc657dd2ede186c125816e63b6d2bfb2)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -23,6 +23,71 @@ data class AiAsrDestinationConsent(
     val modelRevision: String,
     val presetId: String,
     val presetVersion: String,
+)
+
+/** 契约 `components.schemas.AppKnowledgeAppDto`（response）。 */
+@Serializable
+data class AppKnowledgeAppDto(
+    val categoryPath: String? = null,
+    val confidence: Double,
+    val contextCount: Int,
+    val createdAt: String,
+    val description: String? = null,
+    val displayName: String,
+    val icon: String? = null,
+    val id: String,
+    val lastSeenAt: String? = null,
+    val pendingContextCount: Int,
+    val processName: String,
+    val productivity: String? = null,
+    val recentAffectedDurationSeconds: Double,
+    val source: String,
+)
+
+/** 契约 `components.schemas.AppKnowledgeAppDtoListApiResponse`（response）。 */
+@Serializable
+data class AppKnowledgeAppDtoListApiResponse(
+    val code: Int,
+    val data: List<AppKnowledgeAppDto>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.AppKnowledgeContextDto`（response）。 */
+@Serializable
+data class AppKnowledgeContextDto(
+    val affectedDurationSeconds: Double,
+    val affectedRecordCount: Int,
+    val appId: String? = null,
+    val confidence: Double,
+    val enabled: Boolean,
+    val id: String,
+    val lastMatchedAt: String? = null,
+    val patternType: String,
+    val patternValue: String,
+    val processName: String,
+    val projectTag: String? = null,
+    val scopeSummary: String,
+    val source: String,
+    val targetCategoryName: String? = null,
+)
+
+/** 契约 `components.schemas.AppKnowledgeContextDtoApiResponse`（response）。 */
+@Serializable
+data class AppKnowledgeContextDtoApiResponse(
+    val code: Int,
+    val data: AppKnowledgeContextDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.AppKnowledgeContextDtoListApiResponse`（response）。 */
+@Serializable
+data class AppKnowledgeContextDtoListApiResponse(
+    val code: Int,
+    val data: List<AppKnowledgeContextDto>? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.AuthResponse`（response）。 */
@@ -118,6 +183,50 @@ data class CalendarResponseListApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.CategorySaveRequest`（request）。 */
+@Serializable
+data class CategorySaveRequest(
+    val color: String,
+    val icon: String? = null,
+    val id: String? = null,
+    val name: String,
+    val parentId: String? = null,
+    val productivity: String,
+    val sortOrder: Int,
+)
+
+/** 契约 `components.schemas.CategoryTreeNode`（response）。 */
+@Serializable
+data class CategoryTreeNode(
+    val children: List<CategoryTreeNode>,
+    val color: String,
+    val icon: String? = null,
+    val id: String,
+    val isBuiltin: Boolean,
+    val name: String,
+    val parentId: String? = null,
+    val productivity: String,
+    val sortOrder: Int,
+)
+
+/** 契约 `components.schemas.CategoryTreeNodeApiResponse`（response）。 */
+@Serializable
+data class CategoryTreeNodeApiResponse(
+    val code: Int,
+    val data: CategoryTreeNode? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.CategoryTreeNodeListApiResponse`（response）。 */
+@Serializable
+data class CategoryTreeNodeListApiResponse(
+    val code: Int,
+    val data: List<CategoryTreeNode>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
 /** 契约 `components.schemas.ClientShellLatestResponse`（response）。 */
 @Serializable
 data class ClientShellLatestResponse(
@@ -131,6 +240,13 @@ data class ClientShellLatestResponse(
     val shellWindowsVersion: String? = null,
     val windowsUrl: String? = null,
     val windowsVersion: String? = null,
+)
+
+/** 契约 `components.schemas.ConfirmNoteTaskSuggestionRequest`（request）。 */
+@Serializable
+data class ConfirmNoteTaskSuggestionRequest(
+    val expectedRevision: String,
+    val requestId: String,
 )
 
 /** 契约 `components.schemas.CreateCalendarRequest`（request）。 */
@@ -173,6 +289,23 @@ data class CreateEventRequest(
     val timeZoneId: String? = null,
     val title: String,
     val uid: String? = null,
+)
+
+/** 契约 `components.schemas.CreateQuickNoteRequest`（request）。 */
+@Serializable
+data class CreateQuickNoteRequest(
+    val attachmentIds: List<String>? = null,
+    val contentMarkdown: String,
+    val source: String? = null,
+)
+
+/** 契约 `components.schemas.CreateTaskBookRequest`（request）。 */
+@Serializable
+data class CreateTaskBookRequest(
+    val domainProjectId: String? = null,
+    val kind: String? = null,
+    val name: String,
+    val status: String? = null,
 )
 
 /** 契约 `components.schemas.CreateTaskRequest`（request）。 */
@@ -253,6 +386,112 @@ enum class DaemonSourceState {
     @SerialName("Paused")
     PAUSED,
 }
+
+/** 契约 `components.schemas.DeviceDeletePreviewDto`（response）。 */
+@Serializable
+data class DeviceDeletePreviewDto(
+    val deviceId: String,
+    val displayName: String,
+    val eventCount: Int,
+    val locationCount: Int,
+    val sessionCount: Int,
+    val summaryCount: Int,
+    val tables: List<DeviceTableCountDto>,
+)
+
+/** 契约 `components.schemas.DeviceDeletePreviewDtoApiResponse`（response）。 */
+@Serializable
+data class DeviceDeletePreviewDtoApiResponse(
+    val code: Int,
+    val data: DeviceDeletePreviewDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.DeviceDeleteResultDto`（response）。 */
+@Serializable
+data class DeviceDeleteResultDto(
+    val deviceId: String,
+    val tables: List<DeviceTableCountDto>,
+    val totalRows: Int,
+)
+
+/** 契约 `components.schemas.DeviceDeleteResultDtoApiResponse`（response）。 */
+@Serializable
+data class DeviceDeleteResultDtoApiResponse(
+    val code: Int,
+    val data: DeviceDeleteResultDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.DeviceDto`（response）。 */
+@Serializable
+data class DeviceDto(
+    val deviceId: String,
+    val displayName: String,
+)
+
+/** 契约 `components.schemas.DeviceDtoApiResponse`（response）。 */
+@Serializable
+data class DeviceDtoApiResponse(
+    val code: Int,
+    val data: DeviceDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.DeviceListDto`（response）。 */
+@Serializable
+data class DeviceListDto(
+    val appVersion: String,
+    val brand: String,
+    val dataQuality: String,
+    val deviceId: String,
+    val displayName: String,
+    val earliest: String? = null,
+    val eventCount: Int,
+    val isOnline: Boolean,
+    val lastSeenAtUtc: String,
+    val latest: String? = null,
+    val locationCount: Int,
+    val model: String,
+    val osVersion: String,
+    val registeredAtUtc: String,
+    val sessionCount: Int,
+    val storageEstimateKb: Long,
+    val storagePressure: String,
+    val summaryCount: Int,
+    val syncStatus: String,
+)
+
+/** 契约 `components.schemas.DeviceListDtoIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class DeviceListDtoIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<DeviceListDto>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.DeviceRenameRequest`（request）。 */
+@Serializable
+data class DeviceRenameRequest(
+    val displayName: String,
+)
+
+/** 契约 `components.schemas.DeviceTableCountDto`（response）。 */
+@Serializable
+data class DeviceTableCountDto(
+    val rowCount: Int,
+    val table: String,
+)
+
+/** 契约 `components.schemas.DismissNoteTaskSuggestionRequest`（request）。 */
+@Serializable
+data class DismissNoteTaskSuggestionRequest(
+    val expectedRevision: String,
+)
 
 /** 契约 `components.schemas.EndpointHeartbeatRequest`（request）。 */
 @Serializable
@@ -409,6 +648,42 @@ data class EventResponsePagedResult(
 data class EventResponsePagedResultApiResponse(
     val code: Int,
     val data: EventResponsePagedResult? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.HabitCadence`（response）。 */
+/**
+ * 契约枚举 `HabitCadence`（整数，取值：0, 1, 2, 3）。
+ * 契约没有给出成员名，臆造名字等于编造接口，因此这里保留契约类型名但按 Int 处理。
+ */
+typealias HabitCadence = Int
+
+/** 契约 `components.schemas.HabitRoutineDto`（response）。 */
+@Serializable
+data class HabitRoutineDto(
+    val cadence: HabitCadence,
+    val description: String? = null,
+    val id: String,
+    val source: String,
+    val status: String,
+    val title: String,
+)
+
+/** 契约 `components.schemas.HabitRoutineDtoApiResponse`（response）。 */
+@Serializable
+data class HabitRoutineDtoApiResponse(
+    val code: Int,
+    val data: HabitRoutineDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.HabitRoutineDtoIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class HabitRoutineDtoIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<HabitRoutineDto>? = null,
     val message: String,
     val timestamp: String,
 )
@@ -1593,6 +1868,191 @@ data class NoteMaterialVersionDtoApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.NoteTaskSuggestionDto`（response）。 */
+@Serializable
+data class NoteTaskSuggestionDto(
+    val artifactId: String,
+    val calendarId: String? = null,
+    val confirmedAt: String? = null,
+    val createdAt: String,
+    val description: String? = null,
+    val dismissedAt: String? = null,
+    val due: String? = null,
+    val extractionId: String,
+    val id: String,
+    val noteId: String,
+    val ordinal: Int,
+    val priority: Int,
+    val revision: String,
+    val sourceContentSha256: String,
+    val sourceGenerationTaskId: String? = null,
+    val sourceInputSha256: String,
+    val sourceManifestSha256: String,
+    val status: NoteTaskSuggestionStatusDto,
+    val taskBookId: String? = null,
+    val taskId: String? = null,
+    val title: String,
+    val updatedAt: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionDtoApiResponse`（response）。 */
+@Serializable
+data class NoteTaskSuggestionDtoApiResponse(
+    val code: Int,
+    val data: NoteTaskSuggestionDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionExtractionDto`（response）。 */
+@Serializable
+data class NoteTaskSuggestionExtractionDto(
+    val aiCallLogId: String? = null,
+    val artifactId: String,
+    val attemptCount: Int,
+    val createdAt: String,
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+    val finishedAt: String? = null,
+    val id: String,
+    val modelEndpoint: String,
+    val modelProfileId: String,
+    val modelRevision: String,
+    val noteId: String,
+    val promptVersion: String,
+    val requestId: String,
+    val revision: String,
+    val sourceContentSha256: String,
+    val sourceGenerationTaskId: String? = null,
+    val sourceInputSha256: String,
+    val sourceManifestSha256: String,
+    val startedAt: String? = null,
+    val status: NoteTaskSuggestionExtractionStatusDto,
+    val suggestionCount: Int,
+    val updatedAt: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionExtractionDtoApiResponse`（response）。 */
+@Serializable
+data class NoteTaskSuggestionExtractionDtoApiResponse(
+    val code: Int,
+    val data: NoteTaskSuggestionExtractionDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionExtractionStatusDto`（response）。 */
+/**
+ * 契约枚举 `NoteTaskSuggestionExtractionStatusDto`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteTaskSuggestionExtractionStatusDto {
+    @SerialName("Queued")
+    QUEUED,
+    @SerialName("Running")
+    RUNNING,
+    @SerialName("Succeeded")
+    SUCCEEDED,
+    @SerialName("Failed")
+    FAILED,
+}
+
+/** 契约 `components.schemas.NoteTaskSuggestionListDto`（response）。 */
+@Serializable
+data class NoteTaskSuggestionListDto(
+    val items: List<NoteTaskSuggestionDto>,
+    val total: Int,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionListDtoApiResponse`（response）。 */
+@Serializable
+data class NoteTaskSuggestionListDtoApiResponse(
+    val code: Int,
+    val data: NoteTaskSuggestionListDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionStatusDto`（response）。 */
+/**
+ * 契约枚举 `NoteTaskSuggestionStatusDto`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteTaskSuggestionStatusDto {
+    @SerialName("Draft")
+    DRAFT,
+    @SerialName("Confirmed")
+    CONFIRMED,
+    @SerialName("Dismissed")
+    DISMISSED,
+}
+
+/** 契约 `components.schemas.OperationConfirmationDto`（response）。 */
+@Serializable
+data class OperationConfirmationDto(
+    val afterJson: String? = null,
+    val aiRecommendation: String? = null,
+    val allowedActions: List<String>? = null,
+    val auditBatchId: String? = null,
+    val beforeJson: String? = null,
+    val changedFields: List<String>? = null,
+    val confirmedAt: String? = null,
+    val correlationId: String? = null,
+    val createdAt: String,
+    val executedAt: String? = null,
+    val expiresAt: String,
+    val externalEffect: String? = null,
+    val id: String,
+    val objectId: String? = null,
+    val objectType: String? = null,
+    val operationType: String,
+    val payloadJson: String,
+    val previewJson: String,
+    val recoveryPath: String? = null,
+    val requestedByUserId: String? = null,
+    val requiresSecondLevelConfirmation: Boolean? = null,
+    val requiresStrictConfirmation: Boolean? = null,
+    val resultJson: String? = null,
+    val riskLevel: OperationRiskLevel,
+    val source: String,
+    val status: OperationConfirmationStatus,
+    val summary: String,
+)
+
+/** 契约 `components.schemas.OperationConfirmationDtoApiResponse`（response）。 */
+@Serializable
+data class OperationConfirmationDtoApiResponse(
+    val code: Int,
+    val data: OperationConfirmationDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.OperationConfirmationDtoIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class OperationConfirmationDtoIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<OperationConfirmationDto>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.OperationConfirmationStatus`（response）。 */
+/**
+ * 契约枚举 `OperationConfirmationStatus`（整数，取值：0, 1, 2, 3, 4）。
+ * 契约没有给出成员名，臆造名字等于编造接口，因此这里保留契约类型名但按 Int 处理。
+ */
+typealias OperationConfirmationStatus = Int
+
+/** 契约 `components.schemas.OperationRiskLevel`（response）。 */
+/**
+ * 契约枚举 `OperationRiskLevel`（整数，取值：0, 1, 2, 10, 11, 12, 13, 14）。
+ * 契约没有给出成员名，臆造名字等于编造接口，因此这里保留契约类型名但按 Int 处理。
+ */
+typealias OperationRiskLevel = Int
+
 /** 契约 `components.schemas.OutlookAdditionalInfoDto`（response）。 */
 @Serializable
 data class OutlookAdditionalInfoDto(
@@ -1674,6 +2134,74 @@ data class OutlookSyncStep(
  */
 typealias PimHealthStatus = Int
 
+/** 契约 `components.schemas.QuickNoteAttachmentDto`（response）。 */
+@Serializable
+data class QuickNoteAttachmentDto(
+    val contentType: String,
+    val createdAt: String,
+    val downloadUrl: String,
+    val fileName: String,
+    val id: String,
+    val previewUrl: String? = null,
+    val sizeBytes: Long,
+)
+
+/** 契约 `components.schemas.QuickNoteDetailDto`（response）。 */
+@Serializable
+data class QuickNoteDetailDto(
+    val archivedAt: String? = null,
+    val attachments: List<QuickNoteAttachmentDto>,
+    val contentMarkdown: String,
+    val createdAt: String,
+    val id: String,
+    val metadataJson: String,
+    val source: String,
+    val status: String,
+    val updatedAt: String,
+)
+
+/** 契约 `components.schemas.QuickNoteDetailDtoApiResponse`（response）。 */
+@Serializable
+data class QuickNoteDetailDtoApiResponse(
+    val code: Int,
+    val data: QuickNoteDetailDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.QuickNoteListItemDto`（response）。 */
+@Serializable
+data class QuickNoteListItemDto(
+    val archivedAt: String? = null,
+    val attachmentCount: Int,
+    val attachments: List<QuickNoteAttachmentDto>? = null,
+    val contentPreview: String,
+    val createdAt: String,
+    val id: String,
+    val source: String,
+    val status: String,
+    val updatedAt: String,
+)
+
+/** 契约 `components.schemas.QuickNoteListItemDtoPagedResult`（response）。 */
+@Serializable
+data class QuickNoteListItemDtoPagedResult(
+    val items: List<QuickNoteListItemDto>,
+    val page: Int,
+    val pageSize: Int,
+    val totalCount: Int,
+    val totalPages: Int,
+)
+
+/** 契约 `components.schemas.QuickNoteListItemDtoPagedResultApiResponse`（response）。 */
+@Serializable
+data class QuickNoteListItemDtoPagedResultApiResponse(
+    val code: Int,
+    val data: QuickNoteListItemDtoPagedResult? = null,
+    val message: String,
+    val timestamp: String,
+)
+
 /** 契约 `components.schemas.RefreshRequest`（request）。 */
 @Serializable
 data class RefreshRequest(
@@ -1687,6 +2215,47 @@ data class RegisterRequest(
     val email: String,
     val password: String,
     val username: String,
+)
+
+/** 契约 `components.schemas.ReminderResponse`（response）。 */
+@Serializable
+data class ReminderResponse(
+    val body: String,
+    val channels: List<String>,
+    val doNotDisturbEnd: String? = null,
+    val doNotDisturbStart: String? = null,
+    val id: String,
+    val relatedObjectId: String,
+    val relatedObjectType: String,
+    val riskLevel: String,
+    val scheduledAt: String,
+    val status: String,
+    val title: String,
+    val triggerReason: String,
+)
+
+/** 契约 `components.schemas.ReminderResponseApiResponse`（response）。 */
+@Serializable
+data class ReminderResponseApiResponse(
+    val code: Int,
+    val data: ReminderResponse? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.ReminderResponseIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class ReminderResponseIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<ReminderResponse>? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.RestoreQuickNoteRequest`（request）。 */
+@Serializable
+data class RestoreQuickNoteRequest(
+    val status: String,
 )
 
 /** 契约 `components.schemas.RetryNoteAsrRequest`（request）。 */
@@ -1709,6 +2278,19 @@ data class RetryNoteDerivedTaskRequest(
     val expectedUserId: String,
     val retryId: String,
     val stepKeys: List<String>,
+)
+
+/** 契约 `components.schemas.SaveAppKnowledgeContextRequest`（request）。 */
+@Serializable
+data class SaveAppKnowledgeContextRequest(
+    val appId: String? = null,
+    val confidence: Double? = null,
+    val enabled: Boolean? = null,
+    val patternType: String,
+    val patternValue: String,
+    val processName: String,
+    val projectTag: String? = null,
+    val targetCategoryName: String? = null,
 )
 
 /** 契约 `components.schemas.SaveNoteDerivedManualRevisionRequest`（request）。 */
@@ -1780,11 +2362,98 @@ data class StartNoteDerivedTaskRequest(
     val versionId: String,
 )
 
+/** 契约 `components.schemas.StartNoteTaskSuggestionExtractionRequest`（request）。 */
+@Serializable
+data class StartNoteTaskSuggestionExtractionRequest(
+    val acknowledgePossibleCharge: Boolean,
+    val artifactId: String,
+    val consent: NoteDerivedGenerationConsent,
+    val expectedContentSha256: String,
+    val expectedUserId: String,
+    val noteId: String,
+    val requestId: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.StatusComponentDto`（response）。 */
+@Serializable
+data class StatusComponentDto(
+    val checkedAt: String,
+    val details: Map<String, String>,
+    val key: String,
+    val kind: StatusComponentKind,
+    val message: String,
+    val name: String,
+    val status: PimHealthStatus,
+)
+
+/** 契约 `components.schemas.StatusComponentKind`（response）。 */
+/**
+ * 契约枚举 `StatusComponentKind`（整数，取值：0, 1, 2, 3, 4, 5, 6, 7）。
+ * 契约没有给出成员名，臆造名字等于编造接口，因此这里保留契约类型名但按 Int 处理。
+ */
+typealias StatusComponentKind = Int
+
 /** 契约 `components.schemas.StringApiResponse`（response）。 */
 @Serializable
 data class StringApiResponse(
     val code: Int,
     val data: String? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.SystemStatusDetailDto`（response）。 */
+@Serializable
+data class SystemStatusDetailDto(
+    val components: List<StatusComponentDto>,
+    val nextSteps: List<String>,
+    val summary: SystemStatusSummaryDto,
+)
+
+/** 契约 `components.schemas.SystemStatusDetailDtoApiResponse`（response）。 */
+@Serializable
+data class SystemStatusDetailDtoApiResponse(
+    val code: Int,
+    val data: SystemStatusDetailDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.SystemStatusSummaryDto`（response）。 */
+@Serializable
+data class SystemStatusSummaryDto(
+    val checkedAt: String,
+    val label: String,
+    val message: String,
+    val status: PimHealthStatus,
+)
+
+/** 契约 `components.schemas.TaskBookDto`（response）。 */
+@Serializable
+data class TaskBookDto(
+    val domainProjectId: String? = null,
+    val id: String,
+    val kind: String,
+    val name: String,
+    val status: String,
+    val taskCount: Int? = null,
+)
+
+/** 契约 `components.schemas.TaskBookDtoApiResponse`（response）。 */
+@Serializable
+data class TaskBookDtoApiResponse(
+    val code: Int,
+    val data: TaskBookDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.TaskBookDtoIReadOnlyListApiResponse`（response）。 */
+@Serializable
+data class TaskBookDtoIReadOnlyListApiResponse(
+    val code: Int,
+    val data: List<TaskBookDto>? = null,
     val message: String,
     val timestamp: String,
 )
@@ -1923,6 +2592,26 @@ data class UpdateEventRequest(
     val timeZoneId: String? = null,
     val title: String,
     val uid: String? = null,
+)
+
+/** 契约 `components.schemas.UpdateNoteTaskSuggestionRequest`（request）。 */
+@Serializable
+data class UpdateNoteTaskSuggestionRequest(
+    val calendarId: String? = null,
+    val description: String? = null,
+    val due: String? = null,
+    val expectedRevision: String,
+    val priority: Int,
+    val taskBookId: String? = null,
+    val title: String,
+)
+
+/** 契约 `components.schemas.UpdateQuickNoteRequest`（request）。 */
+@Serializable
+data class UpdateQuickNoteRequest(
+    val attachmentIds: List<String>? = null,
+    val contentMarkdown: String,
+    val status: String? = null,
 )
 
 /** 契约 `components.schemas.UpdateTaskRequest`（request）。 */

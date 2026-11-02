@@ -231,6 +231,7 @@ class NoteTaskSuggestionRepository(
         chargeAcknowledged: Boolean,
     ) =
         withContext(Dispatchers.IO) {
+            requireActionContext(scope)
             mutex.withLock {
                 val (source, target) = requireActionContext(scope)
                 val verified = factory.create(target).verifySource(source).source
@@ -293,6 +294,7 @@ class NoteTaskSuggestionRepository(
         priority: Int,
         due: String,
     ) = withContext(Dispatchers.IO) {
+        requireActionContext(scope)
         mutex.withLock {
             val (source, target) = requireActionContext(scope)
             val item = requireDraftItem(suggestionId, source)
@@ -337,6 +339,7 @@ class NoteTaskSuggestionRepository(
         scope: NoteTaskSuggestionActionScope,
         suggestionId: String,
     ) = withContext(Dispatchers.IO) {
+        requireActionContext(scope)
         mutex.withLock {
             val (source, target) = requireActionContext(scope)
             val item = requireDraftItem(suggestionId, source)
@@ -381,6 +384,7 @@ class NoteTaskSuggestionRepository(
         scope: NoteTaskSuggestionActionScope,
         suggestionId: String,
     ) = withContext(Dispatchers.IO) {
+        requireActionContext(scope)
         mutex.withLock {
             val (source, target) = requireActionContext(scope)
             val item = requireDraftItem(suggestionId, source)
@@ -404,6 +408,7 @@ class NoteTaskSuggestionRepository(
         scope: NoteTaskSuggestionActionScope,
         suggestionId: String,
     ) = withContext(Dispatchers.IO) {
+        requireActionContext(scope)
         mutex.withLock {
             val (source, target) = requireActionContext(scope)
             val item = requireDraftItem(suggestionId, source)
@@ -447,6 +452,7 @@ class NoteTaskSuggestionRepository(
         scope: NoteTaskSuggestionActionScope,
         suggestionId: String,
     ) = withContext(Dispatchers.IO) {
+        requireActionContext(scope)
         mutex.withLock {
             val (source, target) = requireActionContext(scope)
             val item = requireDraftItem(suggestionId, source)
@@ -460,6 +466,7 @@ class NoteTaskSuggestionRepository(
         scope: NoteTaskSuggestionActionScope,
         suggestionId: String,
     ) = withContext(Dispatchers.IO) {
+        requireActionContext(scope)
         mutex.withLock {
             val (source, target) = requireActionContext(scope)
             val item = requireDraftItem(suggestionId, source)

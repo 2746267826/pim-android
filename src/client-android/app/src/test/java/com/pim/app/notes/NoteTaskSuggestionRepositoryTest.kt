@@ -3,12 +3,15 @@ package com.pim.app.notes
 import com.pim.app.TestPimApp
 import com.pim.core.contract.NoteTaskSuggestionDto
 import com.pim.core.contract.NoteTaskSuggestionStatusDto
+import com.pim.core.contract.UpdateNoteTaskSuggestionRequest
 import com.pim.core.network.BoundUploadSession
+import java.io.IOException
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
+import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
@@ -121,10 +124,12 @@ class NoteTaskSuggestionRepositoryTest {
         entered.await()
         assertEquals(emptyList<NoteTaskSuggestionItem>(), repository.state.value.items)
         assertEquals(null, repository.state.value.actionScope)
-        assertNotNull(runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull())
-        assertNotNull(runCatching {
-            repository.stageDraft(oldScope, SUGGESTION_ID, "blocked stale edit", "", 5, "")
-        }.exceptionOrNull())
+        withTimeout(1_000) {
+            assertNotNull(runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull())
+            assertNotNull(runCatching {
+                repository.stageDraft(oldScope, SUGGESTION_ID, "blocked stale edit", "", 5, "")
+            }.exceptionOrNull())
+        }
         assertEquals(0, transport.confirmCalls)
         assertEquals(0, transport.updateCalls)
         val nextSource = source.copy(
@@ -172,10 +177,12 @@ class NoteTaskSuggestionRepositoryTest {
         entered.await()
         assertEquals(emptyList<NoteTaskSuggestionItem>(), repository.state.value.items)
         assertEquals(null, repository.state.value.actionScope)
-        assertNotNull(runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull())
-        assertNotNull(runCatching {
-            repository.stageDraft(oldScope, SUGGESTION_ID, "blocked stale owner edit", "", 5, "")
-        }.exceptionOrNull())
+        withTimeout(1_000) {
+            assertNotNull(runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull())
+            assertNotNull(runCatching {
+                repository.stageDraft(oldScope, SUGGESTION_ID, "blocked stale owner edit", "", 5, "")
+            }.exceptionOrNull())
+        }
         assertEquals(0, transport.confirmCalls)
         assertEquals(0, transport.updateCalls)
         target = target.copy(
@@ -187,10 +194,12 @@ class NoteTaskSuggestionRepositoryTest {
 
         assertEquals(emptyList<NoteTaskSuggestionItem>(), repository.state.value.items)
         assertEquals(null, repository.state.value.actionScope)
-        assertNotNull(runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull())
-        assertNotNull(runCatching {
-            repository.stageDraft(oldScope, SUGGESTION_ID, "wrong owner", "", 5, "")
-        }.exceptionOrNull())
+        withTimeout(1_000) {
+            assertNotNull(runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull())
+            assertNotNull(runCatching {
+                repository.stageDraft(oldScope, SUGGESTION_ID, "wrong owner", "", 5, "")
+            }.exceptionOrNull())
+        }
         assertEquals(0, transport.confirmCalls)
         assertEquals(0, transport.updateCalls)
     }
@@ -211,6 +220,64 @@ class NoteTaskSuggestionRepositoryTest {
         assertEquals(null, repository.state.value.actionScope)
         assertNotNull(runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull())
         assertEquals(0, transport.confirmCalls)
+    }
+
+    @Test
+    fun lostConfirmReceiptRetriesWithTheSamePersistedRequestId() = runBlocking {
+        val repository = repository()
+        repository.open(source)
+        val scope = requireNotNull(repository.state.value.actionScope)
+        transport.failConfirmOnce = true
+        val store = NoteTaskSuggestionStore.at(temp.root)
+
+        repository.confirm(scope, SUGGESTION_ID)
+        val pending = requireNotNull(repository.state.value.items.single().draft)
+        val firstRequestId = requireNotNull(pending.confirmRequestId)
+        assertEquals(pending.expectedRevision, pending.confirmRevision)
+        assertEquals(firstRequestId, store.draft(source, binding, SUGGESTION_ID)?.confirmRequestId)
+        assertEquals(1, transport.confirmCalls)
+
+        repository.confirm(scope, SUGGESTION_ID)
+
+        assertEquals(2, transport.confirmCalls)
+        assertEquals(listOf(firstRequestId, firstRequestId), transport.confirmRequestIds)
+        assertEquals(null, repository.state.value.items.single().draft)
+    }
+
+    @Test
+    fun failedCasSavePreservesDraftUntilExplicitlyRebasedToVerifiedRevision() = runBlocking {
+        val repository = repository()
+        repository.open(source)
+        val scope = requireNotNull(repository.state.value.actionScope)
+        repository.stageDraft(scope, SUGGESTION_ID, "Edited title", "Edited body", 9, "")
+        transport.failUpdateOnce = true
+
+        repository.saveDraft(scope, SUGGESTION_ID)
+
+        val retained = requireNotNull(repository.state.value.items.single().draft)
+        assertEquals(true, retained.dirty)
+        assertEquals("Edited title", retained.title)
+        assertEquals("revision-1", retained.expectedRevision)
+        assertEquals(1, transport.updateCalls)
+        assertEquals(listOf("revision-1"), transport.expectedRevisions)
+
+        transport.item = transport.item.copy(revision = "revision-2")
+        repository.refresh(source)
+        assertEquals(true, repository.state.value.items.single().hasConflict)
+        assertEquals("revision-1", repository.state.value.items.single().draft?.expectedRevision)
+
+        val conflictScope = requireNotNull(repository.state.value.actionScope)
+        assertNotNull(runCatching { repository.saveDraft(conflictScope, SUGGESTION_ID) }.exceptionOrNull())
+        assertEquals(1, transport.updateCalls)
+        assertEquals(listOf("revision-1"), transport.expectedRevisions)
+        repository.rebaseDraftAfterConflict(conflictScope, SUGGESTION_ID)
+        assertEquals("revision-2", repository.state.value.items.single().draft?.expectedRevision)
+        assertEquals(true, repository.state.value.items.single().draft?.dirty)
+        repository.saveDraft(conflictScope, SUGGESTION_ID)
+
+        assertEquals(listOf("revision-1", "revision-2"), transport.expectedRevisions)
+        assertEquals(null, repository.state.value.items.single().draft)
+        assertEquals("revision-3", repository.state.value.items.single().remote.revision)
     }
 
     private fun repository() = NoteTaskSuggestionRepository(
@@ -245,6 +312,10 @@ class NoteTaskSuggestionRepositoryTest {
         var dismissCalls = 0
         var confirmCalls = 0
         var updateCalls = 0
+        val confirmRequestIds = mutableListOf<String>()
+        val expectedRevisions = mutableListOf<String>()
+        var failConfirmOnce = false
+        var failUpdateOnce = false
         var blockVersionId: String? = null
         var verifyEntered: CompletableDeferred<Unit>? = null
         var verifyRelease: CompletableDeferred<Unit>? = null
@@ -274,10 +345,21 @@ class NoteTaskSuggestionRepositoryTest {
         override suspend fun update(
             source: NoteTaskSuggestionSource,
             id: String,
-            request: com.pim.core.contract.UpdateNoteTaskSuggestionRequest,
+            request: UpdateNoteTaskSuggestionRequest,
         ): NoteTaskSuggestionDto {
             updateCalls++
-            return item.copy(revision = "revision-2")
+            expectedRevisions += request.expectedRevision
+            if (failUpdateOnce) {
+                failUpdateOnce = false
+                throw IOException("simulated lost CAS response")
+            }
+            item = item.copy(
+                description = request.description,
+                priority = request.priority,
+                revision = "revision-3",
+                title = request.title,
+            )
+            return item
         }
 
         override suspend fun dismiss(
@@ -294,7 +376,14 @@ class NoteTaskSuggestionRepositoryTest {
             requestId: String,
         ): NoteTaskSuggestionDto {
             confirmCalls++
-            return item.copy(status = NoteTaskSuggestionStatusDto.CONFIRMED, taskId = TASK_ID)
+            confirmRequestIds += requestId
+            if (failConfirmOnce) {
+                failConfirmOnce = false
+                item = item.copy(status = NoteTaskSuggestionStatusDto.CONFIRMED, taskId = TASK_ID)
+                throw IOException("simulated lost confirmation receipt")
+            }
+            item = item.copy(status = NoteTaskSuggestionStatusDto.CONFIRMED, taskId = TASK_ID)
+            return item
         }
     }
 

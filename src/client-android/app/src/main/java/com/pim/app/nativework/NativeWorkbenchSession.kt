@@ -61,11 +61,17 @@ internal class NativeWorkbenchSessionGuard(
         transport.currentSession() ?: throw UploadSessionChangedException()
 
     @Synchronized
+    fun loadedSessionOrNull(): NativeWorkbenchSession? = loadedSession
+
+    @Synchronized
     fun requireLoadedSession(): NativeWorkbenchSession {
         val loaded = loadedSession ?: throw UploadSessionChangedException()
         if (!transport.isCurrent(loaded)) throw UploadSessionChangedException()
         return loaded
     }
+
+    @Synchronized
+    fun isLoadedSession(session: NativeWorkbenchSession): Boolean = loadedSession == session
 
     @Synchronized
     fun canApply(session: NativeWorkbenchSession): Boolean =

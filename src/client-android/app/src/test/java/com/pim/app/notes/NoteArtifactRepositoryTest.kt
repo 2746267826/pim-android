@@ -978,8 +978,8 @@ class NoteArtifactRepositoryTest {
             ownerName = "bob",
             nowMillis = 3_000,
         )
-        tasks.recordRemote(taskA.taskId, NoteArtifactRemoteTaskView("a-rev", "Succeeded"), nowMillis = 2_000)
-        tasks.recordRemote(taskB.taskId, NoteArtifactRemoteTaskView("b-rev", "Succeeded"), nowMillis = 3_100)
+        tasks.recordRemote(taskA.taskId, NoteArtifactRemoteTaskView("a-rev", "Succeeded", observedAtMillis = 2_000), nowMillis = 2_000)
+        tasks.recordRemote(taskB.taskId, NoteArtifactRemoteTaskView("b-rev", "Succeeded", observedAtMillis = 3_100), nowMillis = 3_100)
         transport.details[taskA.taskId] = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-a"))
         transport.details[taskB.taskId] = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-b"))
 
@@ -1021,7 +1021,7 @@ class NoteArtifactRepositoryTest {
 
     @Test fun staleRefreshCannotClearStateAfterNewGenerationWinsDuringAbandon() = runBlocking {
         val taskA = seedTask()
-        tasks.recordRemote(taskA.taskId, NoteArtifactRemoteTaskView("a-rev", "Succeeded"), nowMillis = 2_000)
+        tasks.recordRemote(taskA.taskId, NoteArtifactRemoteTaskView("a-rev", "Succeeded", observedAtMillis = 2_000), nowMillis = 2_000)
         transport.details[taskA.taskId] = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-a"))
         val currentMaterial = "55555555-5555-4555-8555-555555555555"
         val taskB = tasks.createIntent(
@@ -1035,7 +1035,7 @@ class NoteArtifactRepositoryTest {
             ownerName = "bob",
             nowMillis = 3_000,
         )
-        tasks.recordRemote(taskB.taskId, NoteArtifactRemoteTaskView("b-rev", "Succeeded"), nowMillis = 3_100)
+        tasks.recordRemote(taskB.taskId, NoteArtifactRemoteTaskView("b-rev", "Succeeded", observedAtMillis = 3_100), nowMillis = 3_100)
         transport.details[taskB.taskId] = detail(partialRef(NoteArtifactKind.FullRecord, "artifact-full", "head-b"))
         val armed = java.util.concurrent.atomic.AtomicBoolean(false)
         val providerReads = java.util.concurrent.atomic.AtomicInteger(0)

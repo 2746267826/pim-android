@@ -15,6 +15,7 @@ import com.pim.core.contract.QuickNoteListItemDto
 import com.pim.core.contract.SystemStatusDetailDto
 import com.pim.core.contract.TaskBookDto
 import com.pim.core.contract.TaskResponse
+import com.pim.core.network.UploadSessionChangedException
 import com.pim.app.nativework.quicknotes.LegacyQuickNoteRepository
 import dagger.hilt.android.lifecycle.HiltViewModel
 import java.time.LocalDate
@@ -101,6 +102,21 @@ class NativeWorkbenchViewModel @Inject constructor(
             section = section,
             error = null,
             feedback = null,
+            tasks = if (section == NativeWorkbenchSection.Today ||
+                section == NativeWorkbenchSection.Tasks
+            ) emptyList() else _state.value.tasks,
+            taskTotal = if (section == NativeWorkbenchSection.Today ||
+                section == NativeWorkbenchSection.Tasks
+            ) 0 else _state.value.taskTotal,
+            events = if (section == NativeWorkbenchSection.Today ||
+                section == NativeWorkbenchSection.Calendar
+            ) emptyList() else _state.value.events,
+            eventTotal = if (section == NativeWorkbenchSection.Today ||
+                section == NativeWorkbenchSection.Calendar
+            ) 0 else _state.value.eventTotal,
+            calendars = if (section == NativeWorkbenchSection.Today ||
+                section == NativeWorkbenchSection.Calendar
+            ) emptyList() else _state.value.calendars,
             selectedApp = null,
             appContexts = emptyList(),
             quickNoteDetail = null,
@@ -110,6 +126,20 @@ class NativeWorkbenchViewModel @Inject constructor(
         )
         refresh()
     }
+
+    fun enterToday() {
+        if (_state.value.section != NativeWorkbenchSection.Today) {
+            selectSection(NativeWorkbenchSection.Today)
+        } else if (!_state.value.loading) {
+            refresh()
+        }
+    }
+
+    fun currentEditorSession(): NativeWorkbenchSession? =
+        runCatching { sessionGuard.requireLoadedSession() }.getOrNull()
+
+    fun isCurrentEditorSession(session: NativeWorkbenchSession): Boolean =
+        sessionGuard.isLoadedSession(session) && sessionGuard.canApply(session)
 
     fun setSearch(value: String) {
         if (_state.value.search == value) return
@@ -131,6 +161,7 @@ class NativeWorkbenchViewModel @Inject constructor(
 
     fun refresh() {
         refreshJob?.cancel()
+        val previouslyLoaded = sessionGuard.loadedSessionOrNull()
         val binding = try {
             bind(sessionGuard.beginLoad())
         } catch (e: Exception) {
@@ -138,6 +169,9 @@ class NativeWorkbenchViewModel @Inject constructor(
             clearStaleSession()
             _state.value = _state.value.copy(error = e.workbenchMessage())
             return
+        }
+        if (previouslyLoaded != null && previouslyLoaded != binding.session) {
+            clearAccountScopedData()
         }
         _state.value = _state.value.copy(loading = true, error = null)
         refreshJob = viewModelScope.launch {
@@ -272,7 +306,8 @@ class NativeWorkbenchViewModel @Inject constructor(
 
     fun refreshQuickNotes() = refresh()
 
-    fun createTask(draft: NativeTaskDraft) = mutate("新建任务") { binding ->
+    fun createTask(draft: NativeTaskDraft, editorSession: NativeWorkbenchSession) =
+        mutate("新建任务", editorSession) { binding ->
         binding.repository.createTask(draft)
         refreshCurrent(binding, showLoading = false)
         "任务已创建"
@@ -287,7 +322,11 @@ class NativeWorkbenchViewModel @Inject constructor(
         "任务本已创建"
     }
 
-    fun updateTask(task: TaskResponse, draft: NativeTaskDraft) = mutate("修改任务") { binding ->
+    fun updateTask(
+        task: TaskResponse,
+        draft: NativeTaskDraft,
+        editorSession: NativeWorkbenchSession,
+    ) = mutate("修改任务", editorSession) { binding ->
         binding.repository.updateTask(task, draft)
         refreshCurrent(binding, showLoading = false)
         "任务已保存"
@@ -322,7 +361,8 @@ class NativeWorkbenchViewModel @Inject constructor(
         "任务计时已结束"
     }
 
-    fun createEvent(draft: NativeEventDraft) = mutate("新建日程") { binding ->
+    fun createEvent(draft: NativeEventDraft, editorSession: NativeWorkbenchSession) =
+        mutate("新建日程", editorSession) { binding ->
         binding.repository.createEvent(draft)
         refreshCurrent(binding, showLoading = false)
         "日程已创建"
@@ -335,7 +375,11 @@ class NativeWorkbenchViewModel @Inject constructor(
         "日历已创建"
     }
 
-    fun updateEvent(event: EventResponse, draft: NativeEventDraft) = mutate("修改日程") { binding ->
+    fun updateEvent(
+        event: EventResponse,
+        draft: NativeEventDraft,
+        editorSession: NativeWorkbenchSession,
+    ) = mutate("修改日程", editorSession) { binding ->
         binding.repository.updateEvent(event, draft)
         refreshCurrent(binding, showLoading = false)
         "日程已保存"
@@ -834,9 +878,17 @@ class NativeWorkbenchViewModel @Inject constructor(
         }
     }
 
-    private fun mutate(action: String, block: suspend (BoundWorkbench) -> String?) {
+    private fun mutate(
+        action: String,
+        editorSession: NativeWorkbenchSession? = null,
+        block: suspend (BoundWorkbench) -> String?,
+    ) {
         if (_state.value.busyAction != null) return
-        val binding = requireLoadedBindingOrShowError() ?: return
+        val binding = if (editorSession == null) {
+            requireLoadedBindingOrShowError()
+        } else {
+            requireEditorBindingOrShowError(editorSession)
+        } ?: return
         _state.value = _state.value.copy(busyAction = action, error = null, feedback = null)
         viewModelScope.launch {
             try {
@@ -879,6 +931,21 @@ class NativeWorkbenchViewModel @Inject constructor(
         null
     }
 
+    private fun requireEditorBindingOrShowError(
+        editorSession: NativeWorkbenchSession,
+    ): BoundWorkbench? = try {
+        if (!sessionGuard.isLoadedSession(editorSession) || !sessionGuard.canApply(editorSession)) {
+            throw UploadSessionChangedException()
+        }
+        bind(editorSession)
+    } catch (e: Exception) {
+        if (e is CancellationException) throw e
+        _state.value = _state.value.copy(
+            error = "编辑期间账号或服务器已切换；旧草稿已保留且不能提交，请关闭后重新打开。"
+        )
+        null
+    }
+
     private fun updateIfCurrent(
         binding: BoundWorkbench,
         transform: (NativeWorkbenchUiState) -> NativeWorkbenchUiState,
@@ -889,11 +956,15 @@ class NativeWorkbenchViewModel @Inject constructor(
     }
 
     private fun clearStaleSession() {
+        clearAccountScopedData(error = "账号或服务器已切换，旧页面数据已清除，请重新加载。")
+    }
+
+    private fun clearAccountScopedData(error: String? = null) {
         _state.value = NativeWorkbenchUiState(
             section = _state.value.section,
             search = _state.value.search,
             deviceSort = _state.value.deviceSort,
-            error = "账号或服务器已切换，旧页面数据已清除，请重新加载。",
+            error = error,
         )
     }
 }

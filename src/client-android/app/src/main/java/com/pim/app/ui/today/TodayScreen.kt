@@ -22,6 +22,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
@@ -55,6 +56,10 @@ fun TodayScreen(
     val refreshVersion by viewModel.refreshVersion.collectAsStateWithLifecycle()
     val workbenchViewModel: NativeWorkbenchViewModel = hiltViewModel()
     var showLegacyToday by rememberSaveable { mutableStateOf(false) }
+
+    LaunchedEffect(workbenchViewModel) {
+        workbenchViewModel.enterToday()
+    }
 
     Column(modifier = modifier.fillMaxSize()) {
         TodayStatusBar(

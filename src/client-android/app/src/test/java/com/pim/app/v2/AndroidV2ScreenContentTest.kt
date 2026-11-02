@@ -38,6 +38,7 @@ class AndroidV2ScreenContentTest {
         val today = readSource("ui", "today", "TodayScreen.kt")
         assertTrue("Today sync and collection status must remain visible", today.contains("TodayStatusBar("))
         assertTrue("Native Today business body must be the default", today.contains("NativeWorkbenchTodaySection("))
+        assertTrue("Today must restore the shared workbench section", today.contains("workbenchViewModel.enterToday()"))
         assertTrue("Legacy Today must require an explicit user toggle", today.contains("if (showLegacyToday)"))
         assertTrue("Legacy Today entry must be clearly labeled", today.contains("打开旧版完整今日"))
         assertTrue("Legacy Today must retain its existing embed route", today.contains("/embed/android/today"))
@@ -45,10 +46,13 @@ class AndroidV2ScreenContentTest {
         val workbench = readSource("nativework", "NativeWorkbenchScreen.kt")
         assertTrue("Today body should have a stable test tag", workbench.contains("today-native-business-content"))
         assertTrue("Today and workbench must share the native content body", workbench.contains("TodayNativeContent("))
-        assertTrue("Today must expose native task creation", workbench.contains("onNewTask = { taskEditor = TaskEditorTarget() }"))
+        assertTrue("Today must capture the owner/session when opening a task editor",
+            workbench.contains("TaskEditorTarget(session = viewModel.currentEditorSession())"))
         assertTrue("Today must expose native task completion", workbench.contains("onToggleTask = viewModel::toggleTaskCompleted"))
-        assertTrue("Today must expose native event creation", workbench.contains("onNewEvent = { eventEditor = EventEditorTarget() }"))
+        assertTrue("Today must capture the owner/session when opening an event editor",
+            workbench.contains("EventEditorTarget(session = viewModel.currentEditorSession())"))
         assertTrue("Missing writable calendars must lead to native calendar setup", workbench.contains("前往创建日历"))
+        assertTrue("Workbench Today must show its own operation status", workbench.contains("showOperationStatus = true"))
     }
 
     @Test

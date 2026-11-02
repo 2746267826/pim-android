@@ -75,8 +75,14 @@ import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import java.util.Locale
 
-private data class TaskEditorTarget(val task: TaskResponse? = null)
-private data class EventEditorTarget(val event: EventResponse? = null)
+private data class TaskEditorTarget(
+    val session: NativeWorkbenchSession?,
+    val task: TaskResponse? = null,
+)
+private data class EventEditorTarget(
+    val session: NativeWorkbenchSession?,
+    val event: EventResponse? = null,
+)
 private data class DeviceRenameTarget(val device: DeviceListDto)
 private data class CategoryEditorTarget(
     val category: CategoryTreeNode? = null,
@@ -158,21 +164,29 @@ fun NativeWorkbenchScreen(
             NativeWorkbenchSection.Today -> NativeWorkbenchTodaySection(
                 modifier = Modifier.weight(1f),
                 viewModel = viewModel,
-                showOperationStatus = false,
+                showOperationStatus = true,
             )
             NativeWorkbenchSection.Tasks -> TasksNativeContent(
                 state = state,
                 viewModel = viewModel,
-                onNewTask = { taskEditor = TaskEditorTarget() },
+                onNewTask = {
+                    taskEditor = TaskEditorTarget(session = viewModel.currentEditorSession())
+                },
                 onNewTaskBook = { showTaskBookCreate = true },
-                onEditTask = { taskEditor = TaskEditorTarget(it) },
+                onEditTask = {
+                    taskEditor = TaskEditorTarget(session = viewModel.currentEditorSession(), task = it)
+                },
                 onDeleteTask = { taskToDelete = it },
             )
             NativeWorkbenchSection.Calendar -> CalendarNativeContent(
                 state = state,
-                onNewEvent = { eventEditor = EventEditorTarget() },
+                onNewEvent = {
+                    eventEditor = EventEditorTarget(session = viewModel.currentEditorSession())
+                },
                 onCreateCalendar = { showCalendarCreate = true },
-                onEditEvent = { eventEditor = EventEditorTarget(it) },
+                onEditEvent = {
+                    eventEditor = EventEditorTarget(session = viewModel.currentEditorSession(), event = it)
+                },
                 onDeleteEvent = { eventToDelete = it },
             )
             NativeWorkbenchSection.Reminders -> RemindersNativeContent(
@@ -223,15 +237,19 @@ fun NativeWorkbenchScreen(
 
     taskEditor?.let { target ->
         TaskEditorDialog(
+            editorSession = target.session,
             task = target.task,
             taskBooks = state.taskBooks,
+            editorSessionCurrent = target.session?.let(viewModel::isCurrentEditorSession) == true,
             isSaving = state.busyAction != null,
             operationError = if (taskSavePending) state.error else null,
             onDismiss = { taskEditor = null; taskSavePending = false },
             onSave = { draft ->
                 taskSavePending = true
-                if (target.task == null) viewModel.createTask(draft)
-                else viewModel.updateTask(target.task, draft)
+                target.session?.let { session ->
+                    if (target.task == null) viewModel.createTask(draft, session)
+                    else viewModel.updateTask(target.task, draft, session)
+                }
             }
         )
     }
@@ -260,15 +278,19 @@ fun NativeWorkbenchScreen(
     }
     eventEditor?.let { target ->
         EventEditorDialog(
+            editorSession = target.session,
             calendars = state.calendars,
             event = target.event,
+            editorSessionCurrent = target.session?.let(viewModel::isCurrentEditorSession) == true,
             isSaving = state.busyAction != null,
             operationError = if (eventSavePending) state.error else null,
             onDismiss = { eventEditor = null; eventSavePending = false },
             onSave = { draft ->
                 eventSavePending = true
-                if (target.event == null) viewModel.createEvent(draft)
-                else viewModel.updateEvent(target.event, draft)
+                target.session?.let { session ->
+                    if (target.event == null) viewModel.createEvent(draft, session)
+                    else viewModel.updateEvent(target.event, draft, session)
+                }
             }
         )
     }
@@ -515,10 +537,16 @@ internal fun NativeWorkbenchTodaySection(
         TodayNativeContent(
             state = state,
             modifier = Modifier.weight(1f).testTag("today-native-business-content"),
-            onNewTask = { taskEditor = TaskEditorTarget() },
-            onEditTask = { taskEditor = TaskEditorTarget(it) },
+            onNewTask = {
+                taskEditor = TaskEditorTarget(session = viewModel.currentEditorSession())
+            },
+            onEditTask = {
+                taskEditor = TaskEditorTarget(session = viewModel.currentEditorSession(), task = it)
+            },
             onToggleTask = viewModel::toggleTaskCompleted,
-            onNewEvent = { eventEditor = EventEditorTarget() },
+            onNewEvent = {
+                eventEditor = EventEditorTarget(session = viewModel.currentEditorSession())
+            },
             onOpenSection = { section ->
                 viewModel.selectSection(section)
                 onOpenSection(section)
@@ -528,29 +556,37 @@ internal fun NativeWorkbenchTodaySection(
 
     taskEditor?.let { target ->
         TaskEditorDialog(
+            editorSession = target.session,
             task = target.task,
             taskBooks = state.taskBooks,
+            editorSessionCurrent = target.session?.let(viewModel::isCurrentEditorSession) == true,
             isSaving = state.busyAction != null,
             operationError = if (taskSavePending) state.error else null,
             onDismiss = { taskEditor = null; taskSavePending = false },
             onSave = { draft ->
                 taskSavePending = true
-                if (target.task == null) viewModel.createTask(draft)
-                else viewModel.updateTask(target.task, draft)
+                target.session?.let { session ->
+                    if (target.task == null) viewModel.createTask(draft, session)
+                    else viewModel.updateTask(target.task, draft, session)
+                }
             }
         )
     }
     eventEditor?.let { target ->
         EventEditorDialog(
+            editorSession = target.session,
             calendars = state.calendars,
             event = target.event,
+            editorSessionCurrent = target.session?.let(viewModel::isCurrentEditorSession) == true,
             isSaving = state.busyAction != null,
             operationError = if (eventSavePending) state.error else null,
             onDismiss = { eventEditor = null; eventSavePending = false },
             onSave = { draft ->
                 eventSavePending = true
-                if (target.event == null) viewModel.createEvent(draft)
-                else viewModel.updateEvent(target.event, draft)
+                target.session?.let { session ->
+                    if (target.event == null) viewModel.createEvent(draft, session)
+                    else viewModel.updateEvent(target.event, draft, session)
+                }
             }
         )
     }
@@ -1473,21 +1509,23 @@ private fun EmptyCard(text: String) {
 
 @Composable
 private fun TaskEditorDialog(
+    editorSession: NativeWorkbenchSession?,
     task: TaskResponse?,
     taskBooks: List<TaskBookDto>,
+    editorSessionCurrent: Boolean,
     isSaving: Boolean = false,
     operationError: String? = null,
     onDismiss: () -> Unit,
     onSave: (NativeTaskDraft) -> Unit,
 ) {
-    var title by remember(task?.id) { mutableStateOf(task?.title.orEmpty()) }
-    var description by remember(task?.id) { mutableStateOf(task?.description.orEmpty()) }
-    var priority by remember(task?.id) { mutableStateOf((task?.priority ?: 3).toString()) }
-    var due by remember(task?.id) { mutableStateOf(toDateTimeInput(task?.due)) }
-    var start by remember(task?.id) { mutableStateOf(toDateTimeInput(task?.dtStart)) }
-    var taskBookId by remember(task?.id) { mutableStateOf(task?.taskBookId) }
-    var validation by remember(task?.id) { mutableStateOf<String?>(null) }
-    var confirmDiscard by remember(task?.id) { mutableStateOf(false) }
+    var title by remember(editorSession, task?.id) { mutableStateOf(task?.title.orEmpty()) }
+    var description by remember(editorSession, task?.id) { mutableStateOf(task?.description.orEmpty()) }
+    var priority by remember(editorSession, task?.id) { mutableStateOf((task?.priority ?: 3).toString()) }
+    var due by remember(editorSession, task?.id) { mutableStateOf(toDateTimeInput(task?.due)) }
+    var start by remember(editorSession, task?.id) { mutableStateOf(toDateTimeInput(task?.dtStart)) }
+    var taskBookId by remember(editorSession, task?.id) { mutableStateOf(task?.taskBookId) }
+    var validation by remember(editorSession, task?.id) { mutableStateOf<String?>(null) }
+    var confirmDiscard by remember(editorSession, task?.id) { mutableStateOf(false) }
     val dirty = taskEditorHasChanges(task, title, description, priority, due, start, taskBookId)
     val requestDismiss = {
         if (!isSaving) {
@@ -1502,32 +1540,32 @@ private fun TaskEditorDialog(
                 Modifier.verticalScroll(rememberScrollState()),
                 verticalArrangement = Arrangement.spacedBy(8.dp)
             ) {
-                OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, enabled = !isSaving)
+                OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, enabled = !isSaving && editorSessionCurrent)
                 OutlinedTextField(
                     description,
                     { description = it },
                     label = { Text("描述") },
                     minLines = 2,
                     maxLines = 5,
-                    enabled = !isSaving,
+                    enabled = !isSaving && editorSessionCurrent,
                 )
                 OutlinedTextField(
                     priority,
                     { priority = it.filter(Char::isDigit).take(2) },
                     label = { Text("优先级（1-5）") },
                     singleLine = true,
-                    enabled = !isSaving,
+                    enabled = !isSaving && editorSessionCurrent,
                 )
-                DateTimeField("截止时间（可空，YYYY-MM-DDTHH:MM）", due, enabled = !isSaving) { due = it }
-                DateTimeField("开始时间（可空）", start, enabled = !isSaving) { start = it }
+                DateTimeField("截止时间（可空，YYYY-MM-DDTHH:MM）", due, enabled = !isSaving && editorSessionCurrent) { due = it }
+                DateTimeField("开始时间（可空）", start, enabled = !isSaving && editorSessionCurrent) { start = it }
                 if (taskBooks.isNotEmpty()) {
                     Text("任务本", style = MaterialTheme.typography.bodySmall)
                     LazyRow(horizontalArrangement = Arrangement.spacedBy(6.dp)) {
                         items(taskBooks, key = { it.id }) { book ->
                             FilterChip(
                                 selected = taskBookId == book.id,
-                                onClick = { if (!isSaving) taskBookId = book.id },
-                                enabled = !isSaving,
+                                onClick = { if (!isSaving && editorSessionCurrent) taskBookId = book.id },
+                                enabled = !isSaving && editorSessionCurrent,
                                 label = { Text(book.name) }
                             )
                         }
@@ -1535,10 +1573,16 @@ private fun TaskEditorDialog(
                 }
                 validation?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 operationError?.let { Text("保存失败：$it", color = MaterialTheme.colorScheme.error) }
+                if (!editorSessionCurrent) {
+                    Text(
+                        "账号或服务器已切换。旧草稿仍保留，但已禁止提交；关闭后可在当前账号重新打开。",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         },
         confirmButton = {
-            TextButton(enabled = !isSaving, onClick = {
+            TextButton(enabled = !isSaving && editorSessionCurrent, onClick = {
                 val parsedPriority = priority.toIntOrNull()
                 val parsedDue = normalizeDateTimeInput(due)
                 val parsedStart = normalizeDateTimeInput(start)
@@ -1595,36 +1639,38 @@ internal fun taskEditorHasChanges(
 
 @Composable
 private fun EventEditorDialog(
+    editorSession: NativeWorkbenchSession?,
     calendars: List<com.pim.core.contract.CalendarResponse>,
     event: EventResponse?,
+    editorSessionCurrent: Boolean,
     isSaving: Boolean = false,
     operationError: String? = null,
     onDismiss: () -> Unit,
     onSave: (NativeEventDraft) -> Unit,
 ) {
-    val defaultStart = remember {
+    val defaultStart = remember(editorSession, event?.id) {
         LocalDateTime.now().withMinute(0).withSecond(0).withNano(0)
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
     }
-    val initialCalendarId = remember(event?.id, calendars.firstOrNull()?.id) {
+    val initialCalendarId = remember(editorSession, event?.id, calendars.firstOrNull()?.id) {
         event?.calendarId ?: calendars.firstOrNull()?.id.orEmpty()
     }
-    var calendarId by remember(event?.id, calendars.firstOrNull()?.id) {
+    var calendarId by remember(editorSession, event?.id, calendars.firstOrNull()?.id) {
         mutableStateOf(initialCalendarId)
     }
-    var title by remember(event?.id) { mutableStateOf(event?.title.orEmpty()) }
-    var description by remember(event?.id) { mutableStateOf(event?.description.orEmpty()) }
-    val defaultEnd = remember {
+    var title by remember(editorSession, event?.id) { mutableStateOf(event?.title.orEmpty()) }
+    var description by remember(editorSession, event?.id) { mutableStateOf(event?.description.orEmpty()) }
+    val defaultEnd = remember(editorSession, event?.id) {
         LocalDateTime.now().plusHours(1).withMinute(0).withSecond(0).withNano(0)
             .format(DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))
     }
-    val initialStart = remember(event?.id) { toDateTimeInput(event?.dtStart) ?: defaultStart }
-    val initialEnd = remember(event?.id) { toDateTimeInput(event?.dtEnd) ?: defaultEnd }
-    var start by remember(event?.id) { mutableStateOf(initialStart) }
-    var end by remember(event?.id) { mutableStateOf(initialEnd) }
-    var location by remember(event?.id) { mutableStateOf(event?.location.orEmpty()) }
-    var validation by remember(event?.id) { mutableStateOf<String?>(null) }
-    var confirmDiscard by remember(event?.id) { mutableStateOf(false) }
+    val initialStart = remember(editorSession, event?.id) { toDateTimeInput(event?.dtStart) ?: defaultStart }
+    val initialEnd = remember(editorSession, event?.id) { toDateTimeInput(event?.dtEnd) ?: defaultEnd }
+    var start by remember(editorSession, event?.id) { mutableStateOf(initialStart) }
+    var end by remember(editorSession, event?.id) { mutableStateOf(initialEnd) }
+    var location by remember(editorSession, event?.id) { mutableStateOf(event?.location.orEmpty()) }
+    var validation by remember(editorSession, event?.id) { mutableStateOf<String?>(null) }
+    var confirmDiscard by remember(editorSession, event?.id) { mutableStateOf(false) }
     val dirty = eventEditorHasChanges(
         event, calendarId, title, description, start, end, location,
         initialCalendarId, initialStart, initialEnd,
@@ -1651,31 +1697,37 @@ private fun EventEditorDialog(
                         items(calendars, key = { it.id }) { calendar ->
                             FilterChip(
                                 selected = calendar.id == calendarId,
-                                onClick = { if (!isSaving) calendarId = calendar.id },
-                                enabled = !isSaving,
+                                onClick = { if (!isSaving && editorSessionCurrent) calendarId = calendar.id },
+                                enabled = !isSaving && editorSessionCurrent,
                                 label = { Text(calendar.name) }
                             )
                         }
                     }
                 }
-                OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, enabled = !isSaving)
+                OutlinedTextField(title, { title = it }, label = { Text("标题") }, singleLine = true, enabled = !isSaving && editorSessionCurrent)
                 OutlinedTextField(
                     description,
                     { description = it },
                     label = { Text("描述") },
                     minLines = 2,
                     maxLines = 5,
-                    enabled = !isSaving,
+                    enabled = !isSaving && editorSessionCurrent,
                 )
-                DateTimeField("开始（YYYY-MM-DDTHH:MM）", start, enabled = !isSaving) { start = it }
-                DateTimeField("结束（YYYY-MM-DDTHH:MM）", end, enabled = !isSaving) { end = it }
-                OutlinedTextField(location, { location = it }, label = { Text("地点") }, singleLine = true, enabled = !isSaving)
+                DateTimeField("开始（YYYY-MM-DDTHH:MM）", start, enabled = !isSaving && editorSessionCurrent) { start = it }
+                DateTimeField("结束（YYYY-MM-DDTHH:MM）", end, enabled = !isSaving && editorSessionCurrent) { end = it }
+                OutlinedTextField(location, { location = it }, label = { Text("地点") }, singleLine = true, enabled = !isSaving && editorSessionCurrent)
                 validation?.let { Text(it, color = MaterialTheme.colorScheme.error) }
                 operationError?.let { Text("保存失败：$it", color = MaterialTheme.colorScheme.error) }
+                if (!editorSessionCurrent) {
+                    Text(
+                        "账号或服务器已切换。旧草稿仍保留，但已禁止提交；关闭后可在当前账号重新打开。",
+                        color = MaterialTheme.colorScheme.error,
+                    )
+                }
             }
         },
         confirmButton = {
-            TextButton(enabled = !isSaving, onClick = {
+            TextButton(enabled = !isSaving && editorSessionCurrent, onClick = {
                 val startIso = normalizeDateTimeInput(start)
                 val endIso = normalizeDateTimeInput(end)
                 validation = when {

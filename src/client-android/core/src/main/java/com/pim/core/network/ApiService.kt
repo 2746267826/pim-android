@@ -17,6 +17,13 @@ import com.pim.core.contract.NoteDerivedStepsDtoApiResponse
 import com.pim.core.contract.NoteDerivedTaskDtoApiResponse
 import com.pim.core.contract.NoteDerivedTaskDtoIReadOnlyListApiResponse
 import com.pim.core.contract.NoteDerivedVersionDtoApiResponse
+import com.pim.core.contract.NoteTaskSuggestionDtoApiResponse
+import com.pim.core.contract.NoteTaskSuggestionExtractionDtoApiResponse
+import com.pim.core.contract.NoteTaskSuggestionListDtoApiResponse
+import com.pim.core.contract.ConfirmNoteTaskSuggestionRequest
+import com.pim.core.contract.DismissNoteTaskSuggestionRequest
+import com.pim.core.contract.StartNoteTaskSuggestionExtractionRequest
+import com.pim.core.contract.UpdateNoteTaskSuggestionRequest
 import com.pim.core.contract.OperationConfirmationDtoApiResponse
 import com.pim.core.contract.OperationConfirmationDtoIReadOnlyListApiResponse
 import com.pim.core.contract.RetryNoteAsrRequest
@@ -233,6 +240,39 @@ interface ApiService {
         @Path("artifactId") artifactId: String,
         @Body request: SelectNoteDerivedVersionRequest
     ): NoteDerivedArtifactDtoApiResponse
+
+    // Fixed-source task suggestions. These calls use the same bound native-note session.
+    @GET("native-notes/task-suggestions")
+    suspend fun listNoteTaskSuggestions(@Query("noteId") noteId: String): NoteTaskSuggestionListDtoApiResponse
+
+    @POST("native-notes/task-suggestions/extractions")
+    suspend fun startNoteTaskSuggestionExtraction(
+        @Body request: StartNoteTaskSuggestionExtractionRequest
+    ): NoteTaskSuggestionExtractionDtoApiResponse
+
+    @GET("native-notes/task-suggestions/extractions/{id}")
+    suspend fun getNoteTaskSuggestionExtraction(@Path("id") id: String): NoteTaskSuggestionExtractionDtoApiResponse
+
+    @GET("native-notes/task-suggestions/{id}")
+    suspend fun getNoteTaskSuggestion(@Path("id") id: String): NoteTaskSuggestionDtoApiResponse
+
+    @PUT("native-notes/task-suggestions/{id}")
+    suspend fun updateNoteTaskSuggestion(
+        @Path("id") id: String,
+        @Body request: UpdateNoteTaskSuggestionRequest
+    ): NoteTaskSuggestionDtoApiResponse
+
+    @POST("native-notes/task-suggestions/{id}/confirm")
+    suspend fun confirmNoteTaskSuggestion(
+        @Path("id") id: String,
+        @Body request: ConfirmNoteTaskSuggestionRequest
+    ): NoteTaskSuggestionDtoApiResponse
+
+    @POST("native-notes/task-suggestions/{id}/dismiss")
+    suspend fun dismissNoteTaskSuggestion(
+        @Path("id") id: String,
+        @Body request: DismissNoteTaskSuggestionRequest
+    ): NoteTaskSuggestionDtoApiResponse
 
     @GET("operations/confirmations/pending")
     suspend fun getPendingOperationConfirmations(): OperationConfirmationDtoIReadOnlyListApiResponse

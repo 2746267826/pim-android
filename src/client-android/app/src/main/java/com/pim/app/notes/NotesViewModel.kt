@@ -27,6 +27,7 @@ class NotesViewModel @Inject constructor(
     val uploads: NoteUploadRepository,
     val asr: NoteAsrRepository,
     val artifacts: NoteArtifactRepository,
+    val taskSuggestions: NoteTaskSuggestionRepository,
 ) : ViewModel() {
     val selectedId = saved.getStateFlow<String?>("noteId", null)
     private val mutableMessage = MutableStateFlow<String?>(null)
@@ -50,6 +51,8 @@ class NotesViewModel @Inject constructor(
     private val mutableArtifactContentViews =
         MutableStateFlow<Map<NoteArtifactKind, NoteArtifactContentView>>(emptyMap())
     val artifactContentViews = mutableArtifactContentViews.asStateFlow()
+    private val mutableTaskSuggestionsSource = MutableStateFlow<NoteTaskSuggestionSource?>(null)
+    val taskSuggestionsSource = mutableTaskSuggestionsSource.asStateFlow()
 
     init {
         viewModelScope.launch {
@@ -115,6 +118,7 @@ class NotesViewModel @Inject constructor(
     fun replayAsrRetry(id: String) { viewModelScope.launch { asr.replayRetry(id, true) } }
 
     fun openArtifacts(versionId: String, noteId: String, asrTaskId: String?, title: String) {
+        closeTaskSuggestions()
         mutableArtifactEntry.value = NoteArtifactEntry(noteId, versionId, asrTaskId, title)
         mutableArtifactPendingSelections.value = emptyMap()
         mutableArtifactViews.value = emptyMap()
@@ -128,6 +132,7 @@ class NotesViewModel @Inject constructor(
     }
 
     fun closeArtifacts() {
+        closeTaskSuggestions()
         mutableArtifactEntry.value = null
         mutableArtifactConsentDone.value = false
         mutableArtifactStarting.value = false
@@ -248,6 +253,86 @@ class NotesViewModel @Inject constructor(
         mutableArtifactViews.value = mutableArtifactViews.value + (kind to candidateId)
         mutableArtifactContentViews.value =
             mutableArtifactContentViews.value + (kind to NoteArtifactContentView.ServerOriginal)
+    }
+
+    fun openTaskSuggestions(kind: NoteArtifactKind, candidateId: String) {
+        val entry = mutableArtifactEntry.value ?: return
+        val version = artifacts.state.value.versions[kind].orEmpty().singleOrNull {
+            it.versionId == candidateId && it.artifactId == artifacts.state.value.artifactRefs[kind]?.artifactId &&
+                it.sourceVersionId == entry.materialVersionId
+        } ?: run {
+            tell("只可从当前固定材料对应的已加载服务端版本提取；材料或版本不匹配。")
+            return
+        }
+        if (version.contentMarkdown.isBlank() || !version.contentSha256.matches(Regex("[a-fA-F0-9]{64}")) ||
+            !version.inputSha256.matches(Regex("[a-fA-F0-9]{64}")) ||
+            !version.manifestSha256.matches(Regex("[a-fA-F0-9]{64}"))
+        ) {
+            tell("固定版本内容或摘要不完整；未打开付费提取流程。")
+            return
+        }
+        val source = NoteTaskSuggestionClient.sourceFrom(
+            noteId = entry.noteId,
+            materialVersionId = entry.materialVersionId,
+            version = version,
+            title = entry.title,
+        )
+        mutableTaskSuggestionsSource.value = source
+        taskSuggestions.selectSource(source)
+        viewModelScope.launch { taskSuggestions.open(source) }
+    }
+
+    fun refreshTaskSuggestions() {
+        val source = mutableTaskSuggestionsSource.value ?: return
+        viewModelScope.launch { taskSuggestions.refresh(source) }
+    }
+
+    fun revalidateTaskSuggestionSession() = taskSuggestions.invalidateIfTargetChanged()
+
+    fun extractTaskSuggestions(
+        scope: NoteTaskSuggestionActionScope,
+        destination: NoteTaskSuggestionDestination,
+        chargeAcknowledged: Boolean,
+    ) {
+        viewModelScope.launch { taskSuggestions.extract(scope, destination, chargeAcknowledged) }
+    }
+
+    fun editTaskSuggestion(
+        scope: NoteTaskSuggestionActionScope,
+        suggestionId: String,
+        title: String,
+        description: String,
+        priority: Int,
+        due: String,
+    ) {
+        viewModelScope.launch {
+            taskSuggestions.stageDraft(scope, suggestionId, title, description, priority, due)
+        }
+    }
+
+    fun saveTaskSuggestion(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.saveDraft(scope, suggestionId) }
+    }
+
+    fun discardTaskSuggestionDraft(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.discardDraft(scope, suggestionId) }
+    }
+
+    fun rebaseTaskSuggestionDraft(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.rebaseDraftAfterConflict(scope, suggestionId) }
+    }
+
+    fun dismissTaskSuggestion(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.dismiss(scope, suggestionId) }
+    }
+
+    fun confirmTaskSuggestion(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.confirm(scope, suggestionId) }
+    }
+
+    fun closeTaskSuggestions() {
+        mutableTaskSuggestionsSource.value = null
+        taskSuggestions.close()
     }
 
     fun changeArtifactContentView(kind: NoteArtifactKind, view: NoteArtifactContentView) {

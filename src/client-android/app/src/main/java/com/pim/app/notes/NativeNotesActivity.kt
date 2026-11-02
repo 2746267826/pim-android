@@ -104,6 +104,7 @@ class NativeNotesActivity : ComponentActivity() {
             val artifactPendingSelections by model.artifactPendingSelections.collectAsStateWithLifecycle()
             val artifactViews by model.artifactViews.collectAsStateWithLifecycle()
             val artifactContentViews by model.artifactContentViews.collectAsStateWithLifecycle()
+            val taskSuggestions by model.taskSuggestions.state.collectAsStateWithLifecycle()
             val uploadTarget = rememberUploadTarget(model.uploads)
             val asrActions = remember(model) {
                 NoteAsrActions(
@@ -195,8 +196,10 @@ class NativeNotesActivity : ComponentActivity() {
                                 pendingSelections = artifactPendingSelections,
                                 viewedCandidates = artifactViews,
                                 contentViews = artifactContentViews,
+                                suggestionsState = taskSuggestions,
                                 entryActions = noteArtifactEntryActions(model),
                                 screenActions = noteArtifactScreenActions(model),
+                                suggestionActions = noteTaskSuggestionsActions(model),
                             )
                         }
                     })

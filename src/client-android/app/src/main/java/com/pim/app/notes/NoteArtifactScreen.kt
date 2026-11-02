@@ -65,6 +65,7 @@ data class NoteArtifactScreenActions(
     val refresh: (NoteArtifactKind) -> Unit = {},
     val changeContentView: (NoteArtifactKind, NoteArtifactContentView) -> Unit = { _, _ -> },
     val viewCandidateSource: (NoteArtifactKind, String) -> Unit = { _, _ -> },
+    val openTaskSuggestions: (NoteArtifactKind, String) -> Unit = { _, _ -> },
     val selectCandidate: (NoteArtifactKind, String) -> Unit = { _, _ -> },
     val changeDraftText: (NoteArtifactDraftEditRequest) -> Unit = {},
     val saveLocalDraft: (NoteArtifactDraftSaveRequest) -> Unit = {},
@@ -197,6 +198,9 @@ fun NoteArtifactScreen(
                         editor = editor,
                         candidate = candidate,
                         onViewSource = { actions.viewCandidateSource(kind, candidate.candidateId) },
+                        onTaskSuggestions = {
+                            actions.openTaskSuggestions(kind, candidate.candidateId)
+                        },
                         onSelect = { actions.selectCandidate(kind, candidate.candidateId) },
                     )
                 }
@@ -890,6 +894,7 @@ private fun CandidateCard(
     editor: NoteArtifactEditorUiState,
     candidate: NoteArtifactCandidateUi,
     onViewSource: () -> Unit,
+    onTaskSuggestions: () -> Unit,
     onSelect: () -> Unit,
 ) {
     val dimensions = PimTheme.dimensions
@@ -979,6 +984,13 @@ private fun CandidateCard(
                     .testTag("note-artifact-view-source-${editor.kind.name}-${candidate.candidateId}"),
             ) {
                 Text("查看服务端原文")
+            }
+            OutlinedButton(
+                onClick = onTaskSuggestions,
+                modifier = Modifier.fillMaxWidth()
+                    .testTag("note-artifact-task-suggestions-${editor.kind.name}-${candidate.candidateId}"),
+            ) {
+                Text("从此版本提取任务建议")
             }
             Button(
                 onClick = onSelect,

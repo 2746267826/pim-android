@@ -24,6 +24,7 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
     val artifactPendingSelections by model.artifactPendingSelections.collectAsStateWithLifecycle()
     val artifactViews by model.artifactViews.collectAsStateWithLifecycle()
     val artifactContentViews by model.artifactContentViews.collectAsStateWithLifecycle()
+    val taskSuggestions by model.taskSuggestions.state.collectAsStateWithLifecycle()
     val target = rememberUploadTarget(model.uploads)
     var showAsr by remember { mutableStateOf(false) }
     val asrActions = remember(model) {
@@ -71,8 +72,10 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
                 pendingSelections = artifactPendingSelections,
                 viewedCandidates = artifactViews,
                 contentViews = artifactContentViews,
+                suggestionsState = taskSuggestions,
                 entryActions = noteArtifactEntryActions(model),
                 screenActions = noteArtifactScreenActions(model),
+                suggestionActions = noteTaskSuggestionsActions(model),
             )
         }
       }

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 78461946494035b2d4277c72bbb0d175c9f7fe98bfe8182747b3aedb67cf7fc4)
+//   契约快照 : contract/openapi.json (sha256 9a2e8388783627c984d5b907cd4b5699377d421eeb3575047cbe8389eae2889e)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -242,6 +242,13 @@ data class ClientShellLatestResponse(
     val windowsVersion: String? = null,
 )
 
+/** 契约 `components.schemas.ConfirmNoteTaskSuggestionRequest`（request）。 */
+@Serializable
+data class ConfirmNoteTaskSuggestionRequest(
+    val expectedRevision: String,
+    val requestId: String,
+)
+
 /** 契约 `components.schemas.CreateCalendarRequest`（request）。 */
 @Serializable
 data class CreateCalendarRequest(
@@ -478,6 +485,12 @@ data class DeviceRenameRequest(
 data class DeviceTableCountDto(
     val rowCount: Int,
     val table: String,
+)
+
+/** 契约 `components.schemas.DismissNoteTaskSuggestionRequest`（request）。 */
+@Serializable
+data class DismissNoteTaskSuggestionRequest(
+    val expectedRevision: String,
 )
 
 /** 契约 `components.schemas.EndpointHeartbeatRequest`（request）。 */
@@ -1855,6 +1868,127 @@ data class NoteMaterialVersionDtoApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.NoteTaskSuggestionDto`（response）。 */
+@Serializable
+data class NoteTaskSuggestionDto(
+    val artifactId: String,
+    val calendarId: String? = null,
+    val confirmedAt: String? = null,
+    val createdAt: String,
+    val description: String? = null,
+    val dismissedAt: String? = null,
+    val due: String? = null,
+    val extractionId: String,
+    val id: String,
+    val noteId: String,
+    val ordinal: Int,
+    val priority: Int,
+    val revision: String,
+    val sourceContentSha256: String,
+    val sourceGenerationTaskId: String? = null,
+    val sourceInputSha256: String,
+    val sourceManifestSha256: String,
+    val status: NoteTaskSuggestionStatusDto,
+    val taskBookId: String? = null,
+    val taskId: String? = null,
+    val title: String,
+    val updatedAt: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionDtoApiResponse`（response）。 */
+@Serializable
+data class NoteTaskSuggestionDtoApiResponse(
+    val code: Int,
+    val data: NoteTaskSuggestionDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionExtractionDto`（response）。 */
+@Serializable
+data class NoteTaskSuggestionExtractionDto(
+    val aiCallLogId: String? = null,
+    val artifactId: String,
+    val attemptCount: Int,
+    val createdAt: String,
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+    val finishedAt: String? = null,
+    val id: String,
+    val modelEndpoint: String,
+    val modelProfileId: String,
+    val modelRevision: String,
+    val noteId: String,
+    val promptVersion: String,
+    val requestId: String,
+    val revision: String,
+    val sourceContentSha256: String,
+    val sourceGenerationTaskId: String? = null,
+    val sourceInputSha256: String,
+    val sourceManifestSha256: String,
+    val startedAt: String? = null,
+    val status: NoteTaskSuggestionExtractionStatusDto,
+    val suggestionCount: Int,
+    val updatedAt: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionExtractionDtoApiResponse`（response）。 */
+@Serializable
+data class NoteTaskSuggestionExtractionDtoApiResponse(
+    val code: Int,
+    val data: NoteTaskSuggestionExtractionDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionExtractionStatusDto`（response）。 */
+/**
+ * 契约枚举 `NoteTaskSuggestionExtractionStatusDto`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteTaskSuggestionExtractionStatusDto {
+    @SerialName("Queued")
+    QUEUED,
+    @SerialName("Running")
+    RUNNING,
+    @SerialName("Succeeded")
+    SUCCEEDED,
+    @SerialName("Failed")
+    FAILED,
+}
+
+/** 契约 `components.schemas.NoteTaskSuggestionListDto`（response）。 */
+@Serializable
+data class NoteTaskSuggestionListDto(
+    val items: List<NoteTaskSuggestionDto>,
+    val total: Int,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionListDtoApiResponse`（response）。 */
+@Serializable
+data class NoteTaskSuggestionListDtoApiResponse(
+    val code: Int,
+    val data: NoteTaskSuggestionListDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteTaskSuggestionStatusDto`（response）。 */
+/**
+ * 契约枚举 `NoteTaskSuggestionStatusDto`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteTaskSuggestionStatusDto {
+    @SerialName("Draft")
+    DRAFT,
+    @SerialName("Confirmed")
+    CONFIRMED,
+    @SerialName("Dismissed")
+    DISMISSED,
+}
+
 /** 契约 `components.schemas.OperationConfirmationDto`（response）。 */
 @Serializable
 data class OperationConfirmationDto(
@@ -2228,6 +2362,19 @@ data class StartNoteDerivedTaskRequest(
     val versionId: String,
 )
 
+/** 契约 `components.schemas.StartNoteTaskSuggestionExtractionRequest`（request）。 */
+@Serializable
+data class StartNoteTaskSuggestionExtractionRequest(
+    val acknowledgePossibleCharge: Boolean,
+    val artifactId: String,
+    val consent: NoteDerivedGenerationConsent,
+    val expectedContentSha256: String,
+    val expectedUserId: String,
+    val noteId: String,
+    val requestId: String,
+    val versionId: String,
+)
+
 /** 契约 `components.schemas.StatusComponentDto`（response）。 */
 @Serializable
 data class StatusComponentDto(
@@ -2445,6 +2592,18 @@ data class UpdateEventRequest(
     val timeZoneId: String? = null,
     val title: String,
     val uid: String? = null,
+)
+
+/** 契约 `components.schemas.UpdateNoteTaskSuggestionRequest`（request）。 */
+@Serializable
+data class UpdateNoteTaskSuggestionRequest(
+    val calendarId: String? = null,
+    val description: String? = null,
+    val due: String? = null,
+    val expectedRevision: String,
+    val priority: Int,
+    val taskBookId: String? = null,
+    val title: String,
 )
 
 /** 契约 `components.schemas.UpdateQuickNoteRequest`（request）。 */

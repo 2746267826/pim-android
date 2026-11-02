@@ -5,6 +5,10 @@ import com.pim.app.notes.NoteArtifactClient
 import com.pim.app.notes.NoteArtifactRepository
 import com.pim.app.notes.NoteArtifactTarget
 import com.pim.app.notes.NoteMaterialStore
+import com.pim.app.notes.NoteTaskSuggestionClient
+import com.pim.app.notes.NoteTaskSuggestionRepository
+import com.pim.app.notes.NoteTaskSuggestionTarget
+import com.pim.app.notes.NoteTaskSuggestionStore
 import com.pim.core.auth.TokenManager
 import com.pim.core.network.ApiClientProvider
 import com.pim.core.network.BoundUploadSession
@@ -20,6 +24,45 @@ import javax.inject.Singleton
 @Module
 @InstallIn(SingletonComponent::class)
 object NoteArtifactModule {
+    @Provides
+    @Singleton
+    fun provideNoteTaskSuggestionRepository(
+        @ApplicationContext context: Context,
+        clients: ApiClientProvider,
+        sessions: TokenManager,
+        settings: ServerSettingsStore,
+    ): NoteTaskSuggestionRepository = NoteTaskSuggestionRepository(
+        store = NoteTaskSuggestionStore.at(context.noBackupFilesDir),
+        targetProvider = {
+            runCatching {
+                val origin = PimServerEndpoints.from(settings.getBaseUrl()).trustedOrigin
+                var target: NoteTaskSuggestionTarget? = null
+                settings.commitSessionIfCurrentServer(origin) {
+                    val generationBefore = sessions.sessionIdentityGeneration()
+                    val session = sessions.snapshot()
+                    val generationAfter = sessions.sessionIdentityGeneration()
+                    val ownerId = session.ownerId
+                    if (generationBefore != generationAfter || session.tokens == null ||
+                        session.serverIdentity != origin || ownerId == null
+                    ) {
+                        false
+                    } else {
+                        target = NoteTaskSuggestionTarget(
+                            binding = BoundUploadSession(origin, ownerId),
+                            ownerName = session.ownerName.orEmpty(),
+                            identityGeneration = generationAfter,
+                        )
+                        true
+                    }
+                }
+                target
+            }.getOrNull()
+        },
+        factory = { target ->
+            NoteTaskSuggestionClient(clients.noteUploadApiService(target.binding), target.binding)
+        },
+    )
+
     @Provides
     @Singleton
     fun provideNoteArtifactRepository(

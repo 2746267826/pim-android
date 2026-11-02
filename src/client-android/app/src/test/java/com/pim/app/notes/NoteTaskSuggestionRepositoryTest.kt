@@ -379,11 +379,11 @@ class NoteTaskSuggestionRepositoryTest {
             confirmRequestIds += requestId
             if (failConfirmOnce) {
                 failConfirmOnce = false
-                item = item.copy(status = NoteTaskSuggestionStatusDto.CONFIRMED, taskId = TASK_ID)
+                this.item = item.copy(status = NoteTaskSuggestionStatusDto.CONFIRMED, taskId = TASK_ID)
                 throw IOException("simulated lost confirmation receipt")
             }
-            item = item.copy(status = NoteTaskSuggestionStatusDto.CONFIRMED, taskId = TASK_ID)
-            return item
+            this.item = item.copy(status = NoteTaskSuggestionStatusDto.CONFIRMED, taskId = TASK_ID)
+            return this.item
         }
     }
 

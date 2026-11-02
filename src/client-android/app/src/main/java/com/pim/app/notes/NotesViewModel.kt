@@ -28,6 +28,7 @@ class NotesViewModel @Inject constructor(
     val asr: NoteAsrRepository,
     val artifacts: NoteArtifactRepository,
     val taskSuggestions: NoteTaskSuggestionRepository,
+    val legacyQuickNoteMigration: LegacyQuickNoteMigrationRepository,
 ) : ViewModel() {
     val selectedId = saved.getStateFlow<String?>("noteId", null)
     private val mutableMessage = MutableStateFlow<String?>(null)
@@ -53,6 +54,7 @@ class NotesViewModel @Inject constructor(
     val artifactContentViews = mutableArtifactContentViews.asStateFlow()
     private val mutableTaskSuggestionsSource = MutableStateFlow<NoteTaskSuggestionSource?>(null)
     val taskSuggestionsSource = mutableTaskSuggestionsSource.asStateFlow()
+    val legacyQuickNoteMigrationState = legacyQuickNoteMigration.state
 
     init {
         viewModelScope.launch {
@@ -68,6 +70,40 @@ class NotesViewModel @Inject constructor(
 
     fun open(id: String?) { if (!busy.value) { saved["noteId"] = id; mutableMessage.value = null; dismissCompletion() } }
     fun create() { open(notes.create()) }
+    fun openLegacyQuickNoteMigration() { viewModelScope.launch { legacyQuickNoteMigration.open() } }
+    fun refreshLegacyQuickNoteMigration() {
+        viewModelScope.launch { legacyQuickNoteMigration.open(legacyQuickNoteMigration.state.value.page) }
+    }
+    fun loadLegacyQuickNoteMigrationPage(page: Int) {
+        viewModelScope.launch { legacyQuickNoteMigration.loadPage(page) }
+    }
+    fun selectLegacyQuickNote(id: String) { viewModelScope.launch { legacyQuickNoteMigration.select(id) } }
+    fun confirmLegacyQuickNoteMigration() {
+        viewModelScope.launch {
+            try { legacyQuickNoteMigration.confirm() }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) { /* The repository exposes a bounded user-facing error. */ }
+        }
+    }
+    fun dismissLegacyQuickNotePreview() = legacyQuickNoteMigration.dismissPreview()
+    fun closeLegacyQuickNoteMigration() = legacyQuickNoteMigration.close()
+    fun revokeLegacyQuickNoteMigration(id: String, session: com.pim.app.nativework.NativeWorkbenchSession) {
+        viewModelScope.launch {
+            try { legacyQuickNoteMigration.revokeLink(id, session) }
+            catch (error: CancellationException) { throw error }
+            catch (failure: Exception) { tell(failure.message ?: "未能撤回映射；两端记录均保留。") }
+        }
+    }
+    fun openMappedLegacyQuickNoteNote(id: String, openNote: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val noteId = legacyQuickNoteMigration.reopenMappedNote(id)
+                legacyQuickNoteMigration.close()
+                openNote(noteId)
+            } catch (error: CancellationException) { throw error }
+            catch (failure: Exception) { tell(failure.message ?: "该本机副本不属于当前账号和服务器。") }
+        }
+    }
     fun tell(text: String) { mutableMessage.value = text }
     fun dismissMessage(text: String) { if (mutableMessage.value == text) mutableMessage.value = null }
     fun dismissCompletion() { mutableCompletion.value = null }

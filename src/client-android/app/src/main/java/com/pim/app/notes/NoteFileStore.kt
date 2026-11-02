@@ -10,6 +10,10 @@ import java.io.ByteArrayOutputStream
 import java.io.File
 import java.io.InputStream
 import java.io.OutputStream
+import java.nio.file.Files
+import java.nio.file.LinkOption
+import java.nio.file.NoSuchFileException
+import java.nio.file.attribute.BasicFileAttributes
 import java.security.MessageDigest
 import java.util.concurrent.CancellationException
 import java.util.zip.ZipEntry
@@ -54,6 +58,30 @@ class NoteFileStore(private val root: File) {
 
     fun read(id: String) = NoteDocument.decode(AtomicFile(File(directory(id), "note.json")).readFully().toString(Charsets.UTF_8))
         .also { require(it.id == id) }
+
+    /** Returns null only when the entire stable-ID directory is definitely absent. */
+    fun readForCreate(id: String): NoteDocument? {
+        val folder = directory(id)
+        val folderAttributes = try {
+            Files.readAttributes(folder.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        } catch (_: NoSuchFileException) {
+            return null
+        }
+        require(folderAttributes.isDirectory) { "Stable note target exists but is not a readable note directory" }
+        val manifest = File(folder, "note.json")
+        val backup = File(folder, "note.json.bak")
+        require(existsDefinitely(manifest) || existsDefinitely(backup)) {
+            "Stable note target already contains local material without a readable note manifest; refusing overwrite"
+        }
+        return read(id)
+    }
+
+    private fun existsDefinitely(file: File): Boolean = try {
+        Files.readAttributes(file.toPath(), BasicFileAttributes::class.java, LinkOption.NOFOLLOW_LINKS)
+        true
+    } catch (_: NoSuchFileException) {
+        false
+    }
 
     @Synchronized fun save(note: NoteDocument) {
         note.validate()

@@ -105,6 +105,10 @@ class NativeNotesActivity : ComponentActivity() {
             val artifactViews by model.artifactViews.collectAsStateWithLifecycle()
             val artifactContentViews by model.artifactContentViews.collectAsStateWithLifecycle()
             val taskSuggestions by model.taskSuggestions.state.collectAsStateWithLifecycle()
+            val legacyMigration by model.legacyQuickNoteMigrationState.collectAsStateWithLifecycle()
+            val legacyMigrationActions = remember(model) {
+                legacyQuickNoteMigrationActions(model, model::open)
+            }
             val uploadTarget = rememberUploadTarget(model.uploads)
             val asrActions = remember(model) {
                 NoteAsrActions(
@@ -185,6 +189,8 @@ class NativeNotesActivity : ComponentActivity() {
                     uploads = uploads, uploadTarget = uploadTarget, onUpload = model::submitUpload,
                     onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload,
                     asr = asr, asrActions = asrActions,
+                    legacyMigration = legacyMigration,
+                    legacyMigrationActions = legacyMigrationActions,
                     artifactOverlay = {
                         artifactEntry?.let { entry ->
                             NoteArtifactOverlay(

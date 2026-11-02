@@ -49,6 +49,7 @@ internal interface UnusedNoteOperations : ApiService {
     override suspend fun getOperationConfirmation(id: String): OperationConfirmationDtoApiResponse = error("Unexpected confirmation detail")
     override suspend fun rejectOperationConfirmation(id: String): OperationConfirmationDtoApiResponse = error("Unexpected confirmation rejection")
     override suspend fun confirmNoteTaskSuggestion(id: String, request: ConfirmNoteTaskSuggestionRequest): NoteTaskSuggestionDtoApiResponse = error("Unexpected task-suggestion confirmation")
+    override suspend fun dismissNoteTaskSuggestion(id: String, request: DismissNoteTaskSuggestionRequest): NoteTaskSuggestionDtoApiResponse = error("Unexpected task-suggestion dismissal")
     override suspend fun getSystemStatus(): SystemStatusDetailDtoApiResponse = error("Unexpected system status")
     override suspend fun beginNoteMaterialUpload(request: BeginNoteMaterialUploadRequest): NoteMaterialUploadDtoApiResponse = error("Unexpected note upload")
     override suspend fun getNoteMaterialVersion(versionId: String): NoteMaterialVersionDtoApiResponse = error("Unexpected note read")

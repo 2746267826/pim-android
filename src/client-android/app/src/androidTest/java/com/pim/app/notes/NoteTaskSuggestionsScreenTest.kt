@@ -3,12 +3,13 @@ package com.pim.app.notes
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.size
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.assertTextEquals
 import androidx.compose.ui.test.junit4.createComposeRule
+import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
@@ -267,7 +268,7 @@ class NoteTaskSuggestionsScreenTest {
             items = emptyList(),
         )
         compose.runOnIdle { renderedState.value = next }
-        compose.onNodeWithTag("task-suggestion-confirm-dialog-$SUGGESTION_ID").assertDoesNotExist()
+        compose.onAllNodesWithTag("task-suggestion-confirm-dialog-$SUGGESTION_ID").assertCountEquals(0)
         assertEquals(emptyList<String>(), confirmations)
     }
 

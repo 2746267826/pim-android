@@ -44,7 +44,8 @@ set -euo pipefail
 ROOT="$(git rev-parse --show-toplevel 2>/dev/null || true)"
 [ -n "$ROOT" ] || { echo "[contract-sync][错误] 当前目录不在 git 仓库里（先 cd 到仓库工作区）" >&2; exit 2; }
 cd "$ROOT"
-. "$ROOT/scripts/ci/python-runtime.sh"
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+. "$SCRIPT_DIR/python-runtime.sh"
 PIM_CONTRACT_PYTHON="$(pim_contract_python)" || {
   echo "[contract-sync][错误] 缺少可运行的 Python 3。" >&2
   exit 2

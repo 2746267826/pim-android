@@ -101,6 +101,106 @@ class ComputerUsageRepositoryTest {
     }
 
     @Test
+    fun rejectsEverySuccessfulEnvelopeWithEmptyData() {
+        val operations = listOf(
+            "getPcDetail",
+            "getBrowserUsageSummary",
+            "getBrowserUsageDaily",
+            "getBrowserUsageTimeline",
+            "getManagedDevices",
+        )
+        operations.forEach { emptyOperation ->
+            val api = Proxy.newProxyInstance(
+                ApiService::class.java.classLoader,
+                arrayOf(ApiService::class.java),
+            ) { _, method, _ ->
+                when (method.name) {
+                    "getPcDetail" -> TypedDetailQueryResponseApiResponse(
+                        0,
+                        if (method.name == emptyOperation) null else TypedDetailQueryResponse(listOf(record()), 1, 50, 1, 1),
+                        "empty",
+                        "now",
+                    )
+                    "getBrowserUsageSummary" -> SiteSummaryDtoApiResponse(
+                        0,
+                        if (method.name == emptyOperation) null else summary(),
+                        "empty",
+                        "now",
+                    )
+                    "getBrowserUsageDaily" -> SiteDailyRowDtoListApiResponse(
+                        0,
+                        if (method.name == emptyOperation) null else emptyList(),
+                        "empty",
+                        "now",
+                    )
+                    "getBrowserUsageTimeline" -> SiteTimelineRowDtoListApiResponse(
+                        0,
+                        if (method.name == emptyOperation) null else emptyList(),
+                        "empty",
+                        "now",
+                    )
+                    "getManagedDevices" -> DeviceListDtoIReadOnlyListApiResponse(
+                        0,
+                        if (method.name == emptyOperation) null else emptyList(),
+                        "empty",
+                        "now",
+                    )
+                    else -> error("Unexpected call ${method.name}")
+                }
+            } as ApiService
+
+            assertThrows("$emptyOperation must reject null data", NativeWorkbenchRequestException::class.java) {
+                runBlocking { ComputerUsageRepository(api).load("2026-11-02", "2026-11-02", null, 1) }
+            }
+        }
+    }
+
+    @Test
+    fun rejectsNonzeroEnvelopeWithNullDataForEveryOperation() {
+        val operations = listOf(
+            "getPcDetail",
+            "getBrowserUsageSummary",
+            "getBrowserUsageDaily",
+            "getBrowserUsageTimeline",
+            "getManagedDevices",
+        )
+        operations.forEach { failedOperation ->
+            val api = Proxy.newProxyInstance(
+                ApiService::class.java.classLoader,
+                arrayOf(ApiService::class.java),
+            ) { _, method, _ ->
+                val code = if (method.name == failedOperation) 19 else 0
+                when (method.name) {
+                    "getPcDetail" -> TypedDetailQueryResponseApiResponse(
+                        code,
+                        if (code != 0) null else TypedDetailQueryResponse(listOf(record()), 1, 50, 1, 1),
+                        "status",
+                        "now",
+                    )
+                    "getBrowserUsageSummary" -> SiteSummaryDtoApiResponse(
+                        code, if (code != 0) null else summary(), "status", "now",
+                    )
+                    "getBrowserUsageDaily" -> SiteDailyRowDtoListApiResponse(
+                        code, if (code != 0) null else emptyList(), "status", "now",
+                    )
+                    "getBrowserUsageTimeline" -> SiteTimelineRowDtoListApiResponse(
+                        code, if (code != 0) null else emptyList(), "status", "now",
+                    )
+                    "getManagedDevices" -> DeviceListDtoIReadOnlyListApiResponse(
+                        code, if (code != 0) null else emptyList(), "status", "now",
+                    )
+                    else -> error("Unexpected call ${method.name}")
+                }
+            } as ApiService
+
+            val error = assertThrows(NativeWorkbenchRequestException::class.java) {
+                runBlocking { ComputerUsageRepository(api).load("2026-11-02", "2026-11-02", null, 1) }
+            }
+            assertEquals("status", error.message)
+        }
+    }
+
+    @Test
     fun invalidDateRangeFailsBeforeAnyNetworkCall() {
         var calls = 0
         val api = Proxy.newProxyInstance(

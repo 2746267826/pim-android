@@ -125,13 +125,13 @@ class MobileUsageHistoryRepository(
     }
 
     private fun <T> requireData(code: Int, data: T?, operation: String): T {
-        if (code != 0) throw IllegalStateException("$operation失败（服务端代码 $code）。")
-        return data ?: throw IllegalStateException("$operation失败（服务端未返回数据）。")
+        if (code != 0) throw IllegalStateException("${operation}失败（服务端代码 $code）。")
+        return data ?: throw IllegalStateException("${operation}失败（服务端未返回数据）。")
     }
 
     private fun requireResponseDate(value: String, requested: LocalDate, operation: String) {
         if (runCatching { LocalDate.parse(value) }.getOrNull() != requested) {
-            throw IllegalStateException("读取$operation失败（服务端日期与请求不一致）。")
+            throw IllegalStateException("读取${operation}失败（服务端日期与请求不一致）。")
         }
     }
 

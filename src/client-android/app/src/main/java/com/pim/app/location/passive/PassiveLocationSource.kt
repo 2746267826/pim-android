@@ -15,6 +15,7 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -44,11 +45,19 @@ sealed interface PassiveRegistrationResult {
  * - AC-14.7：**不得扰动主流** —— 全程不触碰主动流的注册间隔与周期锚点。
  */
 @Singleton
-open class PassiveLocationSource @Inject constructor(
+open class PassiveLocationSource internal constructor(
     @ApplicationContext private val context: Context,
     private val trackingSettingsStore: TrackingSettingsStore,
-    private val logs: StructuredLogRepository
+    private val logs: StructuredLogRepository,
+    private val callbackDispatcher: CoroutineDispatcher
 ) {
+    @Inject
+    constructor(
+        @ApplicationContext context: Context,
+        trackingSettingsStore: TrackingSettingsStore,
+        logs: StructuredLogRepository
+    ) : this(context, trackingSettingsStore, logs, Dispatchers.Default)
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val locationManager: LocationManager?
         get() = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
@@ -86,7 +95,7 @@ open class PassiveLocationSource @Inject constructor(
                 override fun onLocationChanged(location: Location) {
                     val fix = location.toPassiveFix()
                     // Ignore queued callbacks after this registration has been replaced.
-                    scope.launch(newListenerJob) {
+                    scope.launch(newListenerJob + callbackDispatcher) {
                         if (!isCurrentRegistration(generation)) return@launch
                         try {
                             processor.handle(fix)

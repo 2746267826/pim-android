@@ -19,8 +19,8 @@ import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.Shadows.shadowOf
 import org.robolectric.annotation.Config
-import java.util.concurrent.CountDownLatch
-import java.util.concurrent.TimeUnit
+import kotlinx.coroutines.ExperimentalCoroutinesApi
+import kotlinx.coroutines.test.StandardTestDispatcher
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34])
@@ -28,6 +28,7 @@ class PassiveLocationSourceLifecycleTest {
     private lateinit var context: Context
     private lateinit var source: PassiveLocationSource
     private lateinit var locationManager: LocationManager
+    private val callbackDispatcher = StandardTestDispatcher()
 
     @Before
     fun setUp() {
@@ -42,7 +43,8 @@ class PassiveLocationSourceLifecycleTest {
         source = PassiveLocationSource(
             context = context,
             trackingSettingsStore = settings,
-            logs = StructuredLogRepository(context, settings)
+            logs = StructuredLogRepository(context, settings),
+            callbackDispatcher = callbackDispatcher
         )
     }
 
@@ -68,22 +70,33 @@ class PassiveLocationSourceLifecycleTest {
     }
 
     @Test
+    @OptIn(ExperimentalCoroutinesApi::class)
     fun callbackQueuedBeforeUnregisterCannotWriteAfterStop() {
-        val accepted = CountDownLatch(1)
-        val processor = processor(onAccepted = { accepted.countDown() })
+        val processor = processor()
         source.register(processor)
 
         send(provider = "gps", time = 1_000L)
-        assertTrue("first callback must be accepted", accepted.await(2, TimeUnit.SECONDS))
-        assertEquals(1, processor.countersSnapshot().acceptedCount)
+        callbackDispatcher.scheduler.advanceUntilIdle()
+        assertEquals("first callback must be accepted", 1, processor.countersSnapshot().acceptedCount)
 
-        source.unregister()
+        val registeredListener = shadowOf(locationManager).locationUpdateListeners.single()
         send(provider = "gps", time = 2_000L)
-        shadowOf(Looper.getMainLooper()).idle()
-        Thread.sleep(250L)
+        source.unregister()
+        callbackDispatcher.scheduler.advanceUntilIdle()
+        assertEquals("queued callback must not write after unregister", 1, processor.countersSnapshot().callbackCount)
+
+        registeredListener.onLocationChanged(
+            Location("gps").apply {
+                latitude = 31.230416
+                longitude = 121.473701
+                accuracy = 8f
+                time = 3_000L
+            }
+        )
+        callbackDispatcher.scheduler.advanceUntilIdle()
 
         assertEquals(
-            "a late platform callback must fail closed after unregister",
+            "queued and late callbacks from the unregistered listener must not write",
             1,
             processor.countersSnapshot().callbackCount
         )

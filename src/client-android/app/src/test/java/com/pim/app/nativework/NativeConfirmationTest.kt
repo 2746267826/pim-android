@@ -58,14 +58,14 @@ class NativeConfirmationTest {
             when (method) {
                 "getPendingOperationConfirmations" ->
                     OperationConfirmationDtoIReadOnlyListApiResponse(
-                        code = 200,
+                        code = 0,
                         data = listOf(confirmation()),
                         message = "ok",
                         timestamp = "now",
                     )
                 "getOperationConfirmation", "rejectOperationConfirmation" ->
                     OperationConfirmationDtoApiResponse(
-                        code = 200,
+                        code = 0,
                         data = confirmation(),
                         message = "ok",
                         timestamp = "now",

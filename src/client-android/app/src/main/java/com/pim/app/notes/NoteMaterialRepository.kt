@@ -15,7 +15,10 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 @Singleton
-class NoteMaterialRepository @Inject constructor(@ApplicationContext private val context: Context) {
+class NoteMaterialRepository @Inject constructor(
+    @ApplicationContext private val context: Context,
+    private val uploads: NoteUploadRepository,
+) {
     private val store = NoteMaterialStore.at(context.noBackupFilesDir)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val initialization = Mutex()
@@ -49,6 +52,7 @@ class NoteMaterialRepository @Inject constructor(@ApplicationContext private val
             try {
                 store.retry(id); refresh()
                 enqueue(id, ExistingWorkPolicy.APPEND_OR_REPLACE)
+                uploads.resumeAutoSubmits()
             } catch (error: CancellationException) { throw error }
             catch (_: Exception) { refreshSafely() }
         }

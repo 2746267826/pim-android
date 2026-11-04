@@ -34,6 +34,8 @@ internal fun NoteLibraryScreen(
     modifier: Modifier = Modifier,
     uploads: NoteUploadsState = NoteUploadsState(),
     currentTarget: NoteUploadTarget? = null,
+    autoSubmitAuthorization: NoteAutoSubmitAuthorization? = null,
+    onEnableAutoSubmit: (NoteUploadTarget) -> Unit = {}, onRevokeAutoSubmit: () -> Unit = {},
     onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
     asrTaskCount: Int = 0, onAsr: () -> Unit = {},
 ) {
@@ -70,6 +72,8 @@ internal fun NoteLibraryScreen(
                     Spacer(Modifier.width(d.spaceSmall))
                     Text(if (asrTaskCount > 0) "逐段转写任务 · $asrTaskCount 个" else "逐段转写任务")
                 }
+                Spacer(Modifier.height(d.spaceSmall))
+                NoteAutoSubmitControl(currentTarget, autoSubmitAuthorization, onEnableAutoSubmit, onRevokeAutoSubmit)
                 Spacer(Modifier.height(d.spaceMedium))
                 OutlinedTextField(search, { search = it }, label = { Text("搜索本机笔记") }, singleLine = true,
                     leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth().testTag("notes-search"))

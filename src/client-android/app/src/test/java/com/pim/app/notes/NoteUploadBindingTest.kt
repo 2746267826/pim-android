@@ -1,6 +1,7 @@
 package com.pim.app.notes
 
 import android.content.Context
+import android.content.ContextWrapper
 import androidx.test.core.app.ApplicationProvider
 import com.pim.app.TestPimApp
 import com.pim.core.auth.*
@@ -19,6 +20,7 @@ import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
+import java.io.File
 import java.io.IOException
 
 @RunWith(RobolectricTestRunner::class)
@@ -35,6 +37,7 @@ class NoteUploadBindingTest {
     @Before fun setUp() {
         server.start()
         val context = ApplicationProvider.getApplicationContext<Context>()
+        context.getSharedPreferences("native_note_upload_preferences", Context.MODE_PRIVATE).edit().clear().commit()
         tokens = TokenManager(object : SecurePreferencesFactory {
             override fun open() = context.getSharedPreferences("upload-auth-${newNoteId()}", Context.MODE_PRIVATE)
         }, nowMillis = { 1_000L })
@@ -55,6 +58,54 @@ class NoteUploadBindingTest {
         return ApiClientProvider(client, Json { ignoreUnknownKeys = true }, settings).noteUploadApiService(binding)
     }
     private suspend fun send(api: ApiService) = api.uploadNoteMaterialPart(newNoteId(), 0, 0, "a".repeat(64), byteArrayOf(1, 2).toRequestBody())
+
+    @Test fun autoSubmitAuthorizationPersistsAcrossRepositoryRestartAndIsBoundToTheAccount() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val targetA = NoteUploadTarget(binding, "Alice")
+        val first = NoteUploadRepository(context, tokens, settings)
+        assertTrue(first.authorizeAutoSubmit(targetA))
+
+        val restored = NoteUploadRepository(context, tokens, settings)
+        assertTrue(restored.autoSubmitAuthorized(targetA))
+        owner(b, "access-b")
+        val targetB = NoteUploadTarget(BoundUploadSession(binding.serverIdentity, b), "Bob")
+        assertFalse(restored.autoSubmitAuthorized(targetB))
+        assertTrue(restored.revokeAutoSubmitDurably())
+        assertFalse(NoteUploadRepository(context, tokens, settings).autoSubmitAuthorized(targetA))
+    }
+
+    @Test fun accountChangeBeforeDurableAuthorizationPreventsEnablingIt() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val repository = NoteUploadRepository(context, tokens, settings)
+        val staleTarget = NoteUploadTarget(binding, "Alice")
+        owner(b, "access-b")
+
+        assertFalse(repository.authorizeAutoSubmit(staleTarget))
+        assertFalse(repository.autoSubmitAuthorized(staleTarget))
+        assertNull(repository.autoSubmitAuthorization.value)
+    }
+
+    @Test fun preparedVersionDefersInsteadOfRebindingItsIntentAfterAccountSwitch() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Context>()
+        val root = File(context.cacheDir, "auto-submit-${newNoteId()}").apply { check(mkdirs()) }
+        try {
+            val isolatedContext = object : ContextWrapper(context) {
+                override fun getNoBackupFilesDir(): File = root
+            }
+            val materials = NoteMaterialStore.at(root)
+            val input = materials.create(NoteDocument.create(), emptyList())
+            materials.prepare(input.id)
+            val authorization = NoteAutoSubmitStore(isolatedContext)
+            assertTrue(authorization.authorizeForVersion(NoteUploadTarget(binding, "Alice"), input.id))
+
+            owner(b, "access-b")
+            val repository = NoteUploadRepository(isolatedContext, tokens, settings)
+            assertEquals(AutoSubmitWorkerOutcome.Deferred, repository.processAutoSubmit(input.id))
+            assertNotNull(authorization.intent(input.id))
+            assertTrue(NoteUploadStore.at(root).jobs().isEmpty())
+            assertEquals(0, server.requestCount)
+        } finally { root.deleteRecursively() }
+    }
 
     @Test fun headerUsesTheSameSnapshotAsTheCapturedOwner() = runBlocking {
         server.enqueue(MockResponse().setBody(ok)); send(api())

@@ -154,7 +154,10 @@ internal fun NoteRecordingsSheet(
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun NoteCompletionSheet(
-    version: NoteMaterialEntry?, onDismiss: () -> Unit, onMaterials: () -> Unit, onLibrary: () -> Unit
+    version: NoteMaterialEntry?, onDismiss: () -> Unit, autoSubmitTarget: NoteUploadTarget? = null,
+    autoSubmitEnabled: Boolean = false, onEnableAutoSubmit: (NoteUploadTarget) -> Unit = {},
+    onRevokeAutoSubmit: () -> Unit = {},
+    onMaterials: () -> Unit, onLibrary: () -> Unit
 ) {
     val d = PimTheme.dimensions
     ModalBottomSheet(onDismissRequest = onDismiss, sheetState = rememberModalBottomSheetState(skipPartiallyExpanded = true),
@@ -168,8 +171,24 @@ internal fun NoteCompletionSheet(
                 NoteMaterialPhase.Failed -> "原始记录已保存，但完整材料准备失败。请在材料版本中查看并重试。"
                 else -> "完整材料正在本机后台准备，你可以离开页面，也可以继续编辑或补录。"
             }, style = MaterialTheme.typography.bodyMedium)
-            Text("可在材料版本中核对目标并上传。上传只保存原材料，不自动发起转写或 AI 分析。", style = MaterialTheme.typography.bodySmall,
+            Text(if (autoSubmitEnabled) "已对当前账号和服务器开启持续授权：之后结束记录后，完整材料会自动加入后台上传队列。撤销后不会再安排新版本，已入队任务仍继续。上传不自动发起付费转写或 AI 分析。" else "录音结束后材料会先保存在本机。可开启持续授权，在之后结束记录时自动上传完整材料；仅上传原始材料，不自动发起付费转写或 AI 分析。", style = MaterialTheme.typography.bodySmall,
                 color = MaterialTheme.colorScheme.onSurfaceVariant)
+            if (autoSubmitTarget != null) {
+                Text("目标：${autoSubmitTarget.name.ifBlank { "当前登录账号" }} · ${autoSubmitTarget.binding.serverIdentity}",
+                    style = MaterialTheme.typography.bodySmall)
+                if (!autoSubmitEnabled) {
+                    Button(onClick = { onEnableAutoSubmit(autoSubmitTarget) }, modifier = Modifier.fillMaxWidth().testTag("note-enable-auto-submit")) {
+                        Text("开启持续授权并安排本次材料")
+                    }
+                } else {
+                    OutlinedButton(onClick = onRevokeAutoSubmit, modifier = Modifier.fillMaxWidth().testTag("note-revoke-auto-submit")) {
+                        Text("撤销持续授权")
+                    }
+                }
+            } else {
+                Text("当前没有已登录的上传目标；材料仍保存在本机。", style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant)
+            }
             PimButton(onDismiss, Modifier.fillMaxWidth().testTag("note-continue-editing")) { Text("继续编辑") }
             Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.SpaceBetween) {
                 TextButton(onClick = onMaterials, modifier = Modifier.weight(1f)) { Text("查看材料版本") }

@@ -17,6 +17,7 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 data class NoteUploadTarget(val binding: BoundUploadSession, val name: String)
+data class NoteAutoSubmitRegistration(val authorized: Boolean, val scheduled: Boolean)
 
 @Singleton
 class NoteUploadRepository @Inject constructor(@ApplicationContext private val context: Context,
@@ -24,15 +25,135 @@ class NoteUploadRepository @Inject constructor(@ApplicationContext private val c
     private val store = NoteUploadStore.at(context.noBackupFilesDir)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val initialization = Mutex()
+    private val autoSubmitLock = Mutex()
     private val mutableState = MutableStateFlow(NoteUploadsState())
     val state = mutableState.asStateFlow()
+    private val autoSubmitStore = NoteAutoSubmitStore(context)
+    private val mutableAutoSubmitAuthorization = MutableStateFlow(autoSubmitStore.authorization())
+    val autoSubmitAuthorization = mutableAutoSubmitAuthorization.asStateFlow()
     private val workManager get() = WorkManager.getInstance(context)
+
+    suspend fun authorizeAutoSubmit(target: NoteUploadTarget): Boolean = withContext(Dispatchers.IO) {
+        autoSubmitLock.withLock {
+            val oldIds = autoSubmitStore.pendingVersionIds()
+            val previous = autoSubmitStore.authorization()
+            val authorization = NoteAutoSubmitAuthorization(target.binding.serverIdentity, target.binding.ownerId)
+            val committed = settings.commitSessionIfCurrentServer(target.binding.serverIdentity) {
+                val current = sessions.snapshot()
+                current.tokens != null && current.ownerId == target.binding.ownerId && current.serverIdentity == target.binding.serverIdentity &&
+                    autoSubmitStore.authorize(target)
+            }
+            if (committed != ServerSessionCommitResult.Committed) return@withLock false
+            mutableAutoSubmitAuthorization.value = authorization
+            if (previous == authorization) oldIds.forEach { id -> scheduleSafely(id) }
+            else cancelAutoSubmitWorks(oldIds)
+            true
+        }
+    }
+
+    suspend fun authorizeAutoSubmitForVersion(versionId: String, target: NoteUploadTarget): NoteAutoSubmitRegistration =
+        withContext(Dispatchers.IO) {
+            autoSubmitLock.withLock {
+                val oldIds = autoSubmitStore.pendingVersionIds()
+                val previous = autoSubmitStore.authorization()
+                val authorization = NoteAutoSubmitAuthorization(target.binding.serverIdentity, target.binding.ownerId)
+                val committed = settings.commitSessionIfCurrentServer(target.binding.serverIdentity) {
+                    val current = sessions.snapshot()
+                    current.tokens != null && current.ownerId == target.binding.ownerId && current.serverIdentity == target.binding.serverIdentity &&
+                        autoSubmitStore.authorizeForVersion(target, versionId)
+                }
+                if (committed != ServerSessionCommitResult.Committed) return@withLock NoteAutoSubmitRegistration(false, false)
+                mutableAutoSubmitAuthorization.value = authorization
+                if (previous != authorization) cancelAutoSubmitWorks(oldIds - versionId)
+                val ids = if (previous == authorization) oldIds + versionId else setOf(versionId)
+                val scheduled = ids.map(::scheduleSafely).all { it }
+                NoteAutoSubmitRegistration(true, scheduled)
+            }
+        }
+
+    suspend fun submitIfAuthorized(versionId: String): NoteAutoSubmitRegistration = withContext(Dispatchers.IO) {
+        autoSubmitLock.withLock {
+            val current = target() ?: return@withLock NoteAutoSubmitRegistration(false, false)
+            val authorization = NoteAutoSubmitAuthorization(current.binding.serverIdentity, current.binding.ownerId)
+            if (autoSubmitStore.authorization() != authorization) return@withLock NoteAutoSubmitRegistration(false, false)
+            val committed = settings.commitSessionIfCurrentServer(current.binding.serverIdentity) {
+                val snapshot = sessions.snapshot()
+                snapshot.tokens != null && snapshot.ownerId == current.binding.ownerId && snapshot.serverIdentity == current.binding.serverIdentity &&
+                    autoSubmitStore.addIntentIfAuthorized(current, versionId)
+            }
+            if (committed != ServerSessionCommitResult.Committed) return@withLock NoteAutoSubmitRegistration(false, false)
+            NoteAutoSubmitRegistration(true, scheduleSafely(versionId))
+        }
+    }
+
+    suspend fun revokeAutoSubmitDurably(): Boolean = withContext(Dispatchers.IO) {
+        autoSubmitLock.withLock {
+            val (committed, ids) = autoSubmitStore.revoke()
+            if (!committed) return@withLock false
+            mutableAutoSubmitAuthorization.value = null
+            cancelAutoSubmitWorks(ids)
+            true
+        }
+    }
+
+    suspend fun resumeAutoSubmits() = withContext(Dispatchers.IO) {
+        autoSubmitLock.withLock {
+            val authorization = autoSubmitStore.authorization() ?: return@withLock
+            val binding = target()?.binding ?: return@withLock
+            if (authorization != NoteAutoSubmitAuthorization(binding.serverIdentity, binding.ownerId)) return@withLock
+            autoSubmitStore.pendingVersionIds().forEach { id ->
+                val intent = autoSubmitStore.intent(id) ?: return@forEach
+                if (intent.binding == binding) scheduleSafely(id)
+            }
+        }
+    }
+
+    internal suspend fun processAutoSubmit(versionId: String): AutoSubmitWorkerOutcome = withContext(Dispatchers.IO) {
+        autoSubmitLock.withLock {
+            val intent = autoSubmitStore.intent(versionId) ?: return@withLock AutoSubmitWorkerOutcome.Revoked
+            if (autoSubmitStore.authorization() != NoteAutoSubmitAuthorization(intent.serverIdentity, intent.ownerId)) {
+                autoSubmitStore.removeIntent(versionId)
+                return@withLock AutoSubmitWorkerOutcome.Revoked
+            }
+            val entry = NoteMaterialStore.at(context.noBackupFilesDir).entries().firstOrNull { it.id == versionId }
+                ?: return@withLock AutoSubmitWorkerOutcome.Retry
+            when (entry.phase) {
+                NoteMaterialPhase.Preparing -> return@withLock AutoSubmitWorkerOutcome.Retry
+                NoteMaterialPhase.Failed -> return@withLock AutoSubmitWorkerOutcome.Deferred
+                NoteMaterialPhase.Ready -> Unit
+            }
+            if (target()?.binding != intent.binding) return@withLock AutoSubmitWorkerOutcome.Deferred
+            try {
+                submit(versionId, NoteUploadTarget(intent.binding, intent.ownerName))
+                check(autoSubmitStore.removeIntent(versionId))
+                AutoSubmitWorkerOutcome.Submitted
+            } catch (error: kotlinx.coroutines.CancellationException) { throw error }
+            catch (error: Exception) { if (target()?.binding != intent.binding) AutoSubmitWorkerOutcome.Deferred else throw error }
+        }
+    }
+
+    private fun scheduleAutoSubmitLocked(versionId: String): Boolean {
+        val intent = autoSubmitStore.intent(versionId) ?: return false
+        val authorization = autoSubmitStore.authorization() ?: return false
+        if (authorization != NoteAutoSubmitAuthorization(intent.serverIdentity, intent.ownerId)) return false
+        val entry = NoteMaterialStore.at(context.noBackupFilesDir).entries().firstOrNull { it.id == versionId } ?: return false
+        return enqueueNoteAutoSubmit(workManager, versionId, entry.phase)
+    }
+
+    private fun cancelAutoSubmitWorks(ids: Set<String>) {
+        ids.forEach { id -> runCatching { cancelNoteAutoSubmit(workManager, id) } }
+    }
+
+    private fun scheduleSafely(versionId: String): Boolean = try { scheduleAutoSubmitLocked(versionId) }
+    catch (error: kotlinx.coroutines.CancellationException) { throw error }
+    catch (_: Exception) { false }
 
     suspend fun initialize() = withContext(Dispatchers.IO) {
         initialization.withLock {
             if (state.value.loaded) return@withLock
             refresh()
             state.value.jobs.filter { it.phase in resumable }.forEach { enqueue(it.id) }
+            resumeAutoSubmits()
             scope.launch { workManager.getWorkInfosByTagFlow(NoteUploadWorker.TAG).collect { refresh() } }
         }
     }

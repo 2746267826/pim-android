@@ -46,6 +46,9 @@ fun NativeNotesScreen(
     onExit: () -> Unit = {}, onStopRecording: () -> Unit = {},
     completion: NoteCompletion? = null, onDismissCompletion: () -> Unit = {}, onDismissMessage: (String) -> Unit = {},
     uploads: NoteUploadsState = NoteUploadsState(), uploadTarget: NoteUploadTarget? = null,
+    autoSubmitAuthorization: NoteAutoSubmitAuthorization? = null,
+    onAuthorizeAutoSubmit: (NoteUploadTarget) -> Unit = {}, onRevokeAutoSubmit: () -> Unit = {},
+    onEnableAutoSubmit: (String, NoteUploadTarget) -> Unit = { _, _ -> },
     onUpload: (String, NoteUploadTarget) -> Unit = { _, _ -> }, onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
     asr: NoteAsrRepositoryState = NoteAsrRepositoryState(), asrActions: NoteAsrActions = NoteAsrActions(),
     legacyMigration: LegacyQuickNoteMigrationState = LegacyQuickNoteMigrationState(),
@@ -70,7 +73,9 @@ fun NativeNotesScreen(
         Box(Modifier.fillMaxSize().imePadding()) {
             if (note == null) {
                 NoteLibraryScreen(state, selectedId, recording, busy, onCreate, onOpen, onExit,
-                    uploads = uploads, currentTarget = uploadTarget, onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
+                    uploads = uploads, currentTarget = uploadTarget, autoSubmitAuthorization = autoSubmitAuthorization,
+                    onEnableAutoSubmit = onAuthorizeAutoSubmit, onRevokeAutoSubmit = onRevokeAutoSubmit,
+                    onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
                     asrTaskCount = asr.tasks.size, onAsr = { showAsr = true }, onImport = onImport,
                     onLegacyQuickNotes = legacyMigrationActions.open)
             } else key(note.id) {
@@ -232,11 +237,11 @@ fun NativeNotesScreen(
                 }
                 if (confirmFinish) AlertDialog(onDismissRequest = { confirmFinish = false },
                     title = { Text("结束这次记录？") },
-                    text = { Text("本篇录音会停止，笔记与全部录音会固定为一个本机版本。之后仍可继续编辑和补录。\n\n材料齐备后可核对目标再上传，不会自动发送或调用模型。") },
+                    text = { Text("本篇录音会停止，笔记与全部录音会固定为一个本机版本。之后仍可继续编辑和补录。\n\n如已对当前账号和服务器开启持续授权，完整材料会自动上传；否则只保存在本机。不会自动发起付费转写或 AI 分析。") },
                     confirmButton = { TextButton(onClick = { confirmFinish = false; afterInput { onFinish(it.id) } }, modifier = Modifier.testTag("note-confirm-finish")) { Text("结束并保存") } },
                     dismissButton = { TextButton(onClick = { confirmFinish = false }) { Text("继续记录") } })
                 if (showAbout) AlertDialog(onDismissRequest = { showAbout = false }, title = { Text("笔记与原始材料") },
-                    text = { Text("支持离线编辑 Markdown、拍照、手写和后台录音。材料版本中的服务器状态单独显示；本机保存成功不等于已上传。\n\n逐段转写会先显示当前账号的真实 ASR 目标、固定材料范围和可能费用，再由你单独明确同意。完整记录与独立分析仍未开放。") },
+                    text = { Text("支持离线编辑 Markdown、拍照、手写和后台录音。材料版本中的服务器状态单独显示；本机保存成功不等于已上传。\n\n笔记库可开启或撤销持续上传授权。上传只发送完整原始材料；逐段转写、整理和 AI 分析仍分别需要你确认。") },
                     confirmButton = { TextButton(onClick = { showAbout = false }) { Text("知道了") } })
                 if (showMaterials) NoteMaterialsSheet(note, sessions, materials, busy, { showMaterials = false }, onRetryMaterial, onExportMaterial,
                     onUpload = { uploadVersionId = it; showMaterials = false }, uploads = uploads, target = uploadTarget,
@@ -245,6 +250,10 @@ fun NativeNotesScreen(
                 if (showRecordings) NoteRecordingsSheet(sessions, recording, playing, { showRecordings = false }, onPlay, onPauseResume, onStopRecording)
                 completion?.takeIf { it.noteId == note.id }?.let { finished ->
                     NoteCompletionSheet(materials.entries.firstOrNull { it.id == finished.versionId }, onDismissCompletion,
+                        autoSubmitTarget = uploadTarget,
+                        autoSubmitEnabled = autoSubmitAuthorization?.let { auth -> uploadTarget?.binding?.let { auth.serverIdentity == it.serverIdentity && auth.ownerId == it.ownerId } } == true,
+                        onEnableAutoSubmit = { target -> onDismissCompletion(); onEnableAutoSubmit(finished.versionId, target) },
+                        onRevokeAutoSubmit = { onDismissCompletion(); onRevokeAutoSubmit() },
                         onMaterials = { onDismissCompletion(); showMaterials = true },
                         onLibrary = { onDismissCompletion(); onOpen(null) })
                 }

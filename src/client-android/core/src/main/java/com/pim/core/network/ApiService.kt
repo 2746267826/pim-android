@@ -1,6 +1,8 @@
 package com.pim.core.network
 
 import com.pim.core.contract.BeginNoteMaterialUploadRequest
+import com.pim.core.contract.CloneNoteMaterialVersionRequest
+import com.pim.core.contract.NativeNotePageDtoApiResponse
 import com.pim.core.contract.NoteAsrDestinationsDtoApiResponse
 import com.pim.core.contract.NoteMaterialUploadDtoApiResponse
 import com.pim.core.contract.NoteMaterialVersionDtoApiResponse
@@ -135,6 +137,21 @@ import okhttp3.RequestBody
  */
 interface ApiService {
     // Fixed native-note versions. These signatures are checked against the generated contract before compilation.
+    @GET("native-notes")
+    suspend fun listNativeNotes(
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 20
+    ): NativeNotePageDtoApiResponse
+
+    @GET("native-notes/{noteId}/current")
+    suspend fun getCurrentNativeNoteVersion(@Path("noteId") noteId: String): NoteMaterialVersionDtoApiResponse
+
+    @POST("native-notes/versions/{sourceVersionId}/clone")
+    suspend fun cloneNativeNoteVersion(
+        @Path("sourceVersionId") sourceVersionId: String,
+        @Body request: CloneNoteMaterialVersionRequest
+    ): NoteMaterialUploadDtoApiResponse
+
     @POST("native-notes/versions")
     suspend fun beginNoteMaterialUpload(@Body request: BeginNoteMaterialUploadRequest): NoteMaterialUploadDtoApiResponse
 

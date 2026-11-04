@@ -108,6 +108,40 @@ class NotesViewModel @Inject constructor(
     fun dismissMessage(text: String) { if (mutableMessage.value == text) mutableMessage.value = null }
     fun dismissCompletion() { mutableCompletion.value = null }
 
+    fun enableAutoSubmit(versionId: String, target: NoteUploadTarget) {
+        viewModelScope.launch {
+            try {
+                val result = uploads.authorizeAutoSubmitForVersion(versionId, target)
+                tell(when {
+                    !result.authorized -> "账号或服务器已变化，未保存自动上传授权；请重新核对当前目标"
+                    result.scheduled -> "持续授权已保存；此版本材料齐备后会加入后台上传队列，转写与 AI 分析仍需单独确认"
+                    else -> "持续授权已保存，但此版本的后台安排尚未确认；材料版本仍保留，可重试准备或上传"
+                })
+            } catch (error: CancellationException) { throw error }
+            catch (_: Exception) { tell("未能确认自动上传授权或后台安排，请重试；没有启动 AI 分析") }
+        }
+    }
+
+    fun enableAutoSubmit(target: NoteUploadTarget) {
+        viewModelScope.launch {
+            try {
+                if (uploads.authorizeAutoSubmit(target)) tell("持续授权已保存；之后固定的完整材料会自动上传到此账号和服务器，转写与 AI 分析仍需单独确认")
+                else tell("账号或服务器已变化，未保存自动上传授权；请重新核对当前目标")
+            } catch (error: CancellationException) { throw error }
+            catch (_: Exception) { tell("未能确认自动上传授权已保存，请重试") }
+        }
+    }
+
+    fun revokeAutoSubmit() {
+        viewModelScope.launch {
+            try {
+                if (uploads.revokeAutoSubmitDurably()) tell("已撤销持续授权；已加入上传队列的任务仍会继续")
+                else tell("未能确认撤销成功；授权状态可能仍有效，请重试")
+            } catch (error: CancellationException) { throw error }
+            catch (_: Exception) { tell("未能确认撤销成功；授权状态可能仍有效，请重试") }
+        }
+    }
+
     fun submitUpload(versionId: String, target: NoteUploadTarget) {
         viewModelScope.launch {
             try {
@@ -546,7 +580,15 @@ class NotesViewModel @Inject constructor(
                 val snapshot = notes.checkpoint(id)
                 val sessions = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { recordings.materialSessions(id) }
                 val versionId = materials.freeze(snapshot, sessions)
+                val registration = try { uploads.submitIfAuthorized(versionId) }
+                catch (error: CancellationException) { throw error }
+                catch (_: Exception) { NoteAutoSubmitRegistration(authorized = false, scheduled = false) }
                 mutableCompletion.value = NoteCompletion(id, versionId)
+                tell(when {
+                    !registration.authorized -> "完整材料已保存在本机；未自动上传。可在材料版本中核对目标后上传"
+                    registration.scheduled -> "完整材料已保存；持续授权已按结束时账号和服务器锁定，材料齐备后加入后台上传队列"
+                    else -> "完整材料已保存；自动上传授权有效，但后台安排未确认，请检查材料版本后重试"
+                })
             } catch (error: CancellationException) {
                 if (error is kotlinx.coroutines.TimeoutCancellationException) tell("录音尚未确认停止，请检查状态并重试") else throw error
             } catch (_: Exception) {

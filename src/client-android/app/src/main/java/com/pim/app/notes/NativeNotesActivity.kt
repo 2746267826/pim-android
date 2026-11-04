@@ -95,6 +95,7 @@ class NativeNotesActivity : ComponentActivity() {
             val materials by model.materials.state.collectAsStateWithLifecycle()
             val completion by model.completion.collectAsStateWithLifecycle()
             val uploads by model.uploads.state.collectAsStateWithLifecycle()
+            val autoSubmitAuthorization by model.uploads.autoSubmitAuthorization.collectAsStateWithLifecycle()
             val asr by model.asr.state.collectAsStateWithLifecycle()
             val artifacts by model.artifacts.state.collectAsStateWithLifecycle()
             val artifactEntry by model.artifactEntry.collectAsStateWithLifecycle()
@@ -186,7 +187,9 @@ class NativeNotesActivity : ComponentActivity() {
                             RecordingController.finish(this, session.id)?.let { model.tell(it.message) }
                         }
                     }, completion = completion, onDismissCompletion = model::dismissCompletion, onDismissMessage = model::dismissMessage,
-                    uploads = uploads, uploadTarget = uploadTarget, onUpload = model::submitUpload,
+                    uploads = uploads, uploadTarget = uploadTarget, autoSubmitAuthorization = autoSubmitAuthorization,
+                    onAuthorizeAutoSubmit = model::enableAutoSubmit, onRevokeAutoSubmit = model::revokeAutoSubmit,
+                    onEnableAutoSubmit = model::enableAutoSubmit, onUpload = model::submitUpload,
                     onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload,
                     asr = asr, asrActions = asrActions,
                     legacyMigration = legacyMigration,

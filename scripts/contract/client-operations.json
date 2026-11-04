@@ -113,6 +113,9 @@
     {"apiService": "getOperationConfirmation", "method": "GET", "path": "/api/v1/operations/confirmations/{id}"},
     {"apiService": "rejectOperationConfirmation", "method": "POST", "path": "/api/v1/operations/confirmations/{id}/reject"},
     {"apiService": "getHabits", "method": "GET", "path": "/api/v1/calendar/habits"},
-    {"apiService": "archiveHabit", "method": "POST", "path": "/api/v1/calendar/habits/{id}/archive"}
+    {"apiService": "archiveHabit", "method": "POST", "path": "/api/v1/calendar/habits/{id}/archive"},
+    {"apiService": "listNativeNotes", "method": "GET", "path": "/api/v1/native-notes"},
+    {"apiService": "getCurrentNativeNoteVersion", "method": "GET", "path": "/api/v1/native-notes/{noteId}/current"},
+    {"apiService": "cloneNativeNoteVersion", "method": "POST", "path": "/api/v1/native-notes/versions/{sourceVersionId}/clone"}
   ]
 }

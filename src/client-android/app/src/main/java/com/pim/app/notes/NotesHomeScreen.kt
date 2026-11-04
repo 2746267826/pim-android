@@ -8,6 +8,7 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.platform.LocalContext
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import kotlinx.coroutines.launch
 
 @Composable
 fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltViewModel()) {
@@ -15,6 +16,7 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
     val notes by model.notes.state.collectAsStateWithLifecycle()
     val recordings by model.recordings.state.collectAsStateWithLifecycle()
     val uploads by model.uploads.state.collectAsStateWithLifecycle()
+    val autoSubmitAuthorization by model.uploads.autoSubmitAuthorization.collectAsStateWithLifecycle()
     val asr by model.asr.state.collectAsStateWithLifecycle()
     val artifacts by model.artifacts.state.collectAsStateWithLifecycle()
     val artifactEntry by model.artifactEntry.collectAsStateWithLifecycle()
@@ -56,7 +58,8 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
         NoteLibraryScreen(notes, null, recordings, false,
             onCreate = { context.startActivity(NativeNotesActivity.intent(context, model.notes.create(), true)) },
             onOpen = { id -> if (id != null) context.startActivity(NativeNotesActivity.intent(context, id, true)) },
-            onExit = null, uploads = uploads, currentTarget = target,
+            onExit = null, uploads = uploads, currentTarget = target, autoSubmitAuthorization = autoSubmitAuthorization,
+            onEnableAutoSubmit = model::enableAutoSubmit, onRevokeAutoSubmit = model::revokeAutoSubmit,
             onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload,
             asrTaskCount = asr.tasks.size, onAsr = { showAsr = true },
             onLegacyQuickNotes = legacyMigrationActions.open)
@@ -103,10 +106,14 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
 @Composable
 internal fun rememberUploadTarget(repository: NoteUploadRepository): NoteUploadTarget? {
     val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+    val scope = rememberCoroutineScope()
     var target by remember(repository) { mutableStateOf(repository.target()) }
     DisposableEffect(lifecycle, repository) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) target = repository.target()
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                target = repository.target()
+                scope.launch { repository.resumeAutoSubmits() }
+            }
         }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }

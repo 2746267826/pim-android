@@ -14,7 +14,9 @@ import kotlinx.coroutines.launch
 fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltViewModel()) {
     val context = LocalContext.current
     val notes by model.notes.state.collectAsStateWithLifecycle()
+    val cloudNotes by model.cloudNotesState.collectAsStateWithLifecycle()
     val recordings by model.recordings.state.collectAsStateWithLifecycle()
+    val busy by model.busy.collectAsStateWithLifecycle()
     val uploads by model.uploads.state.collectAsStateWithLifecycle()
     val autoSubmitAuthorization by model.uploads.autoSubmitAuthorization.collectAsStateWithLifecycle()
     val asr by model.asr.state.collectAsStateWithLifecycle()
@@ -55,14 +57,18 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
     LaunchedEffect(message) { message?.let { snackbar.showSnackbar(it, withDismissAction = true); model.dismissMessage(it) } }
     Surface(modifier) {
       Box(Modifier.fillMaxSize()) {
-        NoteLibraryScreen(notes, null, recordings, false,
+        NoteLibraryScreen(notes, null, recordings, busy,
             onCreate = { context.startActivity(NativeNotesActivity.intent(context, model.notes.create(), true)) },
             onOpen = { id -> if (id != null) context.startActivity(NativeNotesActivity.intent(context, id, true)) },
             onExit = null, uploads = uploads, currentTarget = target, autoSubmitAuthorization = autoSubmitAuthorization,
             onEnableAutoSubmit = model::enableAutoSubmit, onRevokeAutoSubmit = model::revokeAutoSubmit,
             onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload,
             asrTaskCount = asr.tasks.size, onAsr = { showAsr = true },
-            onLegacyQuickNotes = legacyMigrationActions.open)
+            onLegacyQuickNotes = legacyMigrationActions.open,
+            cloudNotes = cloudNotes, onRefreshCloudNotes = model::refreshCloudNotes,
+            onOpenCloudNote = { id -> model.openCloudNote(id) { restoredId ->
+                context.startActivity(NativeNotesActivity.intent(context, restoredId, true))
+            } })
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(com.pim.app.ui.theme.PimTheme.dimensions.spaceLarge)
             .padding(bottom = com.pim.app.ui.theme.PimTheme.dimensions.noteDockClearance))
         if (showAsr) NoteAsrSurface(

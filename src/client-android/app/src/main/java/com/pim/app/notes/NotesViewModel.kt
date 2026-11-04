@@ -29,6 +29,7 @@ class NotesViewModel @Inject constructor(
     val artifacts: NoteArtifactRepository,
     val taskSuggestions: NoteTaskSuggestionRepository,
     val legacyQuickNoteMigration: LegacyQuickNoteMigrationRepository,
+    val cloudNotes: CloudNoteRepository,
 ) : ViewModel() {
     val selectedId = saved.getStateFlow<String?>("noteId", null)
     private val mutableMessage = MutableStateFlow<String?>(null)
@@ -55,6 +56,7 @@ class NotesViewModel @Inject constructor(
     private val mutableTaskSuggestionsSource = MutableStateFlow<NoteTaskSuggestionSource?>(null)
     val taskSuggestionsSource = mutableTaskSuggestionsSource.asStateFlow()
     val legacyQuickNoteMigrationState = legacyQuickNoteMigration.state
+    val cloudNotesState = cloudNotes.state
 
     init {
         viewModelScope.launch {
@@ -65,6 +67,32 @@ class NotesViewModel @Inject constructor(
             uploads.initialize()
             asr.initialize()
             artifacts.initialize()
+            cloudNotes.refresh()
+        }
+    }
+
+    fun refreshCloudNotes() {
+        viewModelScope.launch {
+            cloudNotes.refresh()
+            cloudNotes.state.value.problem?.let(::tell)
+        }
+    }
+
+    fun openCloudNote(noteId: String, onRestored: (String) -> Unit) {
+        if (busy.value) return
+        viewModelScope.launch {
+            mutableBusy.value = true
+            try {
+                val restored = cloudNotes.restore(noteId)
+                notes.reload()
+                open(restored.id)
+                onRestored(restored.id)
+                if (cloudNotes.hasReadOnlyRecordingArchive(noteId)) {
+                    tell("笔记正文、照片和手写已恢复；录音原件已安全归档，但当前版本不支持编辑或在笔记内播放录音。")
+                }
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) { tell(error.message ?: "云端笔记安全校验未通过，未安装空白或损坏内容") }
+            finally { mutableBusy.value = false }
         }
     }
 

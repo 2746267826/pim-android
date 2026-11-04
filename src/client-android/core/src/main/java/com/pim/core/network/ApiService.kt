@@ -119,6 +119,7 @@ import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Streaming
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
@@ -157,6 +158,13 @@ interface ApiService {
 
     @GET("native-notes/versions/{versionId}")
     suspend fun getNoteMaterialVersion(@Path("versionId") versionId: String): NoteMaterialVersionDtoApiResponse
+
+    @Streaming
+    @GET("native-notes/versions/{versionId}/files/{fileIndex}")
+    suspend fun downloadNoteMaterialFile(
+        @Path("versionId") versionId: String,
+        @Path("fileIndex") fileIndex: Int
+    ): retrofit2.Response<ResponseBody>
 
     @PUT("native-notes/versions/{versionId}/files/{fileIndex}/parts/{partIndex}")
     suspend fun uploadNoteMaterialPart(@Path("versionId") versionId: String, @Path("fileIndex") fileIndex: Int,

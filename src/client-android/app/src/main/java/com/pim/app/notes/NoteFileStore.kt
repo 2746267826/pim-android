@@ -59,6 +59,56 @@ class NoteFileStore(private val root: File) {
     fun read(id: String) = NoteDocument.decode(AtomicFile(File(directory(id), "note.json")).readFully().toString(Charsets.UTF_8))
         .also { require(it.id == id) }
 
+    @Synchronized
+    fun installCloudDocument(note: NoteDocument, files: Map<String, ByteArray>) {
+        note.validate()
+        val folder = directory(note.id)
+        require(!folder.exists()) { "Local note already exists; refusing to replace it" }
+        val expected = note.blocks.mapNotNull { block -> when (block.string("kind")) {
+            "photo" -> photoPath(block)
+            "ink" -> inkPath(block)
+            else -> null
+        } }.toSet()
+        require(files.keys == expected && files.keys.all { it.startsWith("assets/") }) {
+            "Cloud material set is incomplete or contains unknown files"
+        }
+        require(files.values.sumOf { it.size.toLong() } <= MAX_CLOUD_RESTORE_BYTES &&
+            files.values.all { it.size <= MAX_PHOTO_BYTES }) { "Cloud material exceeds the local restore budget" }
+        val staging = File(root, ".cloud-staging/${note.id}-${newNoteId()}")
+        check(staging.mkdirs()) { "Cannot create cloud restore staging directory" }
+        try {
+            files.forEach { (path, bytes) ->
+                require(path.startsWith("assets/") && path.split('/').size == 2 && !path.contains(".."))
+                val output = File(staging, path)
+                check(output.parentFile!!.isDirectory || output.parentFile!!.mkdirs())
+                output.writeBytes(bytes)
+            }
+            note.blocks.filter { it.string("kind") == "photo" }.forEach { block ->
+                val path = photoPath(block)
+                val photo = File(staging, path)
+                require(photo.isFile && photo.length() <= MAX_PHOTO_BYTES)
+                require(validMaterialDigest(block.string("sha256")))
+                require(photo.inputStream().use(::hashStream) == block.string("sha256")) { "Cloud photo integrity check failed" }
+                require(block.string("mimeType") in setOf("image/jpeg", "image/png", "image/webp"))
+                val preview = photoPreview(photo)
+                require(preview != null) { "Cloud photo cannot be decoded" }
+                preview.recycle()
+            }
+            note.blocks.filter { it.string("kind") == "ink" }.forEach { block ->
+                val preview = File(staging, inkPath(block))
+                require(preview.isFile && preview.length() <= MAX_INK_PREVIEW_BYTES)
+                require(preview.inputStream().use { it.readNBytesCompat(8) }.contentEquals(PNG_SIGNATURE)) {
+                    "Cloud ink preview is invalid"
+                }
+            }
+            atomicWrite(File(staging, "note.json")) { it.write(note.source.toString().toByteArray(Charsets.UTF_8)) }
+            check(folder.parentFile!!.isDirectory || folder.parentFile!!.mkdirs())
+            check(staging.renameTo(folder)) { "Cannot atomically publish restored cloud note" }
+        } finally {
+            if (staging.exists()) staging.deleteRecursively()
+        }
+    }
+
     /** Returns null only when the entire stable-ID directory is definitely absent. */
     fun readForCreate(id: String): NoteDocument? {
         val folder = directory(id)
@@ -367,6 +417,7 @@ class NoteFileStore(private val root: File) {
 
     companion object {
         const val MAX_PHOTO_BYTES = 32 * 1024 * 1024L
+        const val MAX_CLOUD_RESTORE_BYTES = 192L * 1024 * 1024
         const val MAX_QUARANTINE_ENTRIES = 2
         const val MAX_QUARANTINE_BYTES = 224L * 1024 * 1024
         private const val MAX_MANIFEST_BYTES = 8 * 1024 * 1024

@@ -118,6 +118,28 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
         }
     }
 
+    suspend fun reload() = withContext(Dispatchers.IO) {
+        synchronized(this@NoteRepository) {
+            val entries = store.entries()
+            val documents = entries.filterNot { it.damaged }.associate { it.id to store.read(it.id) }
+            val restored = mutableMapOf<String, NoteEditHistory>()
+            documents.forEach { (id, document) ->
+                if (NoteEditHistory.canStore(document)) {
+                    runCatching { editHistory.read(id)?.reconcile(document) }.getOrNull()?.let { restored[id] = it }
+                }
+            }
+            histories.clear()
+            histories.putAll(restored)
+            mutableState.value = state.value.copy(
+                loaded = true,
+                entries = entries,
+                documents = documents,
+                savedRevisions = documents.mapValues { it.value.revision },
+                editHistory = documents.mapValues { (id, _) -> histories[id]?.availability() ?: NoteHistoryAvailability() },
+            )
+        }
+    }
+
     @Synchronized fun create(): String {
         check(state.value.loaded)
         val note = NoteDocument.create()

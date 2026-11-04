@@ -39,9 +39,19 @@ internal fun NoteLibraryScreen(
     onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
     asrTaskCount: Int = 0, onAsr: () -> Unit = {}, onImport: () -> Unit = {},
     onLegacyQuickNotes: () -> Unit = {},
+    cloudNotes: CloudNotesState = CloudNotesState(), onRefreshCloudNotes: () -> Unit = {},
+    onOpenCloudNote: (String) -> Unit = {},
 ) {
     val d = PimTheme.dimensions
     var search by rememberSaveable { mutableStateOf("") }
+    var showMore by rememberSaveable { mutableStateOf(false) }
+    var cloudBusyId by rememberSaveable { mutableStateOf<String?>(null) }
+    var cloudRequestStarted by remember { mutableStateOf(false) }
+    LaunchedEffect(busy, cloudBusyId) {
+        if (cloudBusyId == null) cloudRequestStarted = false
+        else if (busy) cloudRequestStarted = true
+        else if (cloudRequestStarted) cloudBusyId = null
+    }
     val entries = state.entries.filter { entry -> search.isBlank() || entry.title.contains(search, true) ||
         state.documents[entry.id]?.blocks?.any { it.string("kind") == "markdown" && it.string("text").contains(search, true) } == true }
     Column(modifier.fillMaxSize()) {
@@ -65,6 +75,36 @@ internal fun NoteLibraryScreen(
                 }
                 PimStatusBanner("笔记和原始材料保存在本机。上传只保存固定材料；逐段转写需单独核对 ASR 目标并明确同意。",
                     PimStatusTone.Info)
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("云端笔记", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = onRefreshCloudNotes, enabled = !cloudNotes.loading && !busy) {
+                        Text(if (cloudNotes.loading) "正在刷新" else "刷新")
+                    }
+                }
+                cloudNotes.problem?.let { problem ->
+                    PimStatusBanner(problem, if (cloudNotes.unsupported) PimStatusTone.Info else PimStatusTone.Warning)
+                }
+                if (cloudNotes.loading && cloudNotes.entries.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
+                cloudNotes.entries.forEach { cloud ->
+                    OutlinedCard(
+                        onClick = {
+                            cloudRequestStarted = false
+                            cloudBusyId = cloud.summary.noteId
+                            onOpenCloudNote(cloud.summary.noteId)
+                        },
+                        enabled = !busy && cloudBusyId == null && cloud.problem == null,
+                        modifier = Modifier.fillMaxWidth().testTag("cloud-note-open-${cloud.summary.noteId}"),
+                    ) {
+                        Column(Modifier.padding(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
+                            Text(cloud.summary.title.ifBlank { "未命名云端笔记" }, style = MaterialTheme.typography.titleMedium)
+                            Text(cloud.problem ?: if (cloudBusyId == cloud.summary.noteId) "正在安全下载并校验材料…" else "云端 · 点击下载到本机笔记库",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                if (cloudNotes.loaded && cloudNotes.entries.isEmpty() && cloudNotes.problem == null) {
+                    Text("暂无云端笔记", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
                 if (state.importQuarantine.retainedCount > 0) {
                     val retainedMiB = (state.importQuarantine.retainedBytes + 1024 * 1024 - 1) / (1024 * 1024)
                     PimStatusBanner(
@@ -75,33 +115,27 @@ internal fun NoteLibraryScreen(
                         PimStatusTone.Warning,
                     )
                 }
-                OutlinedButton(
-                    onClick = onAsr,
-                    modifier = Modifier.fillMaxWidth().testTag("note-asr-open"),
-                ) {
-                    Icon(Icons.Default.GraphicEq, null)
-                    Spacer(Modifier.width(d.spaceSmall))
-                    Text(if (asrTaskCount > 0) "逐段转写任务 · $asrTaskCount 个" else "逐段转写任务")
-                }
                 NoteAutoSubmitControl(currentTarget, autoSubmitAuthorization, onEnableAutoSubmit, onRevokeAutoSubmit)
-                Spacer(Modifier.height(d.spaceMedium))
-                OutlinedButton(
-                    onClick = onLegacyQuickNotes,
-                    modifier = Modifier.fillMaxWidth().testTag("legacy-quicknote-migration-open"),
-                ) {
-                    Icon(Icons.Default.MoveToInbox, null)
-                    Spacer(Modifier.width(d.spaceSmall))
-                    Text("迁移旧快速记录到本机笔记")
+                TextButton(onClick = { showMore = !showMore }, modifier = Modifier.fillMaxWidth().testTag("notes-more-toggle")) {
+                    Text(if (showMore) "收起更多功能" else "更多功能")
                 }
-                Spacer(Modifier.height(d.spaceMedium))
-                OutlinedButton(
-                    onClick = { if (!busy) onImport() },
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().testTag("note-import-package"),
-                ) {
-                    Icon(Icons.Default.FileUpload, null)
-                    Spacer(Modifier.width(d.spaceSmall))
-                    Text("导入可编辑文档包")
+                if (showMore) {
+                    OutlinedButton(onClick = onAsr, modifier = Modifier.fillMaxWidth().testTag("note-asr-open")) {
+                        Icon(Icons.Default.GraphicEq, null); Spacer(Modifier.width(d.spaceSmall))
+                        Text(if (asrTaskCount > 0) "逐段转写任务 · $asrTaskCount 个" else "逐段转写任务")
+                    }
+                    Spacer(Modifier.height(d.spaceSmall))
+                    OutlinedButton(onClick = onLegacyQuickNotes,
+                        modifier = Modifier.fillMaxWidth().testTag("legacy-quicknote-migration-open")) {
+                        Icon(Icons.Default.MoveToInbox, null); Spacer(Modifier.width(d.spaceSmall))
+                        Text("迁移旧快速记录到本机笔记")
+                    }
+                    Spacer(Modifier.height(d.spaceSmall))
+                    OutlinedButton(onClick = { if (!busy) onImport() }, enabled = !busy,
+                        modifier = Modifier.fillMaxWidth().testTag("note-import-package")) {
+                        Icon(Icons.Default.FileUpload, null); Spacer(Modifier.width(d.spaceSmall))
+                        Text("导入可编辑文档包")
+                    }
                 }
                 Spacer(Modifier.height(d.spaceMedium))
                 OutlinedTextField(search, { search = it }, label = { Text("搜索本机笔记") }, singleLine = true,

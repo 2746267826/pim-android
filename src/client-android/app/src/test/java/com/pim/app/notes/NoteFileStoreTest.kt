@@ -48,6 +48,44 @@ class NoteFileStoreTest {
         assertFalse(File(temp.root, ".insertions/$token.json").exists())
     }
 
+    @Test fun cloudRestoreValidatesMaterialsAndAtomicallyInstallsEditablePhotoAndInk() {
+        val id = newNoteId()
+        val photoBytes = ByteArrayOutputStream().also { output ->
+            val bitmap = Bitmap.createBitmap(9, 7, Bitmap.Config.ARGB_8888)
+            bitmap.eraseColor(android.graphics.Color.CYAN)
+            bitmap.compress(Bitmap.CompressFormat.PNG, 100, output)
+            bitmap.recycle()
+        }.toByteArray()
+        val photo = buildJsonObject {
+            put("id", newNoteId()); put("kind", "photo"); put("assetId", newNoteId())
+            put("mimeType", "image/png"); put("sha256", materialDigest(photoBytes.inputStream()))
+        }
+        val ink = withInk(inkBlock(320f), InkData(strokes = listOf(InkStroke(listOf(InkPoint(20f, 30f), InkPoint(80f, 90f))))))
+        val note = NoteDocument.create().let { original ->
+            NoteDocument(JsonObject(original.source + mapOf(
+                "id" to JsonPrimitive(id),
+                "blocks" to JsonArray(listOf(markdownBlock("恢复正文"), photo, ink)),
+            )))
+        }
+        val inkBytes = ByteArrayOutputStream().also { output ->
+            val bitmap = InkRendering.bitmap(inkOf(ink))
+            try { bitmap.compress(Bitmap.CompressFormat.PNG, 100, output) } finally { bitmap.recycle() }
+        }.toByteArray()
+        val restoreRoot = temp.newFolder("cloud-restore")
+        val restoredStore = NoteFileStore(restoreRoot)
+        val materials = mapOf(NoteFileStore.photoPath(photo) to photoBytes, NoteFileStore.inkPath(ink) to inkBytes)
+
+        val tampered = materials.toMutableMap().apply { put(NoteFileStore.photoPath(photo), photoBytes + byteArrayOf(1)) }
+        assertThrows(IllegalArgumentException::class.java) { restoredStore.installCloudDocument(note, tampered) }
+        assertTrue(restoredStore.entries().isEmpty())
+
+        restoredStore.installCloudDocument(note, materials)
+        assertEquals(note, restoredStore.read(id))
+        assertArrayEquals(photoBytes, restoredStore.photoFile(id, photo.string("assetId")).readBytes())
+        assertTrue(File(restoreRoot, "$id/${NoteFileStore.inkPath(ink)}").isFile)
+        assertThrows(IllegalArgumentException::class.java) { restoredStore.installCloudDocument(note, materials) }
+    }
+
     @Test fun documentPackageContainsExactEditableSourceRelativePhotoAndRealInkPng() {
         var note = NoteDocument.create()
         val photo = ByteArrayOutputStream().also { output ->

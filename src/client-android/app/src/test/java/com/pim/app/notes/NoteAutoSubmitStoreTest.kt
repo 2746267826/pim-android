@@ -45,4 +45,18 @@ class NoteAutoSubmitStoreTest {
         assertNull(local.intent(versionId))
         assertEquals(NoteAutoSubmitAuthorization(b.binding.serverIdentity, b.binding.ownerId), local.authorization())
     }
+
+    @Test fun sameTargetRetainsMultipleIntentsButChangingTargetClearsAll() {
+        val local = store()
+        val otherVersion = "44444444-4444-4444-8444-444444444444"
+        assertTrue(local.authorizeForVersion(a, versionId))
+        assertTrue(local.authorizeForVersion(a, otherVersion))
+        assertNotNull(local.intent(versionId))
+        assertNotNull(local.intent(otherVersion))
+
+        assertTrue(local.authorize(b))
+        assertNull(local.intent(versionId))
+        assertNull(local.intent(otherVersion))
+        assertTrue(local.pendingVersionIds().isEmpty())
+    }
 }

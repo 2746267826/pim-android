@@ -1,6 +1,8 @@
 package com.pim.core.network
 
 import com.pim.core.contract.BeginNoteMaterialUploadRequest
+import com.pim.core.contract.CloneNoteMaterialVersionRequest
+import com.pim.core.contract.NativeNotePageDtoApiResponse
 import com.pim.core.contract.NoteAsrDestinationsDtoApiResponse
 import com.pim.core.contract.NoteMaterialUploadDtoApiResponse
 import com.pim.core.contract.NoteMaterialVersionDtoApiResponse
@@ -117,6 +119,7 @@ import retrofit2.Response
 import retrofit2.http.Body
 import retrofit2.http.DELETE
 import retrofit2.http.GET
+import retrofit2.http.Streaming
 import retrofit2.http.POST
 import retrofit2.http.PUT
 import retrofit2.http.Path
@@ -135,11 +138,33 @@ import okhttp3.RequestBody
  */
 interface ApiService {
     // Fixed native-note versions. These signatures are checked against the generated contract before compilation.
+    @GET("native-notes")
+    suspend fun listNativeNotes(
+        @Query("offset") offset: Int = 0,
+        @Query("limit") limit: Int = 20
+    ): NativeNotePageDtoApiResponse
+
+    @GET("native-notes/{noteId}/current")
+    suspend fun getCurrentNativeNoteVersion(@Path("noteId") noteId: String): NoteMaterialVersionDtoApiResponse
+
+    @POST("native-notes/versions/{sourceVersionId}/clone")
+    suspend fun cloneNativeNoteVersion(
+        @Path("sourceVersionId") sourceVersionId: String,
+        @Body request: CloneNoteMaterialVersionRequest
+    ): NoteMaterialUploadDtoApiResponse
+
     @POST("native-notes/versions")
     suspend fun beginNoteMaterialUpload(@Body request: BeginNoteMaterialUploadRequest): NoteMaterialUploadDtoApiResponse
 
     @GET("native-notes/versions/{versionId}")
     suspend fun getNoteMaterialVersion(@Path("versionId") versionId: String): NoteMaterialVersionDtoApiResponse
+
+    @Streaming
+    @GET("native-notes/versions/{versionId}/files/{fileIndex}")
+    suspend fun downloadNoteMaterialFile(
+        @Path("versionId") versionId: String,
+        @Path("fileIndex") fileIndex: Int
+    ): retrofit2.Response<ResponseBody>
 
     @PUT("native-notes/versions/{versionId}/files/{fileIndex}/parts/{partIndex}")
     suspend fun uploadNoteMaterialPart(@Path("versionId") versionId: String, @Path("fileIndex") fileIndex: Int,

@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 a6ac67bfcebad14e3c5d5e67e09f26883dc54e869786524a31b7bd1422287247)
+//   契约快照 : contract/openapi.json (sha256 a96614e9e190c83279045c91b0956190e80074199a54b250ceb8c6d16840972a)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -241,6 +241,13 @@ data class ClientShellLatestResponse(
     val shellWindowsVersion: String? = null,
     val windowsUrl: String? = null,
     val windowsVersion: String? = null,
+)
+
+/** 契约 `components.schemas.CloneNoteMaterialVersionRequest`（request）。 */
+@Serializable
+data class CloneNoteMaterialVersionRequest(
+    val expectedCurrentVersionId: String? = null,
+    val material: BeginNoteMaterialUploadRequest,
 )
 
 /** 契约 `components.schemas.ConfirmNoteTaskSuggestionRequest`（request）。 */
@@ -1320,6 +1327,32 @@ data class MobileUsageSummaryResponseApiResponse(
     val data: MobileUsageSummaryResponse? = null,
     val message: String,
     val timestamp: String,
+)
+
+/** 契约 `components.schemas.NativeNotePageDto`（response）。 */
+@Serializable
+data class NativeNotePageDto(
+    val items: List<NativeNoteSummaryDto>,
+    val offset: Int,
+    val total: Int,
+)
+
+/** 契约 `components.schemas.NativeNotePageDtoApiResponse`（response）。 */
+@Serializable
+data class NativeNotePageDtoApiResponse(
+    val code: Int,
+    val data: NativeNotePageDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NativeNoteSummaryDto`（response）。 */
+@Serializable
+data class NativeNoteSummaryDto(
+    val currentVersionId: String,
+    val hasConflict: Boolean,
+    val noteId: String,
+    val title: String,
 )
 
 /** 契约 `components.schemas.NoteAsrAttemptDto`（response）。 */

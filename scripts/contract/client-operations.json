@@ -78,6 +78,7 @@
     { "apiService": "getClientLatest", "method": "GET", "path": "/api/client/shell/latest" },
     {"apiService": "beginNoteMaterialUpload", "method": "POST", "path": "/api/v1/native-notes/versions"},
     {"apiService": "getNoteMaterialVersion", "method": "GET", "path": "/api/v1/native-notes/versions/{versionId}"},
+    {"apiService": "downloadNoteMaterialFile", "method": "GET", "path": "/api/v1/native-notes/versions/{versionId}/files/{fileIndex}"},
     {"apiService": "uploadNoteMaterialPart", "method": "PUT", "path": "/api/v1/native-notes/versions/{versionId}/files/{fileIndex}/parts/{partIndex}"},
     {"apiService": "completeNoteMaterialUpload", "method": "POST", "path": "/api/v1/native-notes/versions/{versionId}/complete"},
     {"apiService": "getNoteAsrSources", "method": "GET", "path": "/api/v1/native-notes/asr-tasks/sources"},
@@ -113,6 +114,9 @@
     {"apiService": "getOperationConfirmation", "method": "GET", "path": "/api/v1/operations/confirmations/{id}"},
     {"apiService": "rejectOperationConfirmation", "method": "POST", "path": "/api/v1/operations/confirmations/{id}/reject"},
     {"apiService": "getHabits", "method": "GET", "path": "/api/v1/calendar/habits"},
-    {"apiService": "archiveHabit", "method": "POST", "path": "/api/v1/calendar/habits/{id}/archive"}
+    {"apiService": "archiveHabit", "method": "POST", "path": "/api/v1/calendar/habits/{id}/archive"},
+    {"apiService": "listNativeNotes", "method": "GET", "path": "/api/v1/native-notes"},
+    {"apiService": "getCurrentNativeNoteVersion", "method": "GET", "path": "/api/v1/native-notes/{noteId}/current"},
+    {"apiService": "cloneNativeNoteVersion", "method": "POST", "path": "/api/v1/native-notes/versions/{sourceVersionId}/clone"}
   ]
 }

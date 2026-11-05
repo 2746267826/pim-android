@@ -34,12 +34,24 @@ internal fun NoteLibraryScreen(
     modifier: Modifier = Modifier,
     uploads: NoteUploadsState = NoteUploadsState(),
     currentTarget: NoteUploadTarget? = null,
+    autoSubmitAuthorization: NoteAutoSubmitAuthorization? = null,
+    onEnableAutoSubmit: (NoteUploadTarget) -> Unit = {}, onRevokeAutoSubmit: () -> Unit = {},
     onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
     asrTaskCount: Int = 0, onAsr: () -> Unit = {}, onImport: () -> Unit = {},
     onLegacyQuickNotes: () -> Unit = {},
+    cloudNotes: CloudNotesState = CloudNotesState(), onRefreshCloudNotes: () -> Unit = {},
+    onOpenCloudNote: (String) -> Unit = {},
 ) {
     val d = PimTheme.dimensions
     var search by rememberSaveable { mutableStateOf("") }
+    var showMore by rememberSaveable { mutableStateOf(false) }
+    var cloudBusyId by rememberSaveable { mutableStateOf<String?>(null) }
+    var cloudRequestStarted by remember { mutableStateOf(false) }
+    LaunchedEffect(busy, cloudBusyId) {
+        if (cloudBusyId == null) cloudRequestStarted = false
+        else if (busy) cloudRequestStarted = true
+        else if (cloudRequestStarted) cloudBusyId = null
+    }
     val entries = state.entries.filter { entry -> search.isBlank() || entry.title.contains(search, true) ||
         state.documents[entry.id]?.blocks?.any { it.string("kind") == "markdown" && it.string("text").contains(search, true) } == true }
     Column(modifier.fillMaxSize()) {
@@ -72,33 +84,6 @@ internal fun NoteLibraryScreen(
                             "超限时只回收最旧的失败导入包，不删除任何已保存笔记。",
                         PimStatusTone.Warning,
                     )
-                }
-                OutlinedButton(
-                    onClick = onAsr,
-                    modifier = Modifier.fillMaxWidth().testTag("note-asr-open"),
-                ) {
-                    Icon(Icons.Default.GraphicEq, null)
-                    Spacer(Modifier.width(d.spaceSmall))
-                    Text(if (asrTaskCount > 0) "逐段转写任务 · $asrTaskCount 个" else "逐段转写任务")
-                }
-                Spacer(Modifier.height(d.spaceMedium))
-                OutlinedButton(
-                    onClick = onLegacyQuickNotes,
-                    modifier = Modifier.fillMaxWidth().testTag("legacy-quicknote-migration-open"),
-                ) {
-                    Icon(Icons.Default.MoveToInbox, null)
-                    Spacer(Modifier.width(d.spaceSmall))
-                    Text("迁移旧快速记录到本机笔记")
-                }
-                Spacer(Modifier.height(d.spaceMedium))
-                OutlinedButton(
-                    onClick = { if (!busy) onImport() },
-                    enabled = !busy,
-                    modifier = Modifier.fillMaxWidth().testTag("note-import-package"),
-                ) {
-                    Icon(Icons.Default.FileUpload, null)
-                    Spacer(Modifier.width(d.spaceSmall))
-                    Text("导入可编辑文档包")
                 }
                 Spacer(Modifier.height(d.spaceMedium))
                 OutlinedTextField(search, { search = it }, label = { Text("搜索本机笔记") }, singleLine = true,
@@ -166,6 +151,66 @@ internal fun NoteLibraryScreen(
                             if (inks > 0) append(" · $inks 张手写")
                         }, style = MaterialTheme.typography.bodySmall,
                             color = if (entry.damaged) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                }
+            }
+            item {
+                Spacer(Modifier.height(d.spaceMedium))
+                Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                    Text("云端笔记", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                    TextButton(onClick = onRefreshCloudNotes, enabled = !cloudNotes.loading && !busy) {
+                        Text(if (cloudNotes.loading) "正在刷新" else "刷新")
+                    }
+                }
+                Text("列表会自动查找云端副本；点选后才下载并校验到本机。本机已有同一笔记时不会自动覆盖。",
+                    style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                cloudNotes.problem?.let { problem ->
+                    PimStatusBanner(problem, if (cloudNotes.unsupported) PimStatusTone.Info else PimStatusTone.Warning)
+                }
+                if (cloudNotes.loading && cloudNotes.entries.isEmpty()) LinearProgressIndicator(Modifier.fillMaxWidth())
+                cloudNotes.entries.forEach { cloud ->
+                    OutlinedCard(
+                        onClick = {
+                            cloudRequestStarted = false
+                            cloudBusyId = cloud.summary.noteId
+                            onOpenCloudNote(cloud.summary.noteId)
+                        },
+                        enabled = !busy && cloudBusyId == null && cloud.problem == null,
+                        modifier = Modifier.fillMaxWidth().testTag("cloud-note-open-${cloud.summary.noteId}"),
+                    ) {
+                        Column(Modifier.padding(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
+                            Text(cloud.summary.title.ifBlank { "未命名云端笔记" }, style = MaterialTheme.typography.titleMedium)
+                            Text(cloud.problem ?: if (cloudBusyId == cloud.summary.noteId) "正在安全下载并校验材料…" else "点选后下载到本机笔记库",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                        }
+                    }
+                }
+                if (cloudNotes.loaded && cloudNotes.entries.isEmpty() && cloudNotes.problem == null) {
+                    Text("暂无云端笔记", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+                NoteAutoSubmitControl(currentTarget, autoSubmitAuthorization, onEnableAutoSubmit, onRevokeAutoSubmit)
+                TextButton(onClick = { showMore = !showMore }, modifier = Modifier.fillMaxWidth().testTag("notes-more-toggle")) {
+                    Text(if (showMore) "收起更多功能" else "更多功能")
+                }
+                if (showMore) {
+                    OutlinedButton(onClick = onAsr, modifier = Modifier.fillMaxWidth().testTag("note-asr-open")) {
+                        Icon(Icons.Default.GraphicEq, null); Spacer(Modifier.width(d.spaceSmall))
+                        Text(if (asrTaskCount > 0) "逐段转写任务 · $asrTaskCount 个" else "逐段转写任务")
+                    }
+                    Spacer(Modifier.height(d.spaceSmall))
+                    OutlinedButton(onClick = onLegacyQuickNotes,
+                        modifier = Modifier.fillMaxWidth().testTag("legacy-quicknote-migration-open")) {
+                        Icon(Icons.Default.MoveToInbox, null); Spacer(Modifier.width(d.spaceSmall))
+                        Text("迁移旧快速记录到本机笔记")
+                    }
+                    Spacer(Modifier.height(d.spaceSmall))
+                    Text("离线文档包仅用于文件交换、备份或恢复旧包，不是日常云端笔记列表的同步步骤。包内可能含录音；网页端导入不支持录音，不能作为通用互导格式。",
+                        style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Spacer(Modifier.height(d.spaceSmall))
+                    OutlinedButton(onClick = { if (!busy) onImport() }, enabled = !busy,
+                        modifier = Modifier.fillMaxWidth().testTag("note-import-package")) {
+                        Icon(Icons.Default.FileUpload, null); Spacer(Modifier.width(d.spaceSmall))
+                        Text("导入可编辑文档包")
                     }
                 }
             }

@@ -14,7 +14,7 @@
 # 只读保证：本脚本不写任何仓内文件；重新生成写到仓外 mktemp 目录，退出时删除。
 #           「谁写」= scripts/ci/generate-contract-kotlin.sh（人工 refresh）；「谁只读」= 本脚本。
 #
-# 离线：只用 python3 标准库 + 仓内两个文件，不联网、不装依赖、不跑 gradle。
+# 离线：只用可运行的 Python 3 标准库 + 仓内两个文件，不联网、不装依赖、不跑 gradle。
 #
 # 用法：
 #   bash scripts/ci/check-contract-kotlin.sh
@@ -22,13 +22,14 @@
 # 退出码：
 #   0 生成物与契约快照一致
 #   1 不一致（陈旧 / 被手工改动 / 缺失）
-#   2 环境缺失（没有 python3）
+#   2 环境缺失（没有可运行的 Python 3）
 #   4 契约快照或 operation 清单非法（生成器拒绝产出，fail-closed）
 # ---------------------------------------------------------------------------
 set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
+. "$HERE/python-runtime.sh"
 
 CONTRACT="$ROOT/contract/openapi.json"
 OPERATIONS="$ROOT/scripts/contract/client-operations.json"
@@ -39,10 +40,10 @@ EXIT_STALE=1
 EXIT_ENV=2
 EXIT_CONFIG=4
 
-if ! command -v python3 >/dev/null 2>&1; then
-  echo "需要 python3（生成器只用标准库）。" >&2
+PIM_CONTRACT_PYTHON="$(pim_contract_python)" || {
+  echo "需要可运行的 Python 3（生成器只用标准库）。" >&2
   exit $EXIT_ENV
-fi
+}
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/pim-contract-kotlin.XXXXXX")"
 cleanup() { rm -rf "$TMP"; }
@@ -55,7 +56,7 @@ echo "operation 清单: $OPERATIONS"
 echo "仓内生成物  : $GENERATED"
 echo ""
 
-if python3 "$ROOT/scripts/contract/generate-kotlin.py" \
+if "$PIM_CONTRACT_PYTHON" "$ROOT/scripts/contract/generate-kotlin.py" \
   --contract "$CONTRACT" \
   --operations "$OPERATIONS" \
   --out-dir "$TMP" >"$TMP/generate.log" 2>&1; then

@@ -36,6 +36,49 @@ class NoteMaterialStoreTest {
     private fun folder(id: String) = File(temp.root, "note-material-versions/$id")
     private fun blobs() = File(temp.root, "note-material-versions/blobs").listFiles().orEmpty().filter { validMaterialDigest(it.name) }
 
+    @Test fun canonicalMixedMaterialFixtureKeepsStableCollectionOrderIdsHashesAndSizesAfterRead() {
+        val fixture = MixedMaterialFixture.install(temp.root)
+        val restored = NoteMaterialStore.at(temp.root)
+        val snapshot = restored.uploadSnapshot(MixedMaterialFixture.VERSION_ID)
+        val photo = fixture.note.blocks.single { it.string("kind") == "photo" }
+        val ink = fixture.note.blocks.single { it.string("kind") == "ink" }
+
+        assertEquals(fixture.input, restored.read(MixedMaterialFixture.VERSION_ID))
+        assertEquals(fixture.note, restored.read(MixedMaterialFixture.VERSION_ID).document)
+        assertEquals(fixture.input.createdAtMillis, MixedMaterialFixture.MATERIAL_CREATED_AT)
+        assertEquals(listOf(
+            "note.json",
+            "document.md",
+            NoteFileStore.photoPath(photo),
+            NoteFileStore.inkPath(ink),
+            "recordings/${MixedMaterialFixture.RECORDING_ID}/manifest.json",
+            "recordings/${MixedMaterialFixture.RECORDING_ID}/s0001-c000001.wav",
+            "recordings/${MixedMaterialFixture.RECORDING_ID}/s0001-c000002.wav",
+        ), snapshot.files.map { it.path })
+        assertEquals(listOf(null, null, photo.string("id"), ink.string("id"), MixedMaterialFixture.RECORDING_ID,
+            MixedMaterialFixture.RECORDING_ID, MixedMaterialFixture.RECORDING_ID), snapshot.files.map { it.blockId ?: it.recordingId })
+        snapshot.files.forEach { file ->
+            val bytes = fixture.pinnedBytes(file)
+            assertEquals(file.sizeBytes, bytes.size.toLong())
+            assertEquals(file.sha256, materialDigest(bytes.inputStream()))
+        }
+        assertEquals(materialDigest(snapshot.inputJson), fixture.manifest.inputSha256)
+        assertEquals(snapshot.files, fixture.manifest.files)
+        assertEquals(fixture.input.note.toString(), snapshot.inputJson.let { NoteJson.decodeFromString<NoteMaterialInput>(it).note.toString() })
+
+        val workingDirectory = File(System.getProperty("user.dir"))
+        val appDirectory = if (workingDirectory.name == "app") workingDirectory else File(workingDirectory, "app")
+        val export = fixture.exportAt(File(appDirectory, "build/interop/mixed-material-v1"))
+        assertEquals(snapshot.inputJson, File(export.directory, "input.json").readText())
+        assertEquals(snapshot.manifestJson, File(export.directory, "manifest.json").readText())
+        snapshot.files.forEach { file ->
+            assertArrayEquals(fixture.pinnedBytes(file), File(export.directory, file.path).readBytes())
+        }
+        println("mixed-material-v1 directory=${export.directory}")
+        println("mixed-material-v1 inputSha256=${export.inputSha256} manifestSha256=${export.manifestSha256}")
+        export.fileSummary.forEach { println("mixed-material-v1 file=$it") }
+    }
+
     @Test fun completeVersionHasOrderedEditableSourcePhotoMatchingInkAndEverySessionSegmentAndChunk() {
         val note = mixedNote()
         val first = record(note.id, 15, 4, 6)

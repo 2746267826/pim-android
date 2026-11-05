@@ -47,6 +47,8 @@ enum class StatusActionFeedback {
 enum class DiagnosticExportFeedback {
     PackageReady,
     PackageReadyWithLocations,
+    PackageReadyPartial,
+    PackageReadyPartialWithLocations,
     ShareOpened,
     ShareUnavailable,
     InsufficientStorage,
@@ -57,7 +59,8 @@ internal data class ExportFeedbackState(
     val isExporting: Boolean = false,
     val feedback: DiagnosticExportFeedback? = null,
     val exportedFile: File? = null,
-    val coordinateCount: Int = 0
+    val coordinateCount: Int = 0,
+    val partialSummary: String = ""
 )
 
 internal suspend fun runExportWithFeedback(
@@ -68,17 +71,20 @@ internal suspend fun runExportWithFeedback(
     onState(ExportFeedbackState(isExporting = true))
     try {
         val result = export()
-        val feedback = if (includeRecentLocations) {
-            DiagnosticExportFeedback.PackageReadyWithLocations
-        } else {
-            DiagnosticExportFeedback.PackageReady
+        val feedback = when {
+            result.isPartial && includeRecentLocations ->
+                DiagnosticExportFeedback.PackageReadyPartialWithLocations
+            result.isPartial -> DiagnosticExportFeedback.PackageReadyPartial
+            includeRecentLocations -> DiagnosticExportFeedback.PackageReadyWithLocations
+            else -> DiagnosticExportFeedback.PackageReady
         }
         onState(
             ExportFeedbackState(
                 isExporting = false,
                 feedback = feedback,
                 exportedFile = result.file,
-                coordinateCount = result.coordinateCount
+                coordinateCount = result.coordinateCount,
+                partialSummary = result.summary.takeIf { result.isPartial }.orEmpty()
             )
         )
     } catch (e: DiagnosticExportException) {
@@ -144,7 +150,8 @@ data class DiagnosticExportUiState(
     val isExporting: Boolean = false,
     val exportedFile: File? = null,
     val coordinateCount: Int = 0,
-    val feedback: DiagnosticExportFeedback? = null
+    val feedback: DiagnosticExportFeedback? = null,
+    val partialSummary: String = ""
 )
 
 internal fun beginDiagnosticExport(
@@ -156,7 +163,8 @@ internal fun beginDiagnosticExport(
         isExporting = true,
         exportedFile = null,
         coordinateCount = 0,
-        feedback = null
+        feedback = null,
+        partialSummary = ""
     )
 }
 
@@ -383,7 +391,8 @@ class StatusCenterViewModel @Inject constructor(
                         isExporting = state.isExporting,
                         feedback = state.feedback,
                         exportedFile = state.exportedFile,
-                        coordinateCount = state.coordinateCount
+                        coordinateCount = state.coordinateCount,
+                        partialSummary = state.partialSummary
                     )
                 }
             )

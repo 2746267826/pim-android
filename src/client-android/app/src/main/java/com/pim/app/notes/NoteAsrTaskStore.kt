@@ -105,7 +105,8 @@ class NoteAsrTaskStore(private val root: File) {
         val old = if (materialFileExists(path(task.taskId))) read(task.taskId) else null
         if (old != null) {
             require(old.binding == binding && old.noteId == task.noteId && old.versionId == task.versionId &&
-                old.destination == task.destination) { "服务器任务与本地固定身份不一致" }
+                old.language == task.language && old.destination == task.destination &&
+                old.task.hasCompatibleRouteSnapshot(task)) { "服务器任务与本地固定身份不一致" }
         } else require(tasks().size < MAX_TASKS) { "本机保留的转写任务已达 $MAX_TASKS 个" }
         val segmentIdentityChanged = old?.task?.let {
             it.revision != task.revision || it.totalSegments != task.totalSegments
@@ -156,7 +157,8 @@ class NoteAsrTaskStore(private val root: File) {
         require(after.taskId == before.taskId && after.versionId == before.versionId && after.noteId == before.noteId &&
             after.serverIdentity == before.serverIdentity && after.ownerId == before.ownerId &&
             after.expectedUserId == before.expectedUserId && after.destination == before.destination &&
-            after.language == before.language && after.createdAtMillis == before.createdAtMillis)
+            after.language == before.language && after.createdAtMillis == before.createdAtMillis &&
+            before.task.hasCompatibleRouteSnapshot(after.task))
         validate(after)
         write(after)
         after
@@ -199,7 +201,10 @@ class NoteAsrTaskStore(private val root: File) {
         require(validNoteId(record.taskId) && validNoteId(record.versionId) && validNoteId(record.noteId))
         require(record.expectedUserId == record.ownerId)
         record.binding
-        validateDestination(record.destination)
+        record.destination?.let(::validateDestination)
+        require(record.destination != null || record.task?.route == "local") {
+            "云端转写意图必须先固定并确认目标"
+        }
         require(record.totalSamples > 0 && record.sampleRate > 0 && record.language.isNotBlank())
         require(record.destinationDisplayName.length <= 200 && record.destinationModel.length <= 200)
         require(record.destinationLanguages.size <= 64 &&
@@ -236,7 +241,14 @@ class NoteAsrTaskStore(private val root: File) {
     }
 
     private fun validateTask(task: NoteAsrTaskDto) {
-        validateDestination(task.destination)
+        val route = task.route?.trim()
+        if (route == "local") {
+            task.destination?.let(::validateDestination)
+        } else {
+            validateDestination(requireNotNull(task.destination) {
+                "云端转写任务必须带有确认后的目标快照"
+            })
+        }
         require(task.totalSegments in 1..5_000 && task.completedSegments in 0..task.totalSegments &&
             task.failedSegments in 0..task.totalSegments)
         require(task.totalSamples > 0 && task.completedSamples in 0..task.totalSamples && task.sampleRate > 0)
@@ -270,3 +282,15 @@ private fun RecordingSession.sourceSnapshot() = NoteAsrRecordingSource(
 
 private fun parseAsrMillis(value: String, fallback: Long): Long =
     runCatching { java.time.OffsetDateTime.parse(value).toInstant().toEpochMilli() }.getOrDefault(fallback)
+
+private fun NoteAsrTaskDto?.hasCompatibleRouteSnapshot(next: NoteAsrTaskDto?): Boolean {
+    val before = this ?: return true
+    if (next == null) return false
+    return before.route == next.route &&
+        before.executionMode == next.executionMode &&
+        before.routeConfigRevision.isCompatibleSnapshot(next.routeConfigRevision) &&
+        before.routeConsentVersion.isCompatibleSnapshot(next.routeConsentVersion)
+}
+
+private fun String?.isCompatibleSnapshot(next: String?): Boolean =
+    isNullOrBlank() || this == next

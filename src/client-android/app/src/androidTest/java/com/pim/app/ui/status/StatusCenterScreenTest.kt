@@ -120,6 +120,7 @@ class StatusCenterScreenTest {
         composeTestRule.onNodeWithTag("status-confirmed").assertIsDisplayed()
         composeTestRule.onNodeWithTag("status-rejected").assertIsDisplayed()
         composeTestRule.onNodeWithTag("status-permanent-rejected").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-terminal-usage").assertIsDisplayed()
         composeTestRule.onNodeWithTag("status-last-success").assertIsDisplayed()
         composeTestRule.onNodeWithTag("status-last-attempt").assertIsDisplayed()
         composeTestRule.onNodeWithTag("status-next-attempt").assertIsDisplayed()

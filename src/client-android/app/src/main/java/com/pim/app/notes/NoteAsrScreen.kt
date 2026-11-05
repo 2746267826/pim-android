@@ -35,6 +35,7 @@ data class NoteAsrActions(
     val start: (String, NoteAsrDestinationDto, String) -> Unit = { _, _, _ -> },
     val replayStart: (String) -> Unit = {},
     val replayRetry: (String) -> Unit = {},
+    val openDerived: (versionId: String, noteId: String, asrTaskId: String?) -> Unit = { _, _, _ -> },
 )
 
 @OptIn(ExperimentalMaterial3Api::class)
@@ -86,6 +87,7 @@ internal fun NoteAsrSurface(
                 onRetry = { indexes -> actions.retry(selected.taskId, indexes) },
                 onReplayStart = actions.replayStart,
                 onReplayRetry = actions.replayRetry,
+                onOpenDerived = actions.openDerived,
             )
         }
     }
@@ -312,6 +314,7 @@ private fun NoteAsrTaskDetail(
     onRetry: (List<Int>) -> Unit,
     onReplayStart: (String) -> Unit,
     onReplayRetry: (String) -> Unit,
+    onOpenDerived: (String, String, String?) -> Unit,
 ) {
     val d = PimTheme.dimensions
     val status = record.statusView(currentTarget)
@@ -358,6 +361,15 @@ private fun NoteAsrTaskDetail(
                 PimStatusBanner("${status.label} · ${status.detail}", statusTone(status.status),
                     Modifier.testTag("note-asr-phase-${record.taskId}"))
             }
+            if (record.canClaimWholeComplete()) item {
+                Button(
+                    onClick = { onOpenDerived(record.versionId, record.noteId, record.taskId) },
+                    modifier = Modifier.fillMaxWidth()
+                        .testTag("note-asr-open-derived-${record.taskId}"),
+                ) {
+                    Text("生成完整记录与独立分析")
+                }
+            }
             state.message?.let { problem ->
                 item { PimStatusBanner(problem, PimStatusTone.Warning) }
             }
@@ -402,9 +414,18 @@ private fun NoteAsrTaskDetail(
                             Text("目标支持语言：${record.destinationLanguages.joinToString(" / ")}",
                                 style = MaterialTheme.typography.bodySmall)
                         }
-                        DestinationDetails(record.destination)
-                        Text("可能产生模型费用；录音片段会发送给上述第三方 ASR 服务。费用与处理以服务商为准。",
-                            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        val localRoute = task?.route == "local"
+                        DestinationDetails(record.destination, localRoute)
+                        if (localRoute) {
+                            Text("本机节点执行；音频不会发送给云端 ASR 服务。",
+                                style = MaterialTheme.typography.bodySmall)
+                        } else if (record.destination == null) {
+                            Text("该任务缺少可核对的云端同意快照；不会自动发送或推断目标。",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        } else {
+                            Text("可能产生模型费用；录音片段会发送给上述第三方 ASR 服务。费用与处理以服务商为准。",
+                                style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.error)
+                        }
                     }
                 }
             }
@@ -661,7 +682,16 @@ private fun SegmentCard(
 }
 
 @Composable
-private fun DestinationDetails(destination: AiAsrDestinationConsent) {
+private fun DestinationDetails(destination: AiAsrDestinationConsent?, localRoute: Boolean) {
+    if (destination == null) {
+        Text(
+            if (localRoute) "执行位置：本机节点（无云端目标）" else "云端目标：未记录；不会自动发送",
+            style = MaterialTheme.typography.bodySmall,
+            color = if (localRoute) MaterialTheme.colorScheme.onSurfaceVariant
+            else MaterialTheme.colorScheme.error,
+        )
+        return
+    }
     Column(verticalArrangement = Arrangement.spacedBy(PimTheme.dimensions.spaceSmall)) {
         Text("模型 ID：${destination.modelId}", style = MaterialTheme.typography.bodySmall)
         Text("模型 revision：${destination.modelRevision}", style = MaterialTheme.typography.bodySmall)

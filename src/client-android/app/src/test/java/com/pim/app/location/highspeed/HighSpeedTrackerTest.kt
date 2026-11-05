@@ -53,16 +53,32 @@ class HighSpeedTrackerTest {
     }
 
     @Test
-    fun slowSampleDuringAccumulationResetsStreak() {
+    fun sustainedLowSampleDuringAccumulationResetsStreak() {
         val tracker = tracker()
         tracker.observe(fast(), atMillis = 0)
         tracker.observe(fast(), atMillis = 5_000)
 
-        tracker.observe(slow(), atMillis = 6_000)
+        tracker.observe(slow(), atMillis = 9_000)
+        tracker.observe(slow(), atMillis = 12_000)
 
         assertEquals(HighSpeedMode.Inactive, tracker.mode)
-        tracker.observe(fast(), atMillis = 7_000)
-        tracker.observe(fast(), atMillis = 17_000)
+        tracker.observe(fast(), atMillis = 13_000)
+        tracker.observe(fast(), atMillis = 23_000)
+        assertEquals(HighSpeedMode.Active, tracker.mode)
+    }
+
+    @Test
+    fun briefLowSampleWithinToleranceDoesNotResetFastStreak() {
+        val tracker = tracker()
+        tracker.observe(fast(), atMillis = 0)
+        tracker.observe(fast(), atMillis = 5_000)
+        tracker.observe(slow(), atMillis = 6_000)
+
+        assertEquals(HighSpeedMode.Accumulating, tracker.mode)
+        tracker.observe(fast(), atMillis = 8_000)
+        assertEquals(HighSpeedMode.Accumulating, tracker.mode)
+        tracker.observe(fast(), atMillis = 10_000)
+
         assertEquals(HighSpeedMode.Active, tracker.mode)
     }
 
@@ -110,7 +126,7 @@ class HighSpeedTrackerTest {
     }
 
     @Test
-    fun speedFluctuationResetsFastStreak() {
+    fun isolatedSpeedFluctuationDoesNotResetAccumulation() {
         val tracker = tracker()
 
         tracker.observe(fast(), atMillis = 0)
@@ -120,11 +136,7 @@ class HighSpeedTrackerTest {
         tracker.observe(fast(), atMillis = 9_000)
         tracker.observe(slow(), atMillis = 9_500)
         tracker.observe(fast(), atMillis = 12_000)
-        tracker.observe(fast(), atMillis = 15_000)
-        assertEquals(HighSpeedMode.Accumulating, tracker.mode)
-
-        tracker.observe(slow(), atMillis = 15_500)
-        assertEquals(HighSpeedMode.Inactive, tracker.mode)
+        assertEquals(HighSpeedMode.Active, tracker.mode)
     }
 
     @Test
@@ -154,7 +166,7 @@ class HighSpeedTrackerTest {
     }
 
     @Test
-    fun fallbackRequiresStrictlyBelowOneKmh() {
+    fun fallbackRequiresStrictlyBelowSevenKmh() {
         val tracker = activate()
 
         tracker.observe(fallbackEdge(), atMillis = 10_000)
@@ -170,6 +182,163 @@ class HighSpeedTrackerTest {
         tracker.observe(0.99f / 3.6f, atMillis = 130_999)
         assertEquals(HighSpeedMode.Active, tracker.mode)
         tracker.observe(0.99f / 3.6f, atMillis = 131_000)
+        assertEquals(HighSpeedMode.Inactive, tracker.mode)
+    }
+
+    @Test
+    fun walkingWithOccasionalHighSpeedSpikesStillExitsDenseMode() {
+        val tracker = activate()
+
+        var atMillis = 10_000L
+        while (atMillis < 70_000L) {
+            val isIsolatedSpike = (atMillis - 10_000L) % 20_000L == 0L
+            tracker.observe(
+                speedMetersPerSecond = if (isIsolatedSpike) {
+                    12f / 3.6f
+                } else {
+                    5.5f / 3.6f
+                },
+                freshWalkingOrStill = true,
+                atMillis = atMillis
+            )
+            atMillis += 2_500L
+        }
+        tracker.observe(
+            speedMetersPerSecond = 5.5f / 3.6f,
+            freshWalkingOrStill = true,
+            atMillis = 69_999L
+        )
+        assertEquals(HighSpeedMode.Active, tracker.mode)
+
+        tracker.observe(
+            speedMetersPerSecond = 5.5f / 3.6f,
+            freshWalkingOrStill = true,
+            atMillis = 70_000
+        )
+        assertEquals(HighSpeedMode.Inactive, tracker.mode)
+    }
+
+    @Test
+    fun sustainedHighSpeedResetsEarlierWalkingEvidence() {
+        val tracker = activate()
+
+        for (atMillis in 10_000L..37_500L step 2_500) {
+            tracker.observe(
+                speedMetersPerSecond = 5.5f / 3.6f,
+                freshWalkingOrStill = true,
+                atMillis = atMillis
+            )
+        }
+        for (atMillis in 40_000L..70_000L step 2_500) {
+            tracker.observe(
+                speedMetersPerSecond = 30f / 3.6f,
+                freshWalkingOrStill = true,
+                atMillis = atMillis
+            )
+        }
+
+        assertEquals(
+            "stale walking corroboration must not override a sustained return to high speed",
+            HighSpeedMode.Active,
+            tracker.mode
+        )
+    }
+
+    @Test
+    fun sustainedHighSpeedIgnoresWalkingWithoutSpeedCorroboration() {
+        val tracker = activate()
+
+        for (atMillis in 10_000L..70_000L step 2_500) {
+            tracker.observe(
+                speedMetersPerSecond = 30f / 3.6f,
+                freshWalkingOrStill = true,
+                atMillis = atMillis
+            )
+        }
+
+        assertEquals(
+            "a fresh AR label alone must not override corroborated high-speed fixes",
+            HighSpeedMode.Active,
+            tracker.mode
+        )
+    }
+
+    @Test
+    fun sustainedHighSpeedWithSparseLowSpeedGlidesStaysActive() {
+        val tracker = activate()
+
+        for (atMillis in 10_000L..70_000L step 2_500L) {
+            val isSparseLowGlide = (atMillis - 10_000L) % 10_000L == 0L
+            tracker.observe(
+                speedMetersPerSecond = if (isSparseLowGlide) {
+                    6.5f / 3.6f
+                } else {
+                    30f / 3.6f
+                },
+                freshWalkingOrStill = true,
+                atMillis = atMillis
+            )
+        }
+
+        assertEquals(
+            "isolated low-speed glides must not outweigh sustained highway-speed evidence",
+            HighSpeedMode.Active,
+            tracker.mode
+        )
+    }
+
+    @Test
+    fun staleWalkingEvidenceAtWalkingSpeedDoesNotExitWithoutFreshMotion() {
+        val tracker = activate()
+        val justBelowHighSpeed = 7.5f / 3.6f
+
+        tracker.observe(
+            speedMetersPerSecond = justBelowHighSpeed,
+            freshWalkingOrStill = true,
+            atMillis = 10_000L
+        )
+        tracker.observe(
+            speedMetersPerSecond = justBelowHighSpeed,
+            freshWalkingOrStill = false,
+            atMillis = 70_000L
+        )
+
+        assertEquals(HighSpeedMode.Active, tracker.mode)
+    }
+
+    @Test
+    fun oneSubTriggerSpeedSampleDoesNotCorroborateSustainedWalking() {
+        val tracker = activate()
+
+        for (atMillis in 10_000L..70_000L step 2_500) {
+            tracker.observe(
+                speedMetersPerSecond = if (atMillis == 20_000L) {
+                    5.5f / 3.6f
+                } else {
+                    12f / 3.6f
+                },
+                freshWalkingOrStill = true,
+                atMillis = atMillis
+            )
+        }
+
+        assertEquals(
+            "one low-speed Doppler sample is not a stable walking corridor",
+            HighSpeedMode.Active,
+            tracker.mode
+        )
+    }
+
+    @Test
+    fun sustainedWalkingSpeedBelowExitThresholdLeavesDenseMode() {
+        val tracker = activate()
+        val walking = 5.5f / 3.6f
+
+        tracker.observe(walking, atMillis = 10_000)
+        tracker.observe(walking, atMillis = 69_999)
+        assertEquals(HighSpeedMode.Active, tracker.mode)
+
+        tracker.observe(walking, atMillis = 70_000)
         assertEquals(HighSpeedMode.Inactive, tracker.mode)
     }
 
@@ -205,5 +374,14 @@ class HighSpeedTrackerTest {
     private fun HighSpeedTracker.observe(speed: Float?, atMillis: Long) {
         now = atMillis
         observe(speed)
+    }
+
+    private fun HighSpeedTracker.observe(
+        speedMetersPerSecond: Float?,
+        freshWalkingOrStill: Boolean,
+        atMillis: Long
+    ) {
+        now = atMillis
+        observe(speedMetersPerSecond, freshWalkingOrStill)
     }
 }

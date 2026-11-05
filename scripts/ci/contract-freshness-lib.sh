@@ -40,6 +40,8 @@ PIM_CONTRACT_DEFAULT_REF="master"
 PIM_CONTRACT_DEFAULT_RAW_BASE="https://raw.githubusercontent.com"
 PIM_CONTRACT_DEFAULT_SOURCE_PATH="contract/openapi.json"
 
+. "$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/python-runtime.sh"
+
 PIM_CONTRACT_EXIT_OK=0
 PIM_CONTRACT_EXIT_STALE=1
 PIM_CONTRACT_EXIT_UNKNOWN=2
@@ -76,8 +78,8 @@ pim_contract_sha256() { sha256sum "$1" | cut -d' ' -f1; }
 pim_contract_bytes()  { wc -c < "$1" | tr -d ' '; }
 
 pim_contract_require_python() {
-  if ! command -v python3 >/dev/null 2>&1; then
-    pim_contract_err "缺少 python3（用于契约 payload / provenance 的 JSON 校验）"
+  if ! PIM_CONTRACT_PYTHON="$(pim_contract_python)"; then
+    pim_contract_err "缺少可运行的 Python 3（用于契约 payload / provenance 的 JSON 校验）"
     return 4
   fi
   return 0
@@ -121,8 +123,8 @@ pim_contract_resolve_ref_git() { # <remote> <ref> -> stdout 40-hex；失败 rc 3
 
 pim_contract_resolve_ref_api() { # <repo> <ref> -> stdout 40-hex；失败 rc 3
   local repo="$1" ref="$2" sha
-  command -v python3 >/dev/null 2>&1 || return 3
-  sha="$(python3 - "$repo" "$ref" <<'PY' || true
+  PIM_CONTRACT_PYTHON="$(pim_contract_python)" || return 3
+  sha="$("$PIM_CONTRACT_PYTHON" - "$repo" "$ref" <<'PY' || true
 import json, os, sys, http.client, urllib.parse
 repo, ref = sys.argv[1], sys.argv[2]
 token = os.environ.get("GITHUB_TOKEN") or os.environ.get("PIM_CONTRACT_TOKEN") or ""
@@ -154,10 +156,25 @@ PY
 
 # --- raw 字节抓取（不带 Auth、不跟随重定向） --------------------------------
 
+# raw.githubusercontent.com 不可达时，只允许回退到 api.github.com 的 raw-media
+# 端点，并固定使用同 40 位 SHA 与同 content path。自定义 raw base 不触发回退，
+# 避免离线测试或自定义来源意外访问公网。
 pim_contract_fetch_raw() { # <raw_base> <repo> <sha> <source_path> <out_file> -> rc 0/3
-  local base="$1" repo="$2" sha="$3" spath="$4" out="$5" url
+  local base="$1" repo="$2" sha="$3" spath="$4" out="$5" url media_url
   url="$base/$repo/$sha/$spath"
-  if ! curl -fsS --max-redirs 0 --connect-timeout 20 --max-time 180 "$url" -o "$out"; then
+  if curl -fsS --max-redirs 0 --connect-timeout 20 --max-time 180 "$url" -o "$out"; then
+    return 0
+  fi
+  [ "$base" = "$PIM_CONTRACT_DEFAULT_RAW_BASE" ] || {
+    pim_contract_err "无法从 configured raw source 获取字节：$(pim_contract_redact_url "$url")"
+    return 3
+  }
+  media_url="https://api.github.com/repos/$repo/contents/$spath?ref=$sha"
+  pim_contract_warn "raw.githubusercontent.com 不可达，尝试 api.github.com raw-media fallback（同 SHA 同 path）"
+  if ! curl -fsS --max-redirs 0 --connect-timeout 20 --max-time 180 \
+       -H "Accept: application/vnd.github.raw+json" \
+       -H "X-GitHub-Api-Version: 2022-11-28" \
+       "$media_url" -o "$out"; then
     pim_contract_err "无法从权威源获取字节：$(pim_contract_redact_url "$url")"
     return 3
   fi
@@ -168,7 +185,7 @@ pim_contract_fetch_raw() { # <raw_base> <repo> <sha> <source_path> <out_file> ->
 # 仅允许：JSON 对象 / openapi 3.x / paths 非空 / 非 HTML·404·空体。
 pim_contract_validate_payload() { # <file> -> rc 0/4，失败原因打到 stderr
   local f="$1"
-  python3 - "$f" <<'PY'
+  "$PIM_CONTRACT_PYTHON" - "$f" <<'PY'
 import json, sys
 path = sys.argv[1]
 try:
@@ -202,7 +219,7 @@ PY
 }
 
 pim_contract_payload_summary() { # <file> -> 一行人类可读摘要（不决定退出码）
-  python3 - "$1" <<'PY' 2>/dev/null || true
+  "$PIM_CONTRACT_PYTHON" - "$1" <<'PY' 2>/dev/null || true
 import json, sys
 doc = json.load(open(sys.argv[1], encoding="utf-8"))
 methods = {"get", "post", "put", "delete", "patch", "head", "options", "trace"}
@@ -216,7 +233,7 @@ PY
 
 pim_contract_write_provenance() {
   # <out> <repo> <ref> <resolvedRef> <resolvedRefSource> <sourcePath> <sourceUrl> <bytes> <sha256>
-  python3 - "$@" <<'PY'
+  "$PIM_CONTRACT_PYTHON" - "$@" <<'PY'
 import json, sys
 out, repo, ref, sha, rsrc, spath, surl, nbytes, fsha = sys.argv[1:10]
 doc = {
@@ -241,7 +258,7 @@ PY
 # stdout = 人类可读结论；rc 0 = 一致 / 1 = 缺失或不一致。
 pim_contract_validate_provenance() {
   # <provenance> <snapshot> <expected_repo> <expected_source_path>
-  python3 - "$@" <<'PY'
+  "$PIM_CONTRACT_PYTHON" - "$@" <<'PY'
 import hashlib, json, os, re, sys
 prov_path, snap_path, exp_repo, exp_spath = sys.argv[1:5]
 HEX40 = re.compile(r"^[0-9a-f]{40}$")

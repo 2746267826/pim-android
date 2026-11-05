@@ -16,7 +16,8 @@ import kotlinx.coroutines.flow.asStateFlow
 data class MotionSignalStatus(
     val signal: MotionSignal,
     val issueCode: String?,
-    val message: String?
+    val message: String?,
+    val observedAtElapsedRealtimeMillis: Long = 0L
 )
 
 /**
@@ -41,15 +42,15 @@ class MotionSignalRepository @Inject constructor(
         evaluator = SelfMotionEvaluator(
             nowElapsedRealtimeMillis = { SystemClock.elapsedRealtime() }
         ),
-        onSignal = { signal ->
-            if (signal != _status.value.signal) {
-                _status.value = MotionSignalStatus(
-                    signal = signal,
-                    issueCode = if (permissionIssue != null) ACTIVITY_RECOGNITION_MISSING_CODE else null,
-                    message = permissionIssue
-                )
-            }
-        }
+        onSignalSample = { signal, observedAt ->
+            _status.value = MotionSignalStatus(
+                signal = signal,
+                issueCode = if (permissionIssue != null) ACTIVITY_RECOGNITION_MISSING_CODE else null,
+                message = permissionIssue,
+                observedAtElapsedRealtimeMillis = observedAt
+            )
+        },
+        nowElapsedRealtimeMillis = { SystemClock.elapsedRealtime() }
     )
 
     fun register() {
@@ -72,7 +73,8 @@ class MotionSignalRepository @Inject constructor(
             _status.value = MotionSignalStatus(
                 signal = current.signal,
                 issueCode = if (newIssue != null) ACTIVITY_RECOGNITION_MISSING_CODE else null,
-                message = newIssue
+                message = newIssue,
+                observedAtElapsedRealtimeMillis = current.observedAtElapsedRealtimeMillis
             )
         }
         detector.start()

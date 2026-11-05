@@ -38,6 +38,12 @@ class MobileSyncOutcomeMappingTest {
         assertTrue(result is Result.Failure)
     }
 
+    @Test
+    fun `DEFERRED maps to success so WorkManager does not busy-retry`() {
+        val result = mapOutcomeToWorkerResult(MobileSyncOutcome.DEFERRED)
+        assertTrue(result is Result.Success)
+    }
+
     // --- classifyException outcomes ---
 
     @Test(expected = CancellationException::class)

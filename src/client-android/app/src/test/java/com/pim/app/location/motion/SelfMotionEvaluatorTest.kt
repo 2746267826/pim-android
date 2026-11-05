@@ -2,6 +2,8 @@ package com.pim.app.location.motion
 
 import com.pim.app.location.policy.MotionSignal
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class SelfMotionEvaluatorTest {
@@ -30,6 +32,14 @@ class SelfMotionEvaluatorTest {
     @Test
     fun `initial signal is Unknown`() {
         assertEquals(MotionSignal.Unknown, evaluator.currentSignal())
+    }
+
+    @Test
+    fun `only a complete three second window emits a freshness heartbeat`() {
+        repeat(59) {
+            assertFalse(evaluator.accelMagnitude(9.8))
+        }
+        assertTrue(evaluator.accelMagnitude(9.8))
     }
 
     @Test

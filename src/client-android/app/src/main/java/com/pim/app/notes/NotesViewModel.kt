@@ -26,6 +26,10 @@ class NotesViewModel @Inject constructor(
     private val saved: SavedStateHandle,
     val uploads: NoteUploadRepository,
     val asr: NoteAsrRepository,
+    val artifacts: NoteArtifactRepository,
+    val taskSuggestions: NoteTaskSuggestionRepository,
+    val legacyQuickNoteMigration: LegacyQuickNoteMigrationRepository,
+    val cloudNotes: CloudNoteRepository,
 ) : ViewModel() {
     val selectedId = saved.getStateFlow<String?>("noteId", null)
     private val mutableMessage = MutableStateFlow<String?>(null)
@@ -34,6 +38,25 @@ class NotesViewModel @Inject constructor(
     val busy = mutableBusy.asStateFlow()
     private val mutableCompletion = MutableStateFlow<NoteCompletion?>(null)
     val completion = mutableCompletion.asStateFlow()
+    private val mutableArtifactEntry = MutableStateFlow<NoteArtifactEntry?>(null)
+    val artifactEntry = mutableArtifactEntry.asStateFlow()
+    private val mutableArtifactConsentDone = MutableStateFlow(false)
+    val artifactConsentDone = mutableArtifactConsentDone.asStateFlow()
+    private val mutableArtifactStarting = MutableStateFlow(false)
+    val artifactStarting = mutableArtifactStarting.asStateFlow()
+    private val mutableArtifactKind = MutableStateFlow(NoteArtifactKind.FullRecord)
+    val artifactKind = mutableArtifactKind.asStateFlow()
+    private val mutableArtifactPendingSelections = MutableStateFlow<Map<NoteArtifactKind, String?>>(emptyMap())
+    val artifactPendingSelections = mutableArtifactPendingSelections.asStateFlow()
+    private val mutableArtifactViews = MutableStateFlow<Map<NoteArtifactKind, String?>>(emptyMap())
+    val artifactViews = mutableArtifactViews.asStateFlow()
+    private val mutableArtifactContentViews =
+        MutableStateFlow<Map<NoteArtifactKind, NoteArtifactContentView>>(emptyMap())
+    val artifactContentViews = mutableArtifactContentViews.asStateFlow()
+    private val mutableTaskSuggestionsSource = MutableStateFlow<NoteTaskSuggestionSource?>(null)
+    val taskSuggestionsSource = mutableTaskSuggestionsSource.asStateFlow()
+    val legacyQuickNoteMigrationState = legacyQuickNoteMigration.state
+    val cloudNotesState = cloudNotes.state
 
     init {
         viewModelScope.launch {
@@ -43,11 +66,72 @@ class NotesViewModel @Inject constructor(
             materials.initialize()
             uploads.initialize()
             asr.initialize()
+            artifacts.initialize()
+            cloudNotes.refresh()
+        }
+    }
+
+    fun refreshCloudNotes() {
+        viewModelScope.launch {
+            cloudNotes.refresh()
+            cloudNotes.state.value.problem?.let(::tell)
+        }
+    }
+
+    fun openCloudNote(noteId: String, onRestored: (String) -> Unit) {
+        if (busy.value) return
+        viewModelScope.launch {
+            mutableBusy.value = true
+            try {
+                val restored = cloudNotes.restore(noteId)
+                notes.reload()
+                open(restored.id)
+                onRestored(restored.id)
+                if (cloudNotes.hasReadOnlyRecordingArchive(noteId)) {
+                    tell("笔记正文、照片和手写已恢复；录音原件已安全归档，但当前版本不支持编辑或在笔记内播放录音。")
+                }
+            } catch (error: CancellationException) { throw error }
+            catch (error: Exception) { tell(error.message ?: "云端笔记安全校验未通过，未安装空白或损坏内容") }
+            finally { mutableBusy.value = false }
         }
     }
 
     fun open(id: String?) { if (!busy.value) { saved["noteId"] = id; mutableMessage.value = null; dismissCompletion() } }
     fun create() { open(notes.create()) }
+    fun openLegacyQuickNoteMigration() { viewModelScope.launch { legacyQuickNoteMigration.open() } }
+    fun refreshLegacyQuickNoteMigration() {
+        viewModelScope.launch { legacyQuickNoteMigration.open(legacyQuickNoteMigration.state.value.page) }
+    }
+    fun loadLegacyQuickNoteMigrationPage(page: Int) {
+        viewModelScope.launch { legacyQuickNoteMigration.loadPage(page) }
+    }
+    fun selectLegacyQuickNote(id: String) { viewModelScope.launch { legacyQuickNoteMigration.select(id) } }
+    fun confirmLegacyQuickNoteMigration() {
+        viewModelScope.launch {
+            try { legacyQuickNoteMigration.confirm() }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) { /* The repository exposes a bounded user-facing error. */ }
+        }
+    }
+    fun dismissLegacyQuickNotePreview() = legacyQuickNoteMigration.dismissPreview()
+    fun closeLegacyQuickNoteMigration() = legacyQuickNoteMigration.close()
+    fun revokeLegacyQuickNoteMigration(id: String, session: com.pim.app.nativework.NativeWorkbenchSession) {
+        viewModelScope.launch {
+            try { legacyQuickNoteMigration.revokeLink(id, session) }
+            catch (error: CancellationException) { throw error }
+            catch (failure: Exception) { tell(failure.message ?: "未能撤回映射；两端记录均保留。") }
+        }
+    }
+    fun openMappedLegacyQuickNoteNote(id: String, openNote: (String) -> Unit) {
+        viewModelScope.launch {
+            try {
+                val noteId = legacyQuickNoteMigration.reopenMappedNote(id)
+                legacyQuickNoteMigration.close()
+                openNote(noteId)
+            } catch (error: CancellationException) { throw error }
+            catch (failure: Exception) { tell(failure.message ?: "该本机副本不属于当前账号和服务器。") }
+        }
+    }
     fun tell(text: String) { mutableMessage.value = text }
     fun dismissMessage(text: String) { if (mutableMessage.value == text) mutableMessage.value = null }
     fun dismissCompletion() { mutableCompletion.value = null }
@@ -56,13 +140,11 @@ class NotesViewModel @Inject constructor(
         viewModelScope.launch {
             try {
                 val result = uploads.authorizeAutoSubmitForVersion(versionId, target)
-                if (!result.authorized) {
-                    tell("账号或服务器已变化，未保存自动上传授权；请重新核对当前目标")
-                } else if (result.scheduled) {
-                    tell("持续授权已保存；此版本材料齐备后会加入后台上传队列，转写与 AI 分析仍需单独确认")
-                } else {
-                    tell("持续授权已保存，但此版本的后台安排尚未确认；材料版本仍保留，可重试准备或上传")
-                }
+                tell(when {
+                    !result.authorized -> "账号或服务器已变化，未保存自动上传授权；请重新核对当前目标"
+                    result.scheduled -> "持续授权已保存；此版本材料齐备后会加入后台上传队列，转写与 AI 分析仍需单独确认"
+                    else -> "持续授权已保存，但此版本的后台安排尚未确认；材料版本仍保留，可重试准备或上传"
+                })
             } catch (error: CancellationException) { throw error }
             catch (_: Exception) { tell("未能确认自动上传授权或后台安排，请重试；没有启动 AI 分析") }
         }
@@ -133,6 +215,309 @@ class NotesViewModel @Inject constructor(
     fun replayAsrStart(id: String) { viewModelScope.launch { asr.replayStart(id, true) } }
     fun replayAsrRetry(id: String) { viewModelScope.launch { asr.replayRetry(id, true) } }
 
+    fun openArtifacts(versionId: String, noteId: String, asrTaskId: String?, title: String) {
+        closeTaskSuggestions()
+        mutableArtifactEntry.value = NoteArtifactEntry(noteId, versionId, asrTaskId, title)
+        mutableArtifactPendingSelections.value = emptyMap()
+        mutableArtifactViews.value = emptyMap()
+        mutableArtifactContentViews.value = emptyMap()
+        viewModelScope.launch {
+            artifacts.refresh(noteId, versionId)
+            mutableArtifactConsentDone.value = artifacts.state.value.tasks.any {
+                it.materialVersionId == versionId && it.noteId == noteId
+            }
+        }
+    }
+
+    fun closeArtifacts() {
+        closeTaskSuggestions()
+        mutableArtifactEntry.value = null
+        mutableArtifactConsentDone.value = false
+        mutableArtifactStarting.value = false
+        artifacts.clearMessage()
+    }
+
+    fun refreshArtifacts() {
+        val entry = mutableArtifactEntry.value ?: return
+        viewModelScope.launch {
+            artifacts.refresh(
+                noteId = entry.noteId,
+                materialVersionId = entry.materialVersionId,
+                selectedTaskId = artifacts.state.value.selectedTaskId,
+            )
+        }
+    }
+
+    fun confirmArtifactStart(destination: NoteArtifactDestination, kinds: Set<NoteArtifactKind>) {
+        val entry = mutableArtifactEntry.value ?: return
+        if (kinds.isEmpty() || mutableArtifactStarting.value) return
+        mutableArtifactStarting.value = true
+        mutableArtifactKind.value = kinds.minBy { it.ordinal }
+        viewModelScope.launch {
+            try {
+                artifacts.start(
+                    noteId = entry.noteId,
+                    materialVersionId = entry.materialVersionId,
+                    asrTaskId = entry.asrTaskId,
+                    destination = destination,
+                    freshlyConfirmed = true,
+                )
+                mutableArtifactConsentDone.value = true
+                artifacts.refresh(entry.noteId, entry.materialVersionId)
+            } catch (error: CancellationException) {
+                throw error
+            } catch (error: Exception) {
+                tell(error.message ?: "未能确认派生任务；固定材料与本机稿保留")
+            } finally {
+                mutableArtifactStarting.value = false
+            }
+        }
+    }
+
+    fun selectArtifactKind(kind: NoteArtifactKind) {
+        mutableArtifactKind.value = kind
+    }
+
+    fun stageArtifactText(request: NoteArtifactDraftEditRequest) {
+        viewModelScope.launch {
+            artifacts.stageText(request.localDraftId, request.expectedLocalRevision, request.text)
+        }
+    }
+
+    fun saveArtifactLocalDraft(request: NoteArtifactDraftSaveRequest) {
+        viewModelScope.launch {
+            artifacts.saveLocalDraft(request.localDraftId, request.expectedLocalRevision, request.text)
+        }
+    }
+
+    fun saveArtifactServerRevision(request: NoteArtifactDraftSaveRequest) {
+        val entry = mutableArtifactEntry.value ?: return
+        val draft = artifacts.state.value.drafts.firstOrNull {
+            it.localDraftId == request.localDraftId && it.kind == request.kind
+        } ?: return
+        if (draft.noteId != entry.noteId || draft.materialVersionId != entry.materialVersionId) {
+            tell("本机稿属于其他笔记或固定材料；未发送人工稿到服务端。本机稿保留。")
+            return
+        }
+        val artifact = artifacts.state.value.artifactRefs[request.kind] ?: run {
+            tell("尚无可保存的服务端结果；本机稿继续保留。")
+            return
+        }
+        val expectedHeadRevision = artifact.revision ?: run {
+            tell("尚未读取到服务端当前版本基线；请刷新后再保存，本机稿保留。")
+            return
+        }
+        val expectedHeadVersionId = artifact.headVersionId ?: run {
+            tell("服务端尚未确认当前版本；请先在候选列表明确选择此稿，选择成功后再保存人工稿。本机稿保留。")
+            return
+        }
+        val confirmedHead = artifacts.state.value.versions[request.kind].orEmpty().firstOrNull {
+            it.versionId == expectedHeadVersionId && it.isHead
+        }
+        if (confirmedHead == null ||
+            confirmedHead.sourceVersionId != entry.materialVersionId ||
+            artifact.headVersionId != expectedHeadVersionId
+        ) {
+            tell("服务端 head 尚未确认或无匹配版本；请先显式选择此稿并刷新。本机稿保留。")
+            return
+        }
+        val state = artifacts.state.value
+        val scopedBinding = state.taskBinding
+        if (scopedBinding == null || state.noteId != entry.noteId ||
+            state.materialVersionId != entry.materialVersionId || draft.binding != scopedBinding
+        ) {
+            tell("账号、服务器或固定材料上下文已变化；未发送人工稿。本机稿保留。")
+            return
+        }
+        if (draft.dirty) {
+            tell("请先保存本机稿，再同步服务端；未保存的输入不会被发送。")
+            return
+        }
+        viewModelScope.launch {
+            artifacts.saveManualRevisionToServer(
+                kind = request.kind,
+                artifactId = artifact.artifactId,
+                localDraftId = draft.localDraftId,
+                expectedLocalRevision = draft.localRevision,
+                expectedHeadRevision = expectedHeadRevision,
+                expectedHeadVersionId = expectedHeadVersionId,
+                contentMarkdown = draft.text,
+            )
+            if (artifacts.state.value.noteId == null) artifacts.refresh(entry.noteId, entry.materialVersionId)
+        }
+    }
+
+    fun viewArtifactCandidate(kind: NoteArtifactKind, candidateId: String) {
+        mutableArtifactViews.value = mutableArtifactViews.value + (kind to candidateId)
+        mutableArtifactContentViews.value =
+            mutableArtifactContentViews.value + (kind to NoteArtifactContentView.ServerOriginal)
+    }
+
+    fun openTaskSuggestions(kind: NoteArtifactKind, candidateId: String) {
+        val entry = mutableArtifactEntry.value ?: return
+        val version = artifacts.state.value.versions[kind].orEmpty().singleOrNull {
+            it.versionId == candidateId && it.artifactId == artifacts.state.value.artifactRefs[kind]?.artifactId &&
+                it.sourceVersionId == entry.materialVersionId
+        } ?: run {
+            tell("只可从当前固定材料对应的已加载服务端版本提取；材料或版本不匹配。")
+            return
+        }
+        if (version.contentMarkdown.isBlank() || !version.contentSha256.matches(Regex("[a-fA-F0-9]{64}")) ||
+            !version.inputSha256.matches(Regex("[a-fA-F0-9]{64}")) ||
+            !version.manifestSha256.matches(Regex("[a-fA-F0-9]{64}"))
+        ) {
+            tell("固定版本内容或摘要不完整；未打开付费提取流程。")
+            return
+        }
+        val source = NoteTaskSuggestionClient.sourceFrom(
+            noteId = entry.noteId,
+            materialVersionId = entry.materialVersionId,
+            version = version,
+            title = entry.title,
+        )
+        mutableTaskSuggestionsSource.value = source
+        taskSuggestions.selectSource(source)
+        viewModelScope.launch { taskSuggestions.open(source) }
+    }
+
+    fun refreshTaskSuggestions() {
+        val source = mutableTaskSuggestionsSource.value ?: return
+        viewModelScope.launch { taskSuggestions.refresh(source) }
+    }
+
+    fun revalidateTaskSuggestionSession() = taskSuggestions.invalidateIfTargetChanged()
+
+    fun extractTaskSuggestions(
+        scope: NoteTaskSuggestionActionScope,
+        destination: NoteTaskSuggestionDestination,
+        chargeAcknowledged: Boolean,
+    ) {
+        viewModelScope.launch { taskSuggestions.extract(scope, destination, chargeAcknowledged) }
+    }
+
+    fun editTaskSuggestion(
+        scope: NoteTaskSuggestionActionScope,
+        suggestionId: String,
+        title: String,
+        description: String,
+        priority: Int,
+        due: String,
+    ) {
+        viewModelScope.launch {
+            taskSuggestions.stageDraft(scope, suggestionId, title, description, priority, due)
+        }
+    }
+
+    fun saveTaskSuggestion(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.saveDraft(scope, suggestionId) }
+    }
+
+    fun discardTaskSuggestionDraft(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.discardDraft(scope, suggestionId) }
+    }
+
+    fun rebaseTaskSuggestionDraft(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.rebaseDraftAfterConflict(scope, suggestionId) }
+    }
+
+    fun dismissTaskSuggestion(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.dismiss(scope, suggestionId) }
+    }
+
+    fun confirmTaskSuggestion(scope: NoteTaskSuggestionActionScope, suggestionId: String) {
+        viewModelScope.launch { taskSuggestions.confirm(scope, suggestionId) }
+    }
+
+    fun closeTaskSuggestions() {
+        mutableTaskSuggestionsSource.value = null
+        taskSuggestions.close()
+    }
+
+    fun changeArtifactContentView(kind: NoteArtifactKind, view: NoteArtifactContentView) {
+        mutableArtifactContentViews.value = mutableArtifactContentViews.value + (kind to view)
+    }
+
+    fun selectArtifactCandidate(kind: NoteArtifactKind, candidateId: String) {
+        if (mutableArtifactPendingSelections.value[kind] != null) return
+        val artifact = artifacts.state.value.artifactRefs[kind] ?: run {
+            tell("尚无可选的服务端结果或完整元数据；请刷新后重试，本机稿保留。")
+            return
+        }
+        val revision = artifact.revision ?: run {
+            tell("尚未读取到服务端当前版本基线；请刷新后重试，本机稿保留。")
+            return
+        }
+        mutableArtifactPendingSelections.value =
+            mutableArtifactPendingSelections.value + (kind to candidateId)
+        viewModelScope.launch {
+            try {
+                artifacts.selectCandidate(artifact.artifactId, revision, candidateId)
+            } finally {
+                mutableArtifactPendingSelections.value =
+                    mutableArtifactPendingSelections.value - kind
+            }
+        }
+    }
+
+    fun regenerateArtifact(kind: NoteArtifactKind) {
+        val entry = mutableArtifactEntry.value ?: return
+        viewModelScope.launch { artifacts.regenerate(kind, entry.materialVersionId) }
+    }
+
+    fun stopArtifact(kind: NoteArtifactKind) {
+        latestArtifactTask(kind)?.let { task ->
+            viewModelScope.launch { artifacts.stop(task.taskId) }
+        }
+    }
+
+    fun recoverArtifact(kind: NoteArtifactKind) {
+        val task = latestArtifactTask(kind) ?: return
+        viewModelScope.launch {
+            when {
+                task.pendingRetry?.requiresExplicitReplay() == true ->
+                    artifacts.replayRetry(task.taskId, freshlyConfirmed = true)
+                task.remote == null && task.localPhase in setOf(
+                    NoteArtifactIntentPhase.Prepared,
+                    NoteArtifactIntentPhase.Submitting,
+                    NoteArtifactIntentPhase.VerificationPending,
+                ) -> artifacts.replayStart(task.taskId, freshlyConfirmed = true)
+                else -> artifacts.verifyTask(task.taskId)
+            }
+        }
+    }
+
+    fun retryArtifactSteps(kind: NoteArtifactKind, stepKeys: List<String>, duplicateChargeConfirmed: Boolean) {
+        if (!duplicateChargeConfirmed) return
+        val entry = mutableArtifactEntry.value ?: return
+        val task = latestArtifactTask(kind) ?: run {
+            tell("未找到当前固定材料的原任务；不会另建任务。")
+            return
+        }
+        if (stepKeys.isEmpty() || stepKeys.size > 20 || stepKeys.distinct().size != stepKeys.size) {
+            tell("所选恢复步骤无效；原任务与已有结果保留。")
+            return
+        }
+        viewModelScope.launch {
+            artifacts.retrySelectedSteps(
+                taskId = task.taskId,
+                noteId = entry.noteId,
+                materialVersionId = entry.materialVersionId,
+                stepKeys = stepKeys,
+                duplicateChargeConfirmed = true,
+            )
+        }
+    }
+
+    private fun latestArtifactTask(kind: NoteArtifactKind): NoteArtifactTaskRecord? {
+        val entry = mutableArtifactEntry.value ?: return null
+        return artifacts.state.value.tasks
+            .filter {
+                it.supports(kind) && it.noteId == entry.noteId &&
+                    it.materialVersionId == entry.materialVersionId
+            }
+            .maxByOrNull { it.updatedAtMillis }
+    }
+
     fun prepareMaterial(noteId: String, anchor: NoteInsertion, cameraToken: String? = null) {
         cancelMaterial()
         // A formatted caret may need two complete Markdown fragments. Keep them out of the Activity Bundle.
@@ -176,6 +561,24 @@ class NotesViewModel @Inject constructor(
         }
     }
 
+    fun importDocument(open: () -> java.io.InputStream, onImported: (String) -> Unit = {}) {
+        if (busy.value) return
+        mutableBusy.value = true
+        viewModelScope.launch {
+            try {
+                val imported = notes.importDocument(open)
+                onImported(imported.id)
+                tell("文档包已安全导入为新笔记；原始文件未被替换。")
+            } catch (error: CancellationException) {
+                throw error
+            } catch (_: Exception) {
+                tell("文档包导入失败；未发布不完整笔记。请检查压缩包、照片校验和及本机空间。")
+            } finally {
+                mutableBusy.value = false
+            }
+        }
+    }
+
     fun prepareMaterialExport(id: String) { saved["exportMaterialVersionId"] = id }
     fun consumeMaterialExport(): String? = saved.remove("exportMaterialVersionId")
 
@@ -205,13 +608,12 @@ class NotesViewModel @Inject constructor(
                 val snapshot = notes.checkpoint(id)
                 val sessions = kotlinx.coroutines.withContext(kotlinx.coroutines.Dispatchers.IO) { recordings.materialSessions(id) }
                 val versionId = materials.freeze(snapshot, sessions)
-                val registration = try {
-                    uploads.submitIfAuthorized(versionId)
-                } catch (error: CancellationException) { throw error }
+                val registration = try { uploads.submitIfAuthorized(versionId) }
+                catch (error: CancellationException) { throw error }
                 catch (_: Exception) { NoteAutoSubmitRegistration(authorized = false, scheduled = false) }
                 mutableCompletion.value = NoteCompletion(id, versionId)
                 tell(when {
-                    !registration.authorized -> "完整材料已保存在本机；未能确认自动上传安排，请核对授权与材料版本"
+                    !registration.authorized -> "完整材料已保存在本机；未自动上传。可在材料版本中核对目标后上传"
                     registration.scheduled -> "完整材料已保存；持续授权已按结束时账号和服务器锁定，材料齐备后加入后台上传队列"
                     else -> "完整材料已保存；自动上传授权有效，但后台安排未确认，请检查材料版本后重试"
                 })

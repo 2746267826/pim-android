@@ -96,10 +96,30 @@ interface ForensicEventDao {
         """
         SELECT * FROM mobile_forensic_events
         WHERE occurred_at_utc >= :fromUtc AND occurred_at_utc < :toUtc
-        ORDER BY occurred_at_utc ASC
+        ORDER BY occurred_at_utc ASC, id ASC
         """
     )
     suspend fun eventsInRange(fromUtc: Long, toUtc: Long): List<ForensicEventEntity>
+
+    @Query(
+        """
+        SELECT * FROM mobile_forensic_events
+        WHERE occurred_at_utc >= :fromUtc AND occurred_at_utc < :toUtc
+          AND (
+              occurred_at_utc > :afterOccurredAtUtc
+              OR (occurred_at_utc = :afterOccurredAtUtc AND id > :afterId)
+          )
+        ORDER BY occurred_at_utc ASC, id ASC
+        LIMIT :pageSize
+        """
+    )
+    suspend fun eventsInRangePage(
+        fromUtc: Long,
+        toUtc: Long,
+        afterOccurredAtUtc: Long,
+        afterId: Long,
+        pageSize: Int
+    ): List<ForensicEventEntity>
 
     @Query(
         """

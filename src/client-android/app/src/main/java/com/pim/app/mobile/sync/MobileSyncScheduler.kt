@@ -59,6 +59,20 @@ class MobileSyncScheduler @Inject constructor(
             .enqueueUniqueWork(NOW_NAME, ExistingWorkPolicy.APPEND_OR_REPLACE, request)
     }
 
+    fun enqueueNotBefore(delaySeconds: Long) {
+        val bounded = delaySeconds.coerceIn(1L, USAGE_NOT_BEFORE_MAX_DELAY_SECONDS)
+        val settings = trackingSettingsStore.read()
+        val request = buildImmediateRequest(
+            networkType = resolveImmediateNetworkType(settings, allowMeteredOnce = false),
+            allowMeteredOnce = false,
+            continuationDepth = 0,
+            initialDelaySeconds = bounded
+        )
+        // A replacement prevents expired 202 responses from building an unbounded chain.
+        WorkManager.getInstance(context)
+            .enqueueUniqueWork(NOT_BEFORE_NAME, ExistingWorkPolicy.REPLACE, request)
+    }
+
     fun cancelOldWork() {
         val workManager = WorkManager.getInstance(context)
         workManager.cancelUniqueWork("pim_upload")
@@ -70,6 +84,8 @@ class MobileSyncScheduler @Inject constructor(
     companion object {
         const val PERIODIC_NAME = "pim_mobile_sync_periodic"
         const val NOW_NAME = "pim_mobile_sync_now"
+        const val NOT_BEFORE_NAME = "pim_mobile_sync_not_before"
+        const val USAGE_NOT_BEFORE_MAX_DELAY_SECONDS = 24L * 60L * 60L
 
         fun resolvePeriodicNetworkType(settings: TrackingSettings): NetworkType {
             return if (settings.syncOnUnmeteredOnly) NetworkType.UNMETERED else NetworkType.CONNECTED

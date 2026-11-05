@@ -15,8 +15,10 @@ import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
 import javax.inject.Singleton
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CoroutineDispatcher
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
 import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.launch
 
@@ -43,16 +45,27 @@ sealed interface PassiveRegistrationResult {
  * - AC-14.7：**不得扰动主流** —— 全程不触碰主动流的注册间隔与周期锚点。
  */
 @Singleton
-open class PassiveLocationSource @Inject constructor(
+open class PassiveLocationSource internal constructor(
     @ApplicationContext private val context: Context,
     private val trackingSettingsStore: TrackingSettingsStore,
-    private val logs: StructuredLogRepository
+    private val logs: StructuredLogRepository,
+    private val callbackDispatcher: CoroutineDispatcher
 ) {
+    @Inject
+    constructor(
+        @ApplicationContext context: Context,
+        trackingSettingsStore: TrackingSettingsStore,
+        logs: StructuredLogRepository
+    ) : this(context, trackingSettingsStore, logs, Dispatchers.Default)
+
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Default)
     private val locationManager: LocationManager?
         get() = context.getSystemService(Context.LOCATION_SERVICE) as? LocationManager
 
+    private val lifecycleLock = Any()
     private var listener: LocationListener? = null
+    private var listenerJob: Job? = null
+    private var registrationGeneration: Long = 0L
 
     /** 注册状态（AC-14.1：状态页/诊断可读）。 */
     @Volatile
@@ -68,88 +81,104 @@ open class PassiveLocationSource @Inject constructor(
      */
     @SuppressLint("MissingPermission")
     open fun register(processor: PassiveLocationProcessor): PassiveRegistrationResult {
-        if (listener != null) return registration
-        val manager = locationManager
-            ?: return PassiveRegistrationResult.Failed("系统定位服务不可用").also {
-                registration = it
-            }
+        synchronized(lifecycleLock) {
+            if (listener != null) return registration
+            val manager = locationManager
+                ?: return PassiveRegistrationResult.Failed("系统定位服务不可用").also {
+                    registration = it
+                }
 
-        val newListener = object : LocationListener {
-            override fun onLocationChanged(location: Location) {
-                val fix = location.toPassiveFix()
-                // 回调线程上只做入队，判定与落库在协程里做（不阻塞系统回调）。
-                scope.launch {
-                    try {
-                        processor.handle(fix)
-                    } catch (e: CancellationException) {
-                        throw e
-                    } catch (e: Exception) {
-                        // 被动通道异常不得影响采集主流（AC-14.7），但要留痕（不静默）。
-                        logWarn("被动定位处理失败：${e.message ?: e.javaClass.simpleName}")
+            val generation = ++registrationGeneration
+            val newListenerJob = SupervisorJob(scope.coroutineContext[Job])
+
+            val newListener = object : LocationListener {
+                override fun onLocationChanged(location: Location) {
+                    val fix = location.toPassiveFix()
+                    // Ignore queued callbacks after this registration has been replaced.
+                    scope.launch(newListenerJob + callbackDispatcher) {
+                        if (!isCurrentRegistration(generation)) return@launch
+                        try {
+                            processor.handle(fix)
+                        } catch (e: CancellationException) {
+                            throw e
+                        } catch (e: Exception) {
+                            // Passive failures must not stop the active collector.
+                            logWarn("被动定位处理失败：${e.message ?: e.javaClass.simpleName}")
+                        }
                     }
                 }
+
+                @Deprecated("平台 API 34 起废弃，保留以兼容旧系统回调")
+                override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
+
+                override fun onProviderEnabled(provider: String) = Unit
+
+                override fun onProviderDisabled(provider: String) = Unit
             }
 
-            @Deprecated("平台 API 34 起废弃，保留以兼容旧系统回调")
-            override fun onStatusChanged(provider: String?, status: Int, extras: Bundle?) = Unit
-
-            override fun onProviderEnabled(provider: String) = Unit
-
-            override fun onProviderDisabled(provider: String) = Unit
-        }
-
-        return try {
-            manager.requestLocationUpdates(
-                LocationManager.PASSIVE_PROVIDER,
-                // REQ-14 规则 2：不设限流 —— 0 表示不施加任何本地最小间隔/距离。
-                0L,
-                0f,
-                newListener,
-                Looper.getMainLooper()
-            )
-            listener = newListener
-            val registeredAtUtcMillis = System.currentTimeMillis()
-            // AC-14.1：注册成功必须留下含 provider 名与时刻的日志（证据物之一），
-            // 可配合 `dumpsys location` 取证。失败路径在下面同样留痕。
-            //
-            // 注意用 `StructuredLogRepository`（会落进诊断包导出的 mobile-*.jsonl），
-            // **不是 Timber**：本应用从未 `Timber.plant(...)`，Timber 输出在真机上
-            // 根本不会出现 —— 真机实测确认过这一点。若用 Timber，验收方在设备上
-            // 找不到任何注册痕迹，「注册成功」就成了无法核对的口头声明。
-            logRegistration(registeredAtUtcMillis)
-            PassiveRegistrationResult
-                .Registered(
+            return try {
+                // Publish the generation-bound listener before requesting updates:
+                // some providers can synchronously deliver a cached callback here.
+                listener = newListener
+                listenerJob = newListenerJob
+                manager.requestLocationUpdates(
+                    LocationManager.PASSIVE_PROVIDER,
+                    0L,
+                    0f,
+                    newListener,
+                    Looper.getMainLooper()
+                )
+                val registeredAtUtcMillis = System.currentTimeMillis()
+                logRegistration(registeredAtUtcMillis)
+                PassiveRegistrationResult.Registered(
                     provider = LocationManager.PASSIVE_PROVIDER,
                     registeredAtUtcMillis = registeredAtUtcMillis
-                )
-                .also { registration = it }
-        } catch (e: Exception) {
-            // AC-14.1：注册失败同样不得静默（否则「没收到被动点」无从解释）。
-            scope.launch {
-                runCatching {
-                    logs.warn(
-                        operation = "passive-location",
-                        message = "被动定位监听注册失败：${e.message ?: e.javaClass.simpleName}"
-                    )
+                ).also { registration = it }
+            } catch (e: Exception) {
+                runCatching { manager.removeUpdates(newListener) }
+                newListenerJob.cancel()
+                listener = null
+                listenerJob = null
+                registration = PassiveRegistrationResult.Failed(e.message ?: e.javaClass.simpleName)
+                scope.launch {
+                    runCatching {
+                        logs.warn(
+                            operation = "passive-location",
+                            message = "被动定位监听注册失败：${e.message ?: e.javaClass.simpleName}"
+                        )
+                    }
                 }
+                registration
             }
-            PassiveRegistrationResult
-                .Failed(e.message ?: e.javaClass.simpleName)
-                .also { registration = it }
         }
     }
 
     /** 注销被动监听（随采集服务停止）。AC-14.1：停止后窗口内不再产生被动点。 */
     fun unregister() {
-        val current = listener ?: return
-        runCatching { locationManager?.removeUpdates(current) }
-            .onFailure { failure -> logWarn("注销被动定位监听失败：${failure.message ?: ""}") }
-        listener = null
-        registration = PassiveRegistrationResult.NotRegistered
+        synchronized(lifecycleLock) {
+            registrationGeneration += 1L
+            val current = listener ?: run {
+                listenerJob?.cancel()
+                listenerJob = null
+                registration = PassiveRegistrationResult.NotRegistered
+                return
+            }
+            listener = null
+            listenerJob?.cancel()
+            listenerJob = null
+            registration = PassiveRegistrationResult.NotRegistered
+            runCatching { locationManager?.removeUpdates(current) }
+                .onFailure { failure -> logWarn("注销被动定位监听失败：${failure.message ?: ""}") }
+        }
     }
 
     /** 是否处于注册状态（AC-14.1）。 */
-    fun isRegistered(): Boolean = listener != null
+    fun isRegistered(): Boolean = synchronized(lifecycleLock) { listener != null }
+
+    private fun isCurrentRegistration(generation: Long): Boolean =
+        synchronized(lifecycleLock) {
+            registrationGeneration == generation && listener != null
+        }
 
     /** 采集侧的处理器提供者（由 service 注入，保证与冲刺/主流共用同一道门）。 */
     internal fun processorUsing(

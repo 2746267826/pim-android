@@ -140,6 +140,106 @@ class MobileDataDaoDiagnosticTest {
     }
 
     @Test
+    fun diagnosticLocationPagesPreserveTiedTimestampsWithoutGapsOrDuplicates() = runTest {
+        dao.insertLocationPoint(point(recordedAtUtc = 100L, latitude = 1.0))
+        dao.insertLocationPoint(point(recordedAtUtc = 100L, latitude = 2.0))
+        dao.insertLocationPoint(point(recordedAtUtc = 100L, latitude = 3.0))
+        dao.insertLocationPoint(point(recordedAtUtc = 200L, latitude = 4.0))
+        dao.insertLocationPoint(point(recordedAtUtc = 300L, latitude = 5.0))
+
+        val paged = mutableListOf<DiagnosticLocationRow>()
+        var afterTime = Long.MIN_VALUE
+        var afterId = Long.MIN_VALUE
+        while (true) {
+            val page = dao.diagnosticLocationPage(
+                from = 100L,
+                to = 300L,
+                afterRecordedAtUtc = afterTime,
+                afterId = afterId,
+                pageSize = 2
+            )
+            if (page.isEmpty()) break
+            paged += page
+            afterTime = page.last().recordedAtUtc
+            afterId = page.last().id
+        }
+
+        assertEquals(dao.diagnosticLocations(100L, 300L), paged)
+        assertEquals(5, paged.size)
+        assertEquals(paged.map { it.id }.distinct().size, paged.size)
+        assertEquals(paged.map { it.recordedAtUtc }, paged.map { it.recordedAtUtc }.sorted())
+    }
+
+    @Test
+    fun droppedDetailPagesPreserveEveryTiedRow() = runTest {
+        repeat(7) { index ->
+            dao.insertDroppedLocationDiagnostic(
+                MobileLocationDroppedDiagnosticEntity(
+                    recordedAtUtc = 100L,
+                    provider = "provider-$index",
+                    accuracyMeters = index.toFloat(),
+                    policyMode = "Active",
+                    reason = "reason-$index"
+                )
+            )
+        }
+
+        val paged = mutableListOf<DiagnosticDroppedDetailRow>()
+        var afterTime = Long.MIN_VALUE
+        var afterId = Long.MIN_VALUE
+        while (true) {
+            val page = dao.diagnosticDroppedDetailPage(afterTime, afterId, pageSize = 2)
+            if (page.isEmpty()) break
+            paged += page
+            afterTime = page.last().recordedAtUtc
+            afterId = page.last().id
+        }
+
+        assertEquals(dao.diagnosticDroppedDetailRows(), paged)
+        assertEquals(7, paged.size)
+        assertEquals(paged.map { it.id }.distinct().size, paged.size)
+    }
+
+    @Test
+    fun forensicPagesPreserveEveryTiedRow() = runTest {
+        val forensicDao = db.forensicEventDao()
+        repeat(6) { index ->
+            forensicDao.insertIgnore(
+                ForensicEventEntity(
+                    eventType = "probe",
+                    occurredAtUtc = 100L,
+                    clientItemKey = "probe-$index",
+                    payloadJson = """{"index":$index}"""
+                )
+            )
+        }
+
+        val paged = mutableListOf<ForensicEventEntity>()
+        var afterTime = Long.MIN_VALUE
+        var afterId = Long.MIN_VALUE
+        while (true) {
+            val page = forensicDao.eventsInRangePage(
+                fromUtc = 0L,
+                toUtc = 200L,
+                afterOccurredAtUtc = afterTime,
+                afterId = afterId,
+                pageSize = 2
+            )
+            if (page.isEmpty()) break
+            paged += page
+            afterTime = page.last().occurredAtUtc
+            afterId = page.last().id
+        }
+
+        assertEquals(6, paged.size)
+        assertEquals(paged.map { it.id }.distinct().size, paged.size)
+        assertEquals(
+            forensicDao.eventsInRange(0L, 200L).map { it.id },
+            paged.map { it.id }
+        )
+    }
+
+    @Test
     fun deleteAllMobileLogsClearsOnlyMobileLogs() = runTest {
         dao.insertLogs(listOf(log(), log()))
         dao.insertUsageEvents(listOf(event()))

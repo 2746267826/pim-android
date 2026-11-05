@@ -41,6 +41,9 @@ class RecordingService : Service() {
             if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
                 repository.report(RecordingProblem.Permission); stopSelf(); return START_NOT_STICKY
             }
+            if (!RecordingStoragePolicy.canStart(noBackupFilesDir.usableSpace)) {
+                repository.report(RecordingProblem.Storage); stopSelf(); return START_NOT_STICKY
+            }
             RecordingNotifications.createChannel(this)
             try {
                 val notification = RecordingNotifications.build(this, RecordingState(preparing = true))
@@ -64,13 +67,16 @@ class RecordingService : Service() {
             setReferenceCounted(false)
         }
         try {
-            try { repository.start(noteId) } catch (_: Exception) { failure = RecordingProblem.Storage; return }
+            try { repository.start(noteId) } catch (error: Exception) {
+                failure = RecordingStoragePolicy.problemFor(error); return
+            }
             input = AndroidPcmInput { commands.trySend(SILENCED to null) }
             input.start()
             wake.acquire()
             val buffer = ShortArray(RecordingPolicy.SAMPLE_RATE / 10)
             var lastNotification = 0L
             var lastInput = SystemClock.elapsedRealtime()
+            var lastHealthCheck = lastInput
             while (true) {
                 currentCoroutineContext().ensureActive()
                 val command = if (repository.state.value.session?.phase == RecordingPhase.Paused) commands.receive()
@@ -95,11 +101,20 @@ class RecordingService : Service() {
                     lastNotification = 0
                 }
                 if (repository.state.value.session?.phase == RecordingPhase.Recording) {
+                    if (SystemClock.elapsedRealtime() - lastHealthCheck >= 1000) {
+                        lastHealthCheck = SystemClock.elapsedRealtime()
+                        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
+                            failure = RecordingProblem.Permission; break
+                        }
+                        if (!RecordingStoragePolicy.canContinue(noBackupFilesDir.usableSpace)) {
+                            failure = RecordingProblem.Storage; break
+                        }
+                    }
                     val count = input.read(buffer)
                     if (count < 0) { failure = RecordingProblem.Input; break }
                     if (count > 0) {
                         try { repository.append(buffer, count) }
-                        catch (_: Exception) { failure = RecordingProblem.Storage; break }
+                        catch (error: Exception) { failure = RecordingStoragePolicy.problemFor(error); break }
                         lastInput = SystemClock.elapsedRealtime()
                     } else if (SystemClock.elapsedRealtime() - lastInput > 5000) {
                         failure = RecordingProblem.Input; break
@@ -111,7 +126,7 @@ class RecordingService : Service() {
                 }
             }
         } catch (_: CancellationException) { failure = RecordingProblem.ProcessEnded }
-        catch (_: Exception) { failure = RecordingProblem.Input }
+        catch (error: Exception) { failure = RecordingStoragePolicy.problemFor(error) }
         finally {
             try { input?.close() } catch (_: Exception) { if (failure == null) failure = RecordingProblem.Input }
             if (wake.isHeld) wake.release()

@@ -52,9 +52,19 @@ class LocationQueueRepository internal constructor(
         reason: String,
         createdAtUtc: Long = System.currentTimeMillis()
     ): Long {
-        return dao.insertDroppedLocationDiagnostic(
-            MobileLocationDroppedDiagnosticEntity.fromDropped(fix, reason, createdAtUtc)
+        // The nullable key is intentional: pre-v5 rows cannot be backfilled safely.
+        // New writes are idempotent; existing diagnostic history remains raw.
+        val diagnostic = MobileLocationDroppedDiagnosticEntity.fromDropped(
+            fix,
+            reason,
+            createdAtUtc
         )
+        val inserted = dao.insertDroppedLocationDiagnostic(diagnostic)
+        return if (inserted > 0L) {
+            inserted
+        } else {
+            diagnostic.fixKey?.let { dao.findDroppedLocationDiagnosticIdByFixKey(it) } ?: -1L
+        }
     }
 
     /**

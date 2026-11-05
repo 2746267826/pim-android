@@ -2,9 +2,9 @@ package com.pim.app.keepalive
 
 import android.app.usage.UsageStatsManager
 import android.content.Context
-import android.os.Build
 import android.os.PowerManager
 import android.provider.Settings
+import com.pim.app.forensics.StandbyBucketProbe
 import com.pim.app.mobile.logs.StructuredLogRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import javax.inject.Inject
@@ -49,12 +49,19 @@ class GuidanceDetector @Inject constructor(
 
     /** 当前待机桶；读不到返回 null。 */
     suspend fun standbyBucket(): String? = try {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
+        val reading = StandbyBucketProbe.read(context)
+        val bucket = reading.rawValue
+        if (bucket == null || bucket == 0) {
+            logs.warn(
+                "keepalive",
+                "读取待机桶未取得有效值：${reading.failureReason ?: "no-value"}",
+                mapOf(
+                    "source" to reading.source,
+                    "rawValue" to bucket
+                )
+            )
             null
-        } else {
-            val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-            manager?.appStandbyBucket?.let { bucketOf(it) }
-        }
+        } else bucketOf(bucket)
     } catch (ex: Exception) {
         logs.warn("keepalive", "读取待机桶失败：${ex.message ?: ""}")
         null
@@ -62,13 +69,9 @@ class GuidanceDetector @Inject constructor(
 
     /** 待机桶是否为「活跃」档（活跃档限制最松）。读不到返回 null。 */
     suspend fun standbyBucketIsActive(): Boolean? = try {
-        if (Build.VERSION.SDK_INT < Build.VERSION_CODES.P) {
-            null
-        } else {
-            val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-            manager?.appStandbyBucket?.let {
-                it <= UsageStatsManager.STANDBY_BUCKET_FREQUENT
-            }
+        val reading = StandbyBucketProbe.read(context)
+        reading.rawValue?.takeIf { it > 0 }?.let {
+            it <= UsageStatsManager.STANDBY_BUCKET_FREQUENT
         }
     } catch (ex: Exception) {
         null
@@ -97,7 +100,13 @@ class GuidanceDetector @Inject constructor(
         }
 
     /** 待机桶读数文案（供设置页「当前状态」展示，AC-22.1）。 */
-    suspend fun standbyBucketLabel(): String = standbyBucket() ?: "无法读取"
+    suspend fun standbyBucketLabel(): String {
+        val reading = StandbyBucketProbe.read(context)
+        val bucket = reading.rawValue
+        if (bucket != null && bucket != 0) return bucketOf(bucket)
+        val reason = reading.failureReason ?: reading.source
+        return "无法读取（${reason.take(120)}）"
+    }
 
     companion object {
         /**

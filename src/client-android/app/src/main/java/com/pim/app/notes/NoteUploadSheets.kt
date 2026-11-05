@@ -54,48 +54,6 @@ internal fun NoteUploadJobs(state: NoteUploadsState, target: NoteUploadTarget?, 
     }
 }
 
-@Composable
-internal fun NoteAutoSubmitControl(
-    target: NoteUploadTarget?, authorization: NoteAutoSubmitAuthorization?,
-    onEnable: (NoteUploadTarget) -> Unit, onRevoke: () -> Unit,
-) {
-    val d = PimTheme.dimensions
-    val enabledForCurrent = authorization != null && target?.let {
-        authorization.serverIdentity == it.binding.serverIdentity && authorization.ownerId == it.binding.ownerId
-    } == true
-    OutlinedCard(Modifier.fillMaxWidth().testTag("note-auto-submit-control")) {
-        Column(Modifier.padding(d.spaceLarge), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
-            Text("完整材料自动上传", style = MaterialTheme.typography.titleSmall)
-            Text(
-                when {
-                    enabledForCurrent -> "持续授权已开启。之后结束记录时，完整固定版本会自动上传到绑定的账号和服务器；仅上传原始材料，不自动启动转写或 AI 分析。撤销后不会再自动安排新版本；已加入上传队列的任务仍继续。"
-                    authorization != null -> "持续授权仍绑定到之前确认的账号与服务器（${authorization.serverIdentity}），当前目标不同，因此不会改投当前账号。可切回原账号，或撤销旧授权后再为当前账号授权。"
-                    else -> "开启后，之后结束记录时会自动上传完整固定材料（笔记、照片、笔迹和录音）到下方账号与服务器。只上传原始材料，不自动付费转写或启动 AI 分析。"
-                },
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant,
-            )
-            if (target == null) {
-                Text("请先登录并确认服务器，才能设置持续授权。", style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.error)
-            } else {
-                Text("目标：${target.name.ifBlank { "当前登录账号" }} · ${target.binding.serverIdentity}",
-                    style = MaterialTheme.typography.bodySmall)
-            }
-            if (authorization != null) {
-                OutlinedButton(onClick = onRevoke, Modifier.fillMaxWidth().testTag("note-auto-submit-revoke")) {
-                    Text("撤销持续授权")
-                }
-            }
-            if (target != null && !enabledForCurrent) {
-                Button(onClick = { onEnable(target) }, Modifier.fillMaxWidth().testTag("note-auto-submit-enable")) {
-                    Text(if (authorization == null) "开启持续授权" else "切换授权到当前账号")
-                }
-            }
-        }
-    }
-}
-
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
 internal fun NoteUploadConsentSheet(version: NoteMaterialEntry, target: NoteUploadTarget?, onDismiss: () -> Unit,

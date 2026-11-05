@@ -176,6 +176,9 @@ class NoteMaterialStore(
         val note = input.document
         val result = mutableListOf(bytes("note.json", NoteMaterialKind.Document, note.source.toString()),
             bytes("document.md", NoteMaterialKind.Markdown, notes.markdown(note)))
+        require(note.blocks.none { it.string("kind") == "legacyQuickNote" }) {
+            "旧快速记录附件仅保留授权引用，不能作为完整材料上传或导出；原始记录仍保存在来源服务器。"
+        }
         note.blocks.forEach { block -> when (block.string("kind")) {
             "markdown" -> Unit
             "photo" -> {

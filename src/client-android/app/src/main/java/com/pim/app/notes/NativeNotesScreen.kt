@@ -41,6 +41,8 @@ fun NativeNotesScreen(
     onPauseResume: () -> Unit, onFinish: (String) -> Unit,
     onPlay: (RecordingSession, Int) -> Unit, onExport: (NoteDocument) -> Unit,
     onRetryMaterial: (String) -> Unit, onExportMaterial: (String) -> Unit,
+    onImport: () -> Unit = {},
+    onUndo: (String) -> Unit = {}, onRedo: (String) -> Unit = {},
     onExit: () -> Unit = {}, onStopRecording: () -> Unit = {},
     completion: NoteCompletion? = null, onDismissCompletion: () -> Unit = {}, onDismissMessage: (String) -> Unit = {},
     uploads: NoteUploadsState = NoteUploadsState(), uploadTarget: NoteUploadTarget? = null,
@@ -49,7 +51,10 @@ fun NativeNotesScreen(
     onEnableAutoSubmit: (String, NoteUploadTarget) -> Unit = { _, _ -> },
     onUpload: (String, NoteUploadTarget) -> Unit = { _, _ -> }, onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
     asr: NoteAsrRepositoryState = NoteAsrRepositoryState(), asrActions: NoteAsrActions = NoteAsrActions(),
+    legacyMigration: LegacyQuickNoteMigrationState = LegacyQuickNoteMigrationState(),
+    legacyMigrationActions: LegacyQuickNoteMigrationActions = LegacyQuickNoteMigrationActions(),
     initialAsr: Boolean = false,
+    artifactOverlay: @Composable () -> Unit = {},
 ) {
     val d = PimTheme.dimensions
     val note = state.documents[selectedId]
@@ -68,11 +73,11 @@ fun NativeNotesScreen(
         Box(Modifier.fillMaxSize().imePadding()) {
             if (note == null) {
                 NoteLibraryScreen(state, selectedId, recording, busy, onCreate, onOpen, onExit,
-                    uploads = uploads, currentTarget = uploadTarget,
-                    autoSubmitAuthorization = autoSubmitAuthorization,
+                    uploads = uploads, currentTarget = uploadTarget, autoSubmitAuthorization = autoSubmitAuthorization,
                     onEnableAutoSubmit = onAuthorizeAutoSubmit, onRevokeAutoSubmit = onRevokeAutoSubmit,
                     onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
-                    asrTaskCount = asr.tasks.size, onAsr = { showAsr = true })
+                    asrTaskCount = asr.tasks.size, onAsr = { showAsr = true }, onImport = onImport,
+                    onLegacyQuickNotes = legacyMigrationActions.open)
             } else key(note.id) {
                 var preview by rememberSaveable { mutableStateOf(false) }
                 val scope = rememberCoroutineScope()
@@ -146,6 +151,17 @@ fun NativeNotesScreen(
                                             PimStatusBanner("保存失败，当前更改尚未可靠落盘。请检查存储空间后重试。", PimStatusTone.Error)
                                             TextButton(onClick = { onRetry(note.id) }) { Text("重试本地保存") }
                                         }
+                                        when (state.historyUnavailable[note.id]) {
+                                            NoteHistoryUnavailableReason.SnapshotTooLarge -> PimStatusBanner(
+                                                "本篇超过整篇撤销存储预算（源快照最多 ${NoteEditHistory.MAX_SNAPSHOT_BYTES / (1024 * 1024)} MiB、journal 最多 ${NoteEditHistory.MAX_ENCODED_BYTES / (1024 * 1024)} MiB），仍会正常保存；为避免内存和磁盘无界，本篇不提供整篇撤销记录。",
+                                                PimStatusTone.Warning,
+                                            )
+                                            NoteHistoryUnavailableReason.DamagedJournal -> PimStatusBanner(
+                                                "本篇的撤销记录无法通过完整性校验，已暂停使用且保留原文件；笔记正文正常读写。",
+                                                PimStatusTone.Warning,
+                                            )
+                                            null -> Unit
+                                        }
                                         recording.problem?.takeIf { ownSession != null }?.let { PimStatusBanner(it.message, PimStatusTone.Error) }
                                         if (ownActive && !notificationsVisible) PimStatusBanner("系统通知权限或录音渠道已关闭，后台录音状态可能不可见。", PimStatusTone.Warning)
                                         if (recording.active && !ownActive) PimStatusBanner("另一篇笔记正在录音，本页编辑不会改变录音归属。", PimStatusTone.Info)
@@ -180,6 +196,7 @@ fun NativeNotesScreen(
                                         "ink" -> InkCard(block.string("id"), inkOf(block), preview || busy || committing) { ink ->
                                             onChange(note.id) { doc -> doc.replaceBlock(block.string("id")) { withInk(it, ink) } }
                                         }
+                                        "legacyQuickNote" -> LegacyQuickNoteSourceBlock(block)
                                         else -> PimStatusBanner("未知扩展块已保留，当前版本不能编辑它。", PimStatusTone.Warning)
                                     }
                                 }
@@ -202,7 +219,12 @@ fun NativeNotesScreen(
                         },
                         onPreview = { afterInput { preview = !preview } }, onFinish = { afterInput { confirmFinish = true } },
                         onMaterials = { leaveInput(); showMaterials = true }, onRecordings = { leaveInput(); showRecordings = true },
-                        onExport = { afterInput(onExport) }, onAbout = { leaveInput(); showAbout = true }, needsReview = editor.reviewIds.isNotEmpty())
+                        onExport = { afterInput(onExport) }, onImport = onImport, onAbout = { leaveInput(); showAbout = true },
+                        needsReview = editor.reviewIds.isNotEmpty(),
+                        canUndo = state.editHistory[note.id]?.canUndo == true,
+                        canRedo = state.editHistory[note.id]?.canRedo == true,
+                        onUndo = { afterInput { onUndo(note.id) } },
+                        onRedo = { afterInput { onRedo(note.id) } })
                     NoteEditorDock(recording, ownActive, saved && !busy && !committing && !recording.active && !recording.preparing,
                         !busy && !committing && !preview && lastMarkdown != null,
                         onRecord = { afterInput { onRecord(it.id) } }, onPauseResume = onPauseResume,
@@ -215,11 +237,11 @@ fun NativeNotesScreen(
                 }
                 if (confirmFinish) AlertDialog(onDismissRequest = { confirmFinish = false },
                     title = { Text("结束这次记录？") },
-                    text = { Text("本篇录音会停止，笔记与全部录音会固定为一个本机版本。之后仍可继续编辑和补录。\n\n如已开启持续授权，本次完整材料会按结束时绑定的账号和服务器自动上传；否则只保存在本机。不会自动发起付费转写或 AI 分析。") },
+                    text = { Text("本篇录音会停止，笔记与全部录音会固定为一个本机版本。之后仍可继续编辑和补录。\n\n如已对当前账号和服务器开启持续授权，完整材料会自动上传；否则只保存在本机。不会自动发起付费转写或 AI 分析。") },
                     confirmButton = { TextButton(onClick = { confirmFinish = false; afterInput { onFinish(it.id) } }, modifier = Modifier.testTag("note-confirm-finish")) { Text("结束并保存") } },
                     dismissButton = { TextButton(onClick = { confirmFinish = false }) { Text("继续记录") } })
                 if (showAbout) AlertDialog(onDismissRequest = { showAbout = false }, title = { Text("笔记与原始材料") },
-                    text = { Text("支持离线编辑 Markdown、拍照、手写和后台录音。材料版本中的服务器状态单独显示；本机保存成功不等于已上传。\n\n可在笔记库开启或撤销持续授权，自动上传仅发送完整原始材料；逐段转写会先显示当前账号的真实 ASR 目标、固定材料范围和可能费用，再由你单独明确同意。上传不会自动调用 AI 分析。") },
+                    text = { Text("支持离线编辑 Markdown、拍照、手写和后台录音。材料版本中的服务器状态单独显示；本机保存成功不等于已上传。\n\n笔记库可开启或撤销持续上传授权。上传只发送完整原始材料；逐段转写、整理和 AI 分析仍分别需要你确认。") },
                     confirmButton = { TextButton(onClick = { showAbout = false }) { Text("知道了") } })
                 if (showMaterials) NoteMaterialsSheet(note, sessions, materials, busy, { showMaterials = false }, onRetryMaterial, onExportMaterial,
                     onUpload = { uploadVersionId = it; showMaterials = false }, uploads = uploads, target = uploadTarget,
@@ -229,9 +251,7 @@ fun NativeNotesScreen(
                 completion?.takeIf { it.noteId == note.id }?.let { finished ->
                     NoteCompletionSheet(materials.entries.firstOrNull { it.id == finished.versionId }, onDismissCompletion,
                         autoSubmitTarget = uploadTarget,
-                        autoSubmitEnabled = autoSubmitAuthorization?.let { authorization -> uploadTarget?.binding?.let { binding ->
-                            authorization.serverIdentity == binding.serverIdentity && authorization.ownerId == binding.ownerId
-                        } } == true,
+                        autoSubmitEnabled = autoSubmitAuthorization?.let { auth -> uploadTarget?.binding?.let { auth.serverIdentity == it.serverIdentity && auth.ownerId == it.ownerId } } == true,
                         onEnableAutoSubmit = { target -> onDismissCompletion(); onEnableAutoSubmit(finished.versionId, target) },
                         onRevokeAutoSubmit = { onDismissCompletion(); onRevokeAutoSubmit() },
                         onMaterials = { onDismissCompletion(); showMaterials = true },
@@ -249,6 +269,18 @@ fun NativeNotesScreen(
                 initialVersionId = asrVersionId,
                 onDismiss = { showAsr = false },
                 actions = asrActions,
+            )
+            artifactOverlay()
+            if (legacyMigration.visible) LegacyQuickNoteMigrationScreen(
+                state = legacyMigration,
+                onRefresh = legacyMigrationActions.refresh,
+                onPage = legacyMigrationActions.page,
+                onSelect = legacyMigrationActions.select,
+                onConfirm = legacyMigrationActions.confirm,
+                onRevoke = legacyMigrationActions.revoke,
+                onDismissPreview = legacyMigrationActions.dismissPreview,
+                onOpenNote = legacyMigrationActions.openNote,
+                onClose = legacyMigrationActions.close,
             )
         }
     }

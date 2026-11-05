@@ -32,12 +32,14 @@ import com.pim.core.contract.MobileUsageSummaryDto
 import com.pim.core.network.ApiService
 import com.pim.core.network.ApiClientProvider
 import com.pim.core.network.BoundUploadSession
+import com.pim.core.network.MobileUsageResponseObserver
 import com.pim.core.network.UploadSessionChangedException
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
 import com.pim.core.util.toCauseChainMessage
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.flow.MutableStateFlow
@@ -45,6 +47,7 @@ import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.withContext
 import org.json.JSONObject
 import retrofit2.HttpException
 import java.net.URI
@@ -123,8 +126,11 @@ class MobileSyncCoordinator @Inject constructor(
     private val syncScheduler: Provider<MobileSyncScheduler>,
     private val deviceIdentityProvider: DeviceIdentityProvider
 ) {
+    // Injectable for tests only; Hilt never sees the lambda as a dependency.
+    internal var nowUtcMillis: () -> Long = { System.currentTimeMillis() }
     private val mobileDataDao = database.mobileDataDao()
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    private val usageNotBeforeStore = MobileUsageNotBeforeStore(prefs)
     private val syncMutex = Mutex()
     private val _state = MutableStateFlow(readPersistedState())
     val currentState: StateFlow<MobileSyncState> = _state.asStateFlow()
@@ -172,18 +178,54 @@ class MobileSyncCoordinator @Inject constructor(
             return running
         }
 
-        val resultState = try {
-            runSyncOnOpen(manualRecoveryRetry, legacyOutboxClaim)
+        val historyStartedAtUtc = nowUtcMillis()
+        MobileSyncHistory.failInterrupted(
+            dao = mobileDataDao,
+            logs = logs,
+            nowUtcMillis = historyStartedAtUtc
+        )
+        var historyId: Long? = null
+        var resultState: MobileSyncState? = null
+        try {
+            historyId = MobileSyncHistory.begin(
+                dao = mobileDataDao,
+                logs = logs,
+                nowUtcMillis = historyStartedAtUtc,
+                pendingCount = pendingQueueCount()
+            )
+            resultState = runSyncOnOpen(manualRecoveryRetry, legacyOutboxClaim)
         } finally {
-            syncMutex.unlock()
+            try {
+                withContext(NonCancellable) {
+                    val completed = resultState
+                    if (completed != null) {
+                        MobileSyncHistory.finish(
+                            dao = mobileDataDao,
+                            logs = logs,
+                            historyId = historyId,
+                            state = completed,
+                            nowUtcMillis = nowUtcMillis()
+                        )
+                    } else {
+                        MobileSyncHistory.finishInterrupted(
+                            dao = mobileDataDao,
+                            logs = logs,
+                            historyId = historyId,
+                            nowUtcMillis = nowUtcMillis()
+                        )
+                    }
+                }
+            } finally {
+                syncMutex.unlock()
+            }
         }
-
+        val completedState = checkNotNull(resultState)
         val safeContinuationDepth = continuationDepth.coerceAtLeast(0)
-        if (shouldEnqueueUsageContinuation(resultState, safeContinuationDepth, didWork = true)) {
+        if (shouldEnqueueUsageContinuation(completedState, safeContinuationDepth, didWork = true)) {
             syncScheduler.get().enqueueContinuation(safeContinuationDepth + 1)
         }
 
-        return resultState
+        return completedState
     }
 
     /**
@@ -314,23 +356,26 @@ class MobileSyncCoordinator @Inject constructor(
             if (oldQueueState != null) {
                 current = current.merge(oldQueueState)
                 val remaining = pendingUsageRemaining(mobileDataDao)
-                if (oldQueueState.outcome == MobileSyncOutcome.RETRY || remaining > 0) {
+                val deferredByNotBefore = oldQueueState.outcome == MobileSyncOutcome.DEFERRED
+                if (oldQueueState.outcome == MobileSyncOutcome.RETRY || deferredByNotBefore || remaining > 0) {
                     current = uploadQueuedLocations(current, attemptedAt)
                     val isTrueFailure = oldQueueState.outcome == MobileSyncOutcome.RETRY || current.failedCount > 0
                     val outcome = when {
                         oldQueueState.outcome == MobileSyncOutcome.BLOCKED -> MobileSyncOutcome.BLOCKED
+                        deferredByNotBefore -> MobileSyncOutcome.DEFERRED
                         isTrueFailure -> MobileSyncOutcome.RETRY
                         else -> MobileSyncOutcome.SUCCESS
                     }
                     val finalRemaining = pendingUsageRemaining(mobileDataDao)
                     val finalState = current.copy(
                         phase = resolvePostUsageSyncPhase(
-                            usagePhase = oldQueueState.phase,
+                            usagePhase = if (deferredByNotBefore) "waiting-not-before" else oldQueueState.phase,
                             locationPhase = current.phase,
                             failedCount = current.failedCount,
                             remaining = finalRemaining
                         ),
                         progressText = when {
+                            deferredByNotBefore -> oldQueueState.progressText
                             oldQueueState.phase == "upload-blocked" ||
                                 oldQueueState.phase == "usage-outbox-binding-blocked" ->
                                 oldQueueState.progressText
@@ -754,11 +799,13 @@ class MobileSyncCoordinator @Inject constructor(
                 pendingQueueCount = pendingQueueCount()
             )
         }
+        val attemptResponseObserver = MobileUsageResponseObserver()
         val usageUploadApi = apiClientProvider.mobileUsageUploadApiService(
-            BoundUploadSession(
+            binding = BoundUploadSession(
                 serverIdentity = storedOutboxBinding.serverIdentity,
                 ownerId = storedOutboxBinding.ownerId
-            )
+            ),
+            responseObserver = attemptResponseObserver
         )
         val payloadFingerprint = usageBatchPayloadFingerprint(events, summaries, apps)
         val recoveryBinding = usageBatchRecoveryBinding(payloadFingerprint)
@@ -832,6 +879,42 @@ class MobileSyncCoordinator @Inject constructor(
             payloadFingerprint = payloadFingerprint,
             recoveryEpoch = recoveryState.recoveryEpoch
         )
+        val notBeforeBinding = MobileUsageDeadlineBinding(
+            serverIdentity = storedOutboxBinding.serverIdentity,
+            ownerId = storedOutboxBinding.ownerId,
+            deviceId = deviceId,
+            batchId = batchId
+        )
+        val remainingNotBeforeMillis =
+            usageNotBeforeStore.remainingDelayMillis(notBeforeBinding, nowUtcMillis())
+        if (remainingNotBeforeMillis > 0L) {
+            scheduleUsageNotBeforeWake(remainingNotBeforeMillis)
+            val message = "usage-batch-not-before-active"
+            logs.info(
+                "mobile-sync",
+                "服务端 202 处理中，该批次尚未到达重试时间，保留 pending 并延迟下一次尝试。",
+                mapOf(
+                    "batchId" to batchId,
+                    "remainingMillis" to remainingNotBeforeMillis
+                )
+            )
+            return state(
+                phase = "waiting-not-before",
+                progressText = "服务端仍在处理上一批数据，已保留本地队列并安排稍后重试。",
+                outcome = MobileSyncOutcome.DEFERRED,
+                failedCount = sentItems.size,
+                lastError = message,
+                lastErrorDetail = message,
+                currentWindowStartUtc = windowStartUtc,
+                currentWindowEndUtc = windowEndUtc,
+                currentEventCount = events.size,
+                currentSummaryCount = summaries.size,
+                currentAppMetadataCount = apps.size,
+                lastBatchId = batchId,
+                lastBatchStatus = "waiting-not-before",
+                pendingQueueCount = pendingQueueCount()
+            )
+        }
         val request = MobileUsageEventsUploadRequest(
             deviceId = deviceId,
             clientBatchId = batchId,
@@ -844,6 +927,7 @@ class MobileSyncCoordinator @Inject constructor(
             }
         )
 
+        attemptResponseObserver.reset()
         val response = try {
             usageUploadApi.uploadMobileUsage(request)
         } catch (ex: UploadSessionChangedException) {
@@ -875,6 +959,61 @@ class MobileSyncCoordinator @Inject constructor(
             )
         } catch (ex: Exception) {
             if (ex is CancellationException) throw ex
+            val failureNotBefore = try {
+                resolveMobileUsageNotBefore(
+                    metadata = attemptResponseObserver.snapshot(),
+                    ingest = null,
+                    nowUtcMillis = nowUtcMillis()
+                )
+            } finally {
+                attemptResponseObserver.reset()
+            }
+            if (failureNotBefore != null) {
+                val persisted = usageNotBeforeStore.recordDeadline(
+                    notBeforeBinding,
+                    failureNotBefore,
+                    nowUtcMillis()
+                )
+                if (!persisted) {
+                    logs.warn(
+                        "mobile-sync",
+                        "not-before 截止时间持久化失败，后续重启后可能提前重试该批次。",
+                        mapOf("batchId" to batchId)
+                    )
+                }
+                scheduleUsageNotBeforeWake(
+                    usageNotBeforeStore.remainingDelayMillis(
+                        notBeforeBinding,
+                        nowUtcMillis()
+                    )
+                )
+                val message = "server-processing-202-malformed"
+                markUsageFailed(eventIds, summaryIds, apps, message)
+                logs.warn(
+                    "mobile-sync",
+                    "服务端返回无法解析的 202，已保留 Retry-After 约束并保留本地 pending。",
+                    mapOf(
+                        "batchId" to batchId,
+                        "deadlineUtcMillis" to failureNotBefore
+                    )
+                )
+                return state(
+                    phase = "waiting-not-before",
+                    progressText = "服务端仍在处理该批次，已保留本地数据并安排稍后重试。",
+                    outcome = MobileSyncOutcome.DEFERRED,
+                    failedCount = sentItems.size,
+                    lastError = message,
+                    lastErrorDetail = message,
+                    currentWindowStartUtc = windowStartUtc,
+                    currentWindowEndUtc = windowEndUtc,
+                    currentEventCount = events.size,
+                    currentSummaryCount = summaries.size,
+                    currentAppMetadataCount = apps.size,
+                    lastBatchId = batchId,
+                    lastBatchStatus = "waiting-not-before",
+                    pendingQueueCount = pendingQueueCount()
+                )
+            }
             val conflict = (ex as? HttpException)?.takeIf { it.code() == 409 }
             val isConflict = conflict != null
             val serverCode = conflict?.let(::usageBatchHttpErrorCode)
@@ -930,6 +1069,61 @@ class MobileSyncCoordinator @Inject constructor(
             )
         }
         val ingest = response.data
+        val responseMetadata = attemptResponseObserver.snapshot()
+        attemptResponseObserver.reset()
+        val notBeforeDeadline =
+            resolveMobileUsageNotBefore(
+                metadata = responseMetadata,
+                ingest = ingest,
+                nowUtcMillis = nowUtcMillis()
+            )
+        if (notBeforeDeadline != null) {
+            val persisted = usageNotBeforeStore.recordDeadline(
+                notBeforeBinding,
+                notBeforeDeadline,
+                nowUtcMillis()
+            )
+            if (!persisted) {
+                logs.warn(
+                    "mobile-sync",
+                    "not-before 截止时间持久化失败，后续重启后可能提前重试该批次。",
+                    mapOf("batchId" to batchId)
+                )
+            }
+        }
+        if (responseMetadata?.httpStatus == 202) {
+            scheduleUsageNotBeforeWake(
+                usageNotBeforeStore.remainingDelayMillis(
+                    notBeforeBinding,
+                    nowUtcMillis()
+                )
+            )
+            val message = "server-processing-202"
+            logs.info(
+                "mobile-sync",
+                "服务端返回 202 处理中信号，本地 pending 未确认，等待服务端要求的重试时间。",
+                mapOf(
+                    "batchId" to batchId,
+                    "deadlineUtcMillis" to (notBeforeDeadline ?: 0L)
+                )
+            )
+            return state(
+                phase = "waiting-not-before",
+                progressText = "服务端仍在处理该批次，本地数据保留待重试。",
+                outcome = MobileSyncOutcome.DEFERRED,
+                failedCount = sentItems.size,
+                lastError = message,
+                lastErrorDetail = message,
+                currentWindowStartUtc = windowStartUtc,
+                currentWindowEndUtc = windowEndUtc,
+                currentEventCount = events.size,
+                currentSummaryCount = summaries.size,
+                currentAppMetadataCount = apps.size,
+                lastBatchId = batchId,
+                lastBatchStatus = processingStateStatus(ingest?.processingState),
+                pendingQueueCount = pendingQueueCount()
+            )
+        }
         if (response.code != 0 || ingest == null) {
             val message = response.message.orEmpty().ifBlank { "Usage upload failed." }
             markUsageFailed(eventIds, summaryIds, apps, message)
@@ -957,6 +1151,7 @@ class MobileSyncCoordinator @Inject constructor(
         }
 
         val acknowledgement = processUsageAcknowledgements(mobileDataDao, sentItems, ingest)
+        usageNotBeforeStore.clear(notBeforeBinding)
         val hasAcknowledgedProgress =
             acknowledgement.confirmedItems.isNotEmpty() ||
                 acknowledgement.deadLetterItems.isNotEmpty()
@@ -987,6 +1182,22 @@ class MobileSyncCoordinator @Inject constructor(
             appMetadataCount = apps.size,
             acknowledgement = acknowledgement
         )
+    }
+
+    private suspend fun scheduleUsageNotBeforeWake(remainingMillis: Long) {
+        val delaySeconds = retryDelaySecondsForRemainingMillis(remainingMillis)
+        if (delaySeconds > 0L) {
+            // The persisted deadline stays authoritative even if WorkManager
+            // scheduling fails here (e.g. uninitialized in unit tests).
+            runCatching { syncScheduler.get().enqueueNotBefore(delaySeconds) }
+                .onFailure { ex ->
+                    logs.warn(
+                        "mobile-sync",
+                        "not-before 延迟任务调度失败，将依赖持久化截止时间在下次同步时拦截。",
+                        mapOf("message" to (ex.message ?: ex::class.java.simpleName))
+                    )
+                }
+        }
     }
 
     private suspend fun registerDevice(
@@ -1273,7 +1484,11 @@ class MobileSyncCoordinator @Inject constructor(
         maxBatchesPerRun: Int = MAX_USAGE_BATCHES_PER_RUN,
         maxDurationMs: Long = MAX_USAGE_BATCH_DURATION_MS
     ): MobileSyncState? {
-        val initialBatch = loadPendingUsageBatch(mobileDataDao, USAGE_BATCH_LIMIT)
+        val initialBatch = try {
+            loadPendingUsageBatch(mobileDataDao, USAGE_BATCH_LIMIT)
+        } catch (ex: UsageWindowOverflowException) {
+            return blockedUsageWindowState(attemptedAt)
+        }
         if (initialBatch.totalCount == 0) return null
 
         var batchCount = 0
@@ -1284,7 +1499,15 @@ class MobileSyncCoordinator @Inject constructor(
             (SystemClock.elapsedRealtime() - startTime) < maxDurationMs
         ) {
             currentCoroutineContext().ensureActive()
-            val batch = if (batchCount == 0) initialBatch else loadPendingUsageBatch(mobileDataDao, USAGE_BATCH_LIMIT)
+            val batch = try {
+                if (batchCount == 0) {
+                    initialBatch
+                } else {
+                    loadPendingUsageBatch(mobileDataDao, USAGE_BATCH_LIMIT)
+                }
+            } catch (ex: UsageWindowOverflowException) {
+                return blockedUsageWindowState(attemptedAt)
+            }
             if (batch.totalCount == 0) break
             batchCount++
 
@@ -1354,10 +1577,15 @@ class MobileSyncCoordinator @Inject constructor(
                 val failedState = accumulatedState.copy(
                     phase = when (uploadState.phase) {
                         "upload-blocked",
-                        "usage-outbox-binding-blocked" -> uploadState.phase
+                        "usage-outbox-binding-blocked",
+                        "waiting-not-before" -> uploadState.phase
                         else -> "old-queue-upload-failed"
                     },
-                    progressText = uploadState.lastError ?: "旧队列上传失败，已安排重试。",
+                    progressText = if (uploadState.outcome == MobileSyncOutcome.DEFERRED) {
+                        uploadState.progressText
+                    } else {
+                        uploadState.lastError ?: "旧队列上传失败，已安排重试。"
+                    },
                     outcome = uploadState.outcome,
                     pendingQueueCount = pendingQueueCount(),
                     lastAttemptedUploadAt = attemptedAt
@@ -1399,6 +1627,29 @@ class MobileSyncCoordinator @Inject constructor(
         }
 
         return accumulatedState
+    }
+
+    private suspend fun blockedUsageWindowState(attemptedAt: String): MobileSyncState {
+        val pending = pendingUsageRemaining(mobileDataDao)
+        val message = "usage-timestamp-cannot-form-half-open-window"
+        val blocked = state(
+            phase = "upload-blocked",
+            progressText = "本地存在无法表示为半开窗口的毫秒时间戳，已停止上传并保留 pending 数据。",
+            outcome = MobileSyncOutcome.BLOCKED,
+            failedCount = pending,
+            lastError = message,
+            lastErrorDetail = message,
+            lastBatchStatus = "local-window-blocked",
+            pendingQueueCount = pending,
+            lastAttemptedUploadAt = attemptedAt
+        )
+        logs.warn(
+            "mobile-sync",
+            "本地使用记录无法形成半开窗口，已阻止上传且未删除 pending 数据。",
+            mapOf("reason" to message)
+        )
+        persistState(blocked)
+        return blocked
     }
 
     private fun usageBatchRecoveryBinding(payloadFingerprint: String): UsageBatchRecoveryBinding {
@@ -1771,6 +2022,7 @@ internal fun sortedMergeOutcome(a: MobileSyncOutcome, b: MobileSyncOutcome): Mob
     return when {
         a == MobileSyncOutcome.RETRY || b == MobileSyncOutcome.RETRY -> MobileSyncOutcome.RETRY
         a == MobileSyncOutcome.BLOCKED || b == MobileSyncOutcome.BLOCKED -> MobileSyncOutcome.BLOCKED
+        a == MobileSyncOutcome.DEFERRED || b == MobileSyncOutcome.DEFERRED -> MobileSyncOutcome.DEFERRED
         else -> MobileSyncOutcome.SUCCESS
     }
 }
@@ -1796,6 +2048,7 @@ internal fun resolvePostUsageSyncPhase(
     remaining: Int
 ): String {
     return when {
+        usagePhase == "waiting-not-before" -> "waiting-not-before"
         usagePhase == "upload-blocked" ||
             usagePhase == "usage-outbox-binding-blocked" -> usagePhase
         locationPhase == "location-upload-failed" -> locationPhase
@@ -2172,7 +2425,11 @@ internal suspend fun loadPendingUsageBatch(
 
 internal fun MobileUsageSummaryEntity.hasSupportedUsageBatchWindow(): Boolean {
     if (windowEndUtc <= windowStartUtc) return false
-    return windowEndUtc - windowStartUtc <= USAGE_BATCH_MAX_WINDOW_MS
+    return try {
+        usageWindowSpan(windowStartUtc, windowEndUtc) <= USAGE_BATCH_MAX_WINDOW_MS
+    } catch (_: UsageWindowOverflowException) {
+        false
+    }
 }
 
 /**
@@ -2229,6 +2486,8 @@ private enum class UsageQueueKind(val order: Int) {
     App(2)
 }
 
+internal class UsageWindowOverflowException(message: String) : IllegalArgumentException(message)
+
 private sealed class UsageQueueEntry(
     val kind: UsageQueueKind,
     val startUtc: Long,
@@ -2242,7 +2501,7 @@ private sealed class UsageQueueEntry(
     class Event(val row: MobileUsageEventEntity) : UsageQueueEntry(
         kind = UsageQueueKind.Event,
         startUtc = row.eventTimeUtc,
-        endUtc = row.eventTimeUtc,
+        endUtc = pointExclusiveEnd(row.eventTimeUtc),
         syncStatus = row.syncStatus,
         stableKey = row.id.toString()
     )
@@ -2258,10 +2517,28 @@ private sealed class UsageQueueEntry(
     class App(val row: MobileAppMetadataEntity) : UsageQueueEntry(
         kind = UsageQueueKind.App,
         startUtc = row.collectedAtUtc,
-        endUtc = row.collectedAtUtc,
+        endUtc = pointExclusiveEnd(row.collectedAtUtc),
         syncStatus = row.syncStatus,
         stableKey = "${row.packageName}@${row.versionCode}"
     )
+}
+
+private fun pointExclusiveEnd(timestampUtc: Long): Long {
+    if (timestampUtc == Long.MAX_VALUE) {
+        throw UsageWindowOverflowException(
+            "timestamp cannot be represented as a half-open window end"
+        )
+    }
+    return timestampUtc + 1L
+}
+
+private fun usageWindowSpan(startUtc: Long, endUtc: Long): Long {
+    if (endUtc <= startUtc) return 0L
+    return try {
+        Math.subtractExact(endUtc, startUtc)
+    } catch (_: ArithmeticException) {
+        throw UsageWindowOverflowException("window span exceeds representable Long range")
+    }
 }
 
 private class MutableUsageBatch(
@@ -2282,8 +2559,9 @@ private class MutableUsageBatch(
         val currentEnd = windowEndUtc ?: return true
         val nextStart = minOf(currentStart, entry.startUtc)
         val nextEnd = maxOf(currentEnd, entry.endUtc)
-        val nextSpan = (nextEnd - nextStart).coerceAtLeast(1)
-        val currentSpan = (currentEnd - currentStart).coerceAtLeast(1)
+        val nextSpan = usageWindowSpan(nextStart, nextEnd)
+        if (nextSpan > USAGE_BATCH_MAX_WINDOW_MS) return false
+        val currentSpan = usageWindowSpan(currentStart, currentEnd)
         return nextSpan <= targetWindowMs || nextSpan <= currentSpan
     }
 
@@ -2301,7 +2579,7 @@ private class MutableUsageBatch(
         val start = windowStartUtc
         val rawEnd = windowEndUtc
         val end = if (start != null && rawEnd != null) {
-            maxOf(rawEnd, start + 1)
+            if (rawEnd > start) rawEnd else pointExclusiveEnd(start)
         } else {
             rawEnd
         }

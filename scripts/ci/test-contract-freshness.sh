@@ -1,10 +1,12 @@
 #!/usr/bin/env bash
 # ---------------------------------------------------------------------------
-# 契约新鲜度设施 · 行为测试（离线；唯一外部前置是本机 python3 + PyYAML）
+# 契约新鲜度设施 · 行为测试（离线；唯一外部前置是可运行 Python 3 + PyYAML）
 #
 # 覆盖：
 #   ① 同字节 → check 0 且仓内零写入                 ② 合法 JSON 但内容不同 → 非 0
 #   ③ 取源失败（不可达 / 404）→ 非 0                ④ payload HTML / 空体 → 非 0
+#   ③b default raw 失败时限定同 SHA/path 的 api.github.com raw-media fallback；
+#      custom base 不 fallback，fallback payload 仍经过 fail-closed 校验
 #   ⑤ PIM_CONTRACT_REPO/REF 真实改变被访问路径（含 40-hex 直用不解析）
 #   ⑥ check 全程零写入（inode/mtime + git status）+ 静态只读守卫
 #   ⑦ provenance：一致 → PASS；与快照不符 / 缺失 → FAIL；resolvedRef 滞后 → PASS
@@ -24,6 +26,7 @@
 # ---------------------------------------------------------------------------
 set -uo pipefail
 export PYTHONDONTWRITEBYTECODE=1
+export PYTHONUTF8=1
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
@@ -45,17 +48,22 @@ record() { # record <name> <0=ok> <observed>
 }
 section() { say ""; say "-- $* --"; }
 
-if ! command -v python3 >/dev/null 2>&1; then
-  say "缺少 python3（本设施的必要前置）；无法运行行为测试。"
-  exit 2
-fi
-if ! python3 -c 'import yaml' 2>/dev/null; then
+PYTHON="$(pim_contract_python)" || { say "缺少可运行的 Python 3（本设施必要前置）。"; exit 2; }
+pim_contract_require_python >/dev/null || exit 2
+
+if ! "$PYTHON" -c 'import yaml' 2>/dev/null; then
   say "缺少 PyYAML（用于原样抽取真实 CI step/gate）；无法完成 ⑫。"
   exit 2
 fi
 
 WORK="$(mktemp -d "${TMPDIR:-/tmp}/pim-contract-test.XXXXXX")"
 SRV_PID=""
+PYTHON_REAL="$(command -v "$PYTHON")"
+FALLBACK_BIN="$WORK/python-fallback-bin"
+mkdir -p "$FALLBACK_BIN"
+printf '#!/bin/sh\nexit 49\n' > "$FALLBACK_BIN/python3"
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$PYTHON_REAL" > "$FALLBACK_BIN/python"
+chmod +x "$FALLBACK_BIN/python3" "$FALLBACK_BIN/python"
 cleanup() {
   [ -n "$SRV_PID" ] && kill "$SRV_PID" 2>/dev/null
   if [ "${PIM_CONTRACT_TEST_KEEP:-0}" = "1" ]; then say "保留工作目录：$WORK"; else rm -rf "$WORK"; fi
@@ -178,12 +186,12 @@ lay pim-api "$SHA_HTML"   "$FIX/openapi.html"
 lay pim-api "$SHA_EMPTY"  "$FIX/openapi.empty"
 lay 2746267826/pim-api "$SHA_MASTER" "$FIX/openapi.master.json"   # REPO 覆写用例
 
-PORT="$(python3 - <<'PY'
+PORT="$("$PYTHON" - <<'PY'
 import socket
 s = socket.socket(); s.bind(("127.0.0.1", 0)); print(s.getsockname()[1]); s.close()
 PY
 )"
-( cd "$SERVE" && exec python3 -u -m http.server "$PORT" --bind 127.0.0.1 ) > "$WORK/http-server.log" 2>&1 &
+( cd "$SERVE" && exec "$PYTHON" -u -m http.server "$PORT" --bind 127.0.0.1 ) > "$WORK/http-server.log" 2>&1 &
 SRV_PID=$!
 RAW="http://127.0.0.1:$PORT"
 for _ in $(seq 1 60); do
@@ -197,6 +205,7 @@ sandbox() { # sandbox <dir>
   rm -rf "$dir"
   mkdir -p "$dir/scripts/ci" "$dir/contract" "$dir/.github/workflows"
   cp "$HERE/contract-freshness-lib.sh" "$dir/scripts/ci/"
+  cp "$HERE/python-runtime.sh" "$dir/scripts/ci/"
   cp "$CHECK" "$dir/scripts/ci/"
   cp "$FETCH" "$dir/scripts/ci/"
   cp "$CI_YML" "$dir/.github/workflows/ci.yml"
@@ -213,6 +222,12 @@ refresh_sandbox() { # refresh_sandbox <dir> <ref>  -> rc；不 commit
       PIM_CONTRACT_REMOTE="$UPSTREAM_REPO" PIM_CONTRACT_REF="$ref" \
       bash scripts/ci/fetch-contract.sh ) > "$dir.refresh.log" 2>&1
 }
+refresh_sandbox_python_fallback() { # <dir> <ref> -> rc under python3 shim exit 49
+  local dir="$1" ref="$2"
+  ( cd "$dir" && PATH="$FALLBACK_BIN:$PATH" PIM_CONTRACT_RAW_BASE="$RAW" PIM_CONTRACT_REPO=pim-api \
+      PIM_CONTRACT_REMOTE="$UPSTREAM_REPO" PIM_CONTRACT_REF="$ref" \
+      bash scripts/ci/fetch-contract.sh ) > "$dir.refresh-fallback.log" 2>&1
+}
 
 commit_sandbox() { local dir="$1"; git -C "$dir" add -A; git -C "$dir" commit -qm "$2"; }
 
@@ -223,6 +238,14 @@ run_check() { # run_check <dir> <ref> [raw_base] -> 设置 CHECK_RC / CHECK_LOG
       bash scripts/ci/check-contract-freshness.sh ) > "$dir.check.log" 2>&1
   CHECK_RC=$?
   CHECK_LOG="$dir.check.log"
+}
+run_check_python_fallback() { # <dir> <ref> -> set CHECK_RC / CHECK_LOG under python3 shim exit 49
+  local dir="$1" ref="$2"
+  ( cd "$dir" && PATH="$FALLBACK_BIN:$PATH" PIM_CONTRACT_RAW_BASE="$RAW" PIM_CONTRACT_REPO=pim-api \
+      PIM_CONTRACT_REMOTE="$UPSTREAM_REPO" PIM_CONTRACT_REF="$ref" \
+      bash scripts/ci/check-contract-freshness.sh ) > "$dir.check-fallback.log" 2>&1
+  CHECK_RC=$?
+  CHECK_LOG="$dir.check-fallback.log"
 }
 run_check_env() { # run_check_env <dir> <ref> <env...>  额外 env 前缀（用于旁路/CI 用例）
   local dir="$1" ref="$2"; shift 2
@@ -268,6 +291,14 @@ record "check_consistent_no_write" $([ "$SIG_BEFORE" = "$SIG_AFTER" ] && echo 0 
 record "check_consistent_clean_tree" $([ "$STATUS_BEFORE" = "$STATUS_AFTER" ] && echo 0 || echo 1) "git status --porcelain unchanged ('${STATUS_AFTER}')"
 record "check_consistent_clean_tree_empty" $([ -z "$STATUS_AFTER" ] && echo 0 || echo 1) "git status --porcelain is empty"
 
+section "⓪ Python fallback：python3 shim exit 49 时 refresh 与 freshness 仍成功"
+sandbox "$WORK/python-fallback"
+refresh_sandbox_python_fallback "$WORK/python-fallback" master
+FALLBACK_REFRESH_RC=$?
+record "python_fallback_refresh_runs" $([ "$FALLBACK_REFRESH_RC" -eq 0 ] && echo 0 || echo 1) "refresh rc=$FALLBACK_REFRESH_RC with python3 shim exit 49"
+run_check_python_fallback "$WORK/python-fallback" master
+record "python_fallback_freshness_runs" $([ "$CHECK_RC" -eq 0 ] && echo 0 || echo 1) "freshness rc=$CHECK_RC with python3 shim exit 49"
+
 # ======================= ② 合法 JSON 但内容不同 → 非 0 =====================
 section "② 合法 JSON、内容不同（陈旧快照）→ 非 0"
 sandbox "$WORK/c2"
@@ -304,6 +335,75 @@ say "   404 rc=$CHECK_RC"
 record "check_http404_exit_nonzero" $([ "$CHECK_RC" -ne 0 ] && echo 0 || echo 1) "rc=$CHECK_RC when the source returns 404"
 record "check_http404_exit_3" $([ "$CHECK_RC" -eq 3 ] && echo 0 || echo 1) "rc=$CHECK_RC (documented fetch-failure code = 3)"
 record "check_http404_no_write" $([ "$SIG_BEFORE" = "$SIG_AFTER" ] && echo 0 || echo 1) "inode/size/mtime unchanged"
+
+# ============ ③b default-only raw-media fallback（离线 fake curl） =========
+section "③b raw-media fallback 仅 default base；无 Auth/redirect；坏 payload 仍 fail-closed"
+FAKE_CURL_LOG="$WORK/raw-fetch-curl.log"
+FAKE_OUT="$WORK/raw-fetch-fallback.json"
+FAKE_MODE=default
+curl() {
+  local args="$*" out=""
+  while [ "$#" -gt 0 ]; do
+    case "$1" in
+      -o) out="$2"; shift 2 ;;
+      *) shift ;;
+    esac
+  done
+  printf '%s\n' "$args" >> "$FAKE_CURL_LOG"
+  case "$args" in
+    *"raw.githubusercontent.com/pim-api/$SHA_MASTER/contract/openapi.json"*)
+      return 28
+      ;;
+    *"api.github.com/repos/pim-api/contents/contract/openapi.json?ref=$SHA_MASTER"*)
+      case "$FAKE_MODE" in
+        default) cp "$FIX/openapi.master.json" "$out" ;;
+        badpayload) cp "$FIX/openapi.html" "$out" ;;
+        *) return 22 ;;
+      esac
+      return 0
+      ;;
+  esac
+  return 22
+}
+
+: > "$FAKE_CURL_LOG"
+rm -f "$FAKE_OUT"
+pim_contract_fetch_raw "$PIM_CONTRACT_DEFAULT_RAW_BASE" pim-api "$SHA_MASTER" \
+  contract/openapi.json "$FAKE_OUT" >/dev/null 2>"$WORK/fallback-default.log"
+DEFAULT_FETCH_RC=$?
+DEFAULT_CALLS="$(grep -c . "$FAKE_CURL_LOG" || true)"
+DEFAULT_MEDIA_CALLS="$(grep -c 'api.github.com/repos/pim-api/contents/contract/openapi.json' "$FAKE_CURL_LOG" || true)"
+DEFAULT_AUTH_CALLS="$(grep -ci 'authorization' "$FAKE_CURL_LOG" || true)"
+DEFAULT_REDIRECT_BAD="$(grep -vc -- '--max-redirs 0' "$FAKE_CURL_LOG" || true)"
+DEFAULT_BYTES_OK=1
+[ -f "$FAKE_OUT" ] && [ "$(sha "$FAKE_OUT")" = "$(sha "$FIX/openapi.master.json")" ] && DEFAULT_BYTES_OK=0
+record "fallback_default_success_same_bytes" $([ "$DEFAULT_FETCH_RC" -eq 0 ] && [ "$DEFAULT_BYTES_OK" -eq 0 ] && echo 0 || echo 1) "rc=$DEFAULT_FETCH_RC; fallback bytes match fixture"
+record "fallback_default_two_calls_and_exact_media" $([ "$DEFAULT_CALLS" -eq 2 ] && [ "$DEFAULT_MEDIA_CALLS" -eq 1 ] && echo 0 || echo 1) "calls=$DEFAULT_CALLS media_calls=$DEFAULT_MEDIA_CALLS"
+record "fallback_default_no_authorization" $([ "$DEFAULT_AUTH_CALLS" -eq 0 ] && echo 0 || echo 1) "Authorization mentions=$DEFAULT_AUTH_CALLS"
+record "fallback_default_no_redirect" $([ "$DEFAULT_REDIRECT_BAD" -eq 0 ] && echo 0 || echo 1) "calls missing --max-redirs 0=$DEFAULT_REDIRECT_BAD"
+
+: > "$FAKE_CURL_LOG"
+rm -f "$FAKE_OUT"
+FAKE_MODE=default
+pim_contract_fetch_raw "$RAW" pim-api "$SHA_MASTER" contract/openapi.json "$FAKE_OUT" \
+  >/dev/null 2>"$WORK/fallback-custom.log"
+CUSTOM_FETCH_RC=$?
+CUSTOM_CALLS="$(grep -c . "$FAKE_CURL_LOG" || true)"
+CUSTOM_MEDIA_CALLS="$(grep -c 'api.github.com' "$FAKE_CURL_LOG" || true)"
+record "fallback_custom_base_refused" $([ "$CUSTOM_FETCH_RC" -eq 3 ] && [ "$CUSTOM_MEDIA_CALLS" -eq 0 ] && echo 0 || echo 1) "rc=$CUSTOM_FETCH_RC media_calls=$CUSTOM_MEDIA_CALLS"
+record "fallback_custom_base_no_second_request" $([ "$CUSTOM_CALLS" -eq 1 ] && echo 0 || echo 1) "calls=$CUSTOM_CALLS"
+
+: > "$FAKE_CURL_LOG"
+rm -f "$FAKE_OUT"
+FAKE_MODE=badpayload
+pim_contract_fetch_raw "$PIM_CONTRACT_DEFAULT_RAW_BASE" pim-api "$SHA_MASTER" \
+  contract/openapi.json "$FAKE_OUT" >/dev/null 2>"$WORK/fallback-bad-fetch.log"
+BAD_FETCH_RC=$?
+pim_contract_validate_payload "$FAKE_OUT" >/dev/null 2>"$WORK/fallback-bad-payload.log"
+BAD_PAYLOAD_RC=$?
+record "fallback_bad_payload_fetch_reaches_validator" $([ "$BAD_FETCH_RC" -eq 0 ] && echo 0 || echo 1) "fetch rc=$BAD_FETCH_RC"
+record "fallback_bad_payload_fail_closed" $([ "$BAD_PAYLOAD_RC" -eq 4 ] && echo 0 || echo 1) "payload validation rc=$BAD_PAYLOAD_RC (configuration/payload failure)"
+unset -f curl
 
 # ======================= ④ payload HTML / 空体 → 非 0 ======================
 section "④ 权威源返回 HTML / 空体 → 非 0（不得当成契约比对）"
@@ -398,7 +498,7 @@ section "⑦ provenance：与快照一致 → PASS；不符 / 缺失 → FAIL；
 sandbox "$WORK/c7"
 refresh_sandbox "$WORK/c7" "$SHA_C1" >/dev/null 2>&1      # provenance.resolvedRef = c1
 commit_sandbox "$WORK/c7" 'synced at c1'
-PROV_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["resolvedRef"])' "$WORK/c7/contract/provenance.json" 2>/dev/null || echo missing)"
+PROV_SHA="$("$PYTHON" -c 'import json,sys;print(json.load(open(sys.argv[1]))["resolvedRef"])' "$WORK/c7/contract/provenance.json" 2>/dev/null || echo missing)"
 run_check "$WORK/c7" master                               # 上游 HEAD 已是 c2（非契约提交），字节不变
 say "   rc=$CHECK_RC  provenance.resolvedRef=$PROV_SHA  今天解析出的上游=$SHA_MASTER"
 record "provenance_may_lag_head_pass" $([ "$CHECK_RC" -eq 0 ] && echo 0 || echo 1) "rc=$CHECK_RC although provenance.resolvedRef=$SHA_C1 != today's HEAD $SHA_MASTER"
@@ -406,7 +506,7 @@ record "provenance_may_lag_head_kept" $([ "$PROV_SHA" = "$SHA_C1" ] && echo 0 ||
 record "noncontract_commit_head_really_moved" $([ "$SHA_C1" != "$SHA_MASTER" ] && echo 0 || echo 1) "c1=$SHA_C1 != c2=$SHA_MASTER"
 
 # 把 resolvedRef 手动改成另一个合法 40-hex（并非今天 HEAD）→ 仍必须 PASS（允许滞后）
-python3 - "$WORK/c7/contract/provenance.json" <<'PY'
+"$PYTHON" - "$WORK/c7/contract/provenance.json" <<'PY'
 import json, sys
 p = sys.argv[1]
 doc = json.load(open(p, encoding="utf-8"))
@@ -418,7 +518,7 @@ run_check "$WORK/c7" master
 record "provenance_other_valid_sha_still_pass" $([ "$CHECK_RC" -eq 0 ] && echo 0 || echo 1) "rc=$CHECK_RC with resolvedRef rewritten to another valid 40-hex"
 
 # provenance 与仓内快照不一致 → rc1，且 check 不得改写任何产物
-python3 - "$WORK/c7/contract/provenance.json" <<'PY'
+"$PYTHON" - "$WORK/c7/contract/provenance.json" <<'PY'
 import json, sys
 p = sys.argv[1]
 doc = json.load(open(p, encoding="utf-8"))
@@ -451,7 +551,7 @@ record "refresh_writes_snapshot_bytes" \
   $([ "$(sha "$SNAP")" = "$(sha "$FIX/openapi.master.json")" ] && echo 0 || echo 1) \
   "snapshot bytes == upstream master bytes"
 if [ -f "$PROV" ]; then
-  EFFECTIVE="$(python3 - "$PROV" "$SNAP" "$SHA_MASTER" <<'PY'
+  EFFECTIVE="$("$PYTHON" - "$PROV" "$SNAP" "$SHA_MASTER" <<'PY'
 import json, sys, hashlib, re
 prov, snap_path, expect_sha = sys.argv[1:4]
 doc = json.load(open(prov, encoding="utf-8"))
@@ -472,7 +572,7 @@ print("|".join(problems) if problems else "OK")
 PY
 )"
   record "refresh_provenance_shape_ok" $([ "$EFFECTIVE" = "OK" ] && echo 0 || echo 1) "provenance fields: $EFFECTIVE"
-  RESOLVED="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["resolvedRef"])' "$PROV")"
+  RESOLVED="$("$PYTHON" -c 'import json,sys;print(json.load(open(sys.argv[1]))["resolvedRef"])' "$PROV")"
   record "refresh_provenance_resolved_ref" $([ "$RESOLVED" = "$SHA_MASTER" ] && echo 0 || echo 1) "resolvedRef=$RESOLVED == fixture master=$SHA_MASTER"
 else
   record "refresh_provenance_shape_ok" 1 "provenance.json missing"
@@ -538,7 +638,7 @@ section "⑩ 上游出现非契约提交、契约字节不变 → 必须 PASS"
 sandbox "$WORK/c10"
 refresh_sandbox "$WORK/c10" "$SHA_C1" >/dev/null 2>&1      # provenance.resolvedRef = c1
 commit_sandbox "$WORK/c10" 'synced at c1'
-PROV_SHA="$(python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["resolvedRef"])' "$WORK/c10/contract/provenance.json" 2>/dev/null || echo missing)"
+PROV_SHA="$("$PYTHON" -c 'import json,sys;print(json.load(open(sys.argv[1]))["resolvedRef"])' "$WORK/c10/contract/provenance.json" 2>/dev/null || echo missing)"
 run_check "$WORK/c10" master                               # 上游 HEAD 已是 c2（非契约提交），契约字节不变
 say "   rc=$CHECK_RC  provenance.resolvedRef=$PROV_SHA  今天解析出的上游=$SHA_MASTER"
 record "noncontract_commit_snapshot_unchanged_pass" $([ "$CHECK_RC" -eq 0 ] && echo 0 || echo 1) "rc=$CHECK_RC although upstream HEAD moved c1->c2"
@@ -578,7 +678,7 @@ record "test_stub_seam_reachable_only_in_test_mode" $([ "$CHECK_RC" -eq 0 ] && e
 section "⑫ 原样抽取真实 CI step 与 gate check 函数，证明失败传播"
 STEP="$WORK/ci-step-body.sh"
 GATE="$WORK/ci-gate-body.sh"
-python3 - "$CI_YML" "$STEP" "$GATE" <<'PY'
+"$PYTHON" - "$CI_YML" "$STEP" "$GATE" <<'PY'
 import sys, yaml
 src, step_out, gate_out = sys.argv[1:4]
 doc = yaml.safe_load(open(src, encoding="utf-8"))
@@ -606,7 +706,7 @@ PY
 
 # 结构断言：step 所在 job 被 gate 消费；无 if / continue-on-error / env 覆盖；
 # 新 job 先跑行为测试、再跑真实 upstream check；显式 setup-python；release 也依赖本 job。
-STRUCT="$(python3 - "$CI_YML" <<'PY'
+STRUCT="$("$PYTHON" - "$CI_YML" <<'PY'
 import sys, yaml
 doc = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 jobs = doc["jobs"]
@@ -651,7 +751,7 @@ print("|".join(problems) if problems else "OK")
 PY
 )"
 record "ci_step_wiring_ok" $([ "$STRUCT" = "OK" ] && echo 0 || echo 1) "structure: $STRUCT"
-say "   CI triggers: $(python3 -c 'import yaml,sys;d=yaml.safe_load(open(sys.argv[1]));print(sorted((d.get("on") or d.get(True)).keys()))' "$CI_YML")"
+say "   CI triggers: $("$PYTHON" -c 'import yaml,sys;d=yaml.safe_load(open(sys.argv[1]));print(sorted((d.get("on") or d.get(True)).keys()))' "$CI_YML")"
 
 # 步骤体在三个失败分支都必须非 0（GitHub 用 bash -e -o pipefail 调 run）
 step_run() { # step_run <dir> <ref> [raw_base]

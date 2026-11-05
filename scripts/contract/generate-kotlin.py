@@ -191,6 +191,32 @@ def scalar_type(schema: dict) -> str:
     raise GenerationError(f"无法映射的标量类型：{json.dumps(schema, sort_keys=True)}")
 
 
+SINGLE_REF_ALL_OF_KEYS = frozenset({"allOf", "nullable", "type"})
+
+
+def single_ref_all_of_type(schema: dict) -> str | None:
+    """解析仅用于 nullable 包装的单引用 allOf；其他组合一律拒绝。"""
+    if "allOf" not in schema:
+        return None
+    wrapper_keys = set(schema)
+    all_of = schema.get("allOf")
+    member = all_of[0] if isinstance(all_of, list) and len(all_of) == 1 else None
+    valid = (
+        wrapper_keys <= SINGLE_REF_ALL_OF_KEYS
+        and schema.get("type") in (None, "object")
+        and (schema.get("nullable") is None or isinstance(schema.get("nullable"), bool))
+        and isinstance(member, dict)
+        and set(member) == {"$ref"}
+        and isinstance(member.get("$ref"), str)
+    )
+    if not valid:
+        raise GenerationError(
+            "复杂 allOf 无法无损映射；仅支持单引用且无兄弟约束的 nullable 包装："
+            f"{json.dumps(schema, sort_keys=True)[:240]}"
+        )
+    return member["$ref"].rsplit("/", 1)[-1]
+
+
 def kotlin_type(schema: dict, direction: str) -> str:
     """把 schema（属性或根 schema）映射成 Kotlin 类型（不含可空标记）。"""
     if not isinstance(schema, dict):
@@ -198,6 +224,11 @@ def kotlin_type(schema: dict, direction: str) -> str:
     ref = schema.get("$ref")
     if isinstance(ref, str):
         return ref.rsplit("/", 1)[-1]
+    if schema == {"nullable": True}:
+        return "JsonElement"
+    all_of_ref = single_ref_all_of_type(schema)
+    if all_of_ref is not None:
+        return all_of_ref
     kind = schema.get("type")
     if kind == "array":
         items = schema.get("items")
@@ -326,8 +357,13 @@ def generate_models(contract: dict, operations: list[dict], contract_sha: str) -
     ]
 
     needs_serial_name = any("enum" in schemas[name] and schemas[name].get("type") == "string" for name in closure)
+    needs_json_element = any(
+        has_untyped_nullable_json(schemas[name]) for name in closure
+    )
     if needs_serial_name:
         header.append("import kotlinx.serialization.SerialName")
+    if needs_json_element:
+        header.append("import kotlinx.serialization.json.JsonElement")
     header.append("import kotlinx.serialization.Serializable")
     header.append("")
 
@@ -346,6 +382,16 @@ def generate_models(contract: dict, operations: list[dict], contract_sha: str) -
         body.append("")
 
     return "\n".join(header + body).rstrip("\n") + "\n"
+
+
+def has_untyped_nullable_json(value) -> bool:
+    if isinstance(value, dict):
+        if value == {"nullable": True}:
+            return True
+        return any(has_untyped_nullable_json(child) for child in value.values())
+    if isinstance(value, list):
+        return any(has_untyped_nullable_json(child) for child in value)
+    return False
 
 
 # --------------------------------------------------------------------------- #

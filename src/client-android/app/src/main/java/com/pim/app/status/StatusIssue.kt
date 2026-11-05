@@ -463,6 +463,8 @@ data class StatusCenterState(
     val pendingTotal: Int = 0,
     val acceptedCount: Int = 0,
     val permanentRejectedCount: Int = 0,
+    val terminalUsage: com.pim.app.mobile.diagnostics.UsageTerminalLifecycleSnapshot =
+        com.pim.app.mobile.diagnostics.UsageTerminalLifecycleSnapshot(),
     val rejectedCount: Int = 0,
     val lastSuccessfulUploadAt: String? = null,
     val lastAttemptedUploadAt: String? = null,

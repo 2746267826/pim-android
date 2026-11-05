@@ -58,6 +58,32 @@ class NoteUploadEngineTest {
         assertEquals(1, remote.partCalls.count { it == first }); assertEquals(1, remote.completes)
     }
 
+    @Test fun canonicalMixedMaterialFixtureRecoversUploadWithoutChangingReadCollectionOrFileDigests() = runBlocking {
+        val fixture = MixedMaterialFixture.install(temp.root)
+        val snapshot = fixture.snapshot
+        val job = create(snapshot)
+        val remote = Server(snapshot).also { it.losePart = true }
+        try { NoteUploadEngine(jobs, materials, remote.api).run(job.id); fail("Expect lost ack") } catch (_: IOException) { }
+
+        val firstStoredPart = remote.parts.keys.single()
+        jobs.update(job.id) { it.copy(phase = NoteUploadPhase.WaitingForNetwork) }
+        val result = NoteUploadEngine(NoteUploadStore.at(temp.root), NoteMaterialStore.at(temp.root), remote.api).run(job.id)
+
+        assertEquals(NoteUploadPhase.Uploaded, result.phase)
+        assertEquals(snapshot.inputJson, remote.request!!.inputJson)
+        assertEquals(snapshot.manifestJson, remote.request!!.manifestJson)
+        assertEquals(snapshot.files, NoteMaterialStore.at(temp.root).uploadSnapshot(snapshot.versionId).files)
+        assertEquals(snapshot.files.map { it.path }, fixture.canonicalFileSummary().map { it.substringBefore('|') })
+        snapshot.files.forEach { file ->
+            val uploaded = remote.parts.filterKeys { it.first == snapshot.files.indexOf(file) }
+                .toSortedMap(compareBy { it.second }).values.fold(ByteArray(0)) { all, part -> all + part }
+            assertEquals(file.sizeBytes, uploaded.size.toLong())
+            assertEquals(file.sha256, materialDigest(uploaded.inputStream()))
+        }
+        assertEquals(1, remote.partCalls.count { it == firstStoredPart })
+        assertEquals(1, remote.completes)
+    }
+
     @Test fun lostCompletionNeverPretendsSuccessAndReconcilesWithoutPublishingAnotherVersion() = runBlocking {
         val snapshot = snapshot(mixed()); val job = create(snapshot); val remote = Server(snapshot); remote.loseComplete = true
         try { NoteUploadEngine(jobs, materials, remote.api).run(job.id); fail("Expect lost ack") } catch (_: IOException) { }

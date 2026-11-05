@@ -19,36 +19,37 @@ class NoteAutoSubmitStoreTest {
     private val versionId = "33333333-3333-4333-8333-333333333333"
 
     @Before fun clearPreferences() {
-        ApplicationProvider.getApplicationContext<Context>()
-            .getSharedPreferences("native_note_upload_preferences", Context.MODE_PRIVATE).edit().clear().commit()
+        ApplicationProvider.getApplicationContext<Context>().getSharedPreferences("native_note_upload_preferences", Context.MODE_PRIVATE).edit().clear().commit()
     }
 
-    private fun store(): NoteAutoSubmitStore {
-        val context = ApplicationProvider.getApplicationContext<Context>()
-        return NoteAutoSubmitStore(context)
-    }
+    private fun store() = NoteAutoSubmitStore(ApplicationProvider.getApplicationContext())
 
-    @Test fun authorizationAndFinishTargetIntentSurviveRepositoryRecreationThenRevokeDurably() {
-        val first = store()
-        assertTrue(first.authorizeForVersion(a, versionId))
-
+    @Test fun authorizationAndIntentSurviveRecreationAndRevokeDurably() {
+        assertTrue(store().authorizeForVersion(a, versionId))
         val restored = store()
         assertEquals(NoteAutoSubmitAuthorization(a.binding.serverIdentity, a.binding.ownerId), restored.authorization())
         assertEquals(NoteAutoSubmitIntent(versionId, a.binding.serverIdentity, a.binding.ownerId, a.name), restored.intent(versionId))
-
-        val (revoked, pendingIds) = restored.revoke()
+        val (revoked, pending) = restored.revoke()
         assertTrue(revoked)
-        assertEquals(setOf(versionId), pendingIds)
+        assertEquals(setOf(versionId), pending)
         assertNull(store().authorization())
         assertNull(store().intent(versionId))
     }
 
-    @Test fun reauthorizingTheSameAccountPreservesPendingMaterialButSwitchingTargetDoesNot() {
+    @Test fun sameTargetRetainsIntentButChangingTargetClearsIt() {
         val local = store()
-        val otherVersion = "44444444-4444-4444-8444-444444444444"
         assertTrue(local.authorizeForVersion(a, versionId))
         assertTrue(local.authorize(a))
         assertNotNull(local.intent(versionId))
+        assertTrue(local.authorize(b))
+        assertNull(local.intent(versionId))
+        assertEquals(NoteAutoSubmitAuthorization(b.binding.serverIdentity, b.binding.ownerId), local.authorization())
+    }
+
+    @Test fun sameTargetRetainsMultipleIntentsButChangingTargetClearsAll() {
+        val local = store()
+        val otherVersion = "44444444-4444-4444-8444-444444444444"
+        assertTrue(local.authorizeForVersion(a, versionId))
         assertTrue(local.authorizeForVersion(a, otherVersion))
         assertNotNull(local.intent(versionId))
         assertNotNull(local.intent(otherVersion))
@@ -56,16 +57,6 @@ class NoteAutoSubmitStoreTest {
         assertTrue(local.authorize(b))
         assertNull(local.intent(versionId))
         assertNull(local.intent(otherVersion))
-        assertEquals(NoteAutoSubmitAuthorization(b.binding.serverIdentity, b.binding.ownerId), local.authorization())
-    }
-
-    @Test fun switchingAuthorizedAccountReplacesOldPendingIntentsInsteadOfRebindingThem() {
-        val local = store()
-        assertTrue(local.authorizeForVersion(a, versionId))
-        assertTrue(local.authorize(b))
-
-        assertEquals(NoteAutoSubmitAuthorization(b.binding.serverIdentity, b.binding.ownerId), local.authorization())
-        assertNull(local.intent(versionId))
         assertTrue(local.pendingVersionIds().isEmpty())
     }
 }

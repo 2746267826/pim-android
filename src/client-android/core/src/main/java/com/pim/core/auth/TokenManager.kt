@@ -64,6 +64,7 @@ class TokenManager(
     private val lock = Any()
     private var prefs: SharedPreferences?
     private var currentSnapshot: AuthSessionSnapshot
+    private var identityGeneration: Long = 0L
 
     init {
         val (p, snapshot) = try {
@@ -103,6 +104,12 @@ class TokenManager(
     }
 
     override fun snapshot(): AuthSessionSnapshot = synchronized(lock) { currentSnapshot }
+
+    /**
+     * Monotonic owner/server epoch. Token refreshes for the same owner do not
+     * change it, while logout, login, or an owner/server change always does.
+     */
+    fun sessionIdentityGeneration(): Long = synchronized(lock) { identityGeneration }
 
     override fun save(
         accessToken: String,
@@ -148,15 +155,21 @@ class TokenManager(
                     .putString("owner_name", ownerName)
                     .commit()
                 if (!committed) throw IllegalStateException("Secure token storage write failed")
-                currentSnapshot = AuthSessionSnapshot(
+                val nextSnapshot = AuthSessionSnapshot(
                     tokens = tokens,
                     serverIdentity = normalizedIdentity,
                     ownerId = ownerId,
                     ownerName = ownerName
                 )
+                advanceIdentityGeneration(currentSnapshot, nextSnapshot)
+                currentSnapshot = nextSnapshot
                 true
             } catch (failure: Exception) {
                 reportStorageError("Token save failed", failure)
+                advanceIdentityGeneration(
+                    currentSnapshot,
+                    AuthSessionSnapshot(null)
+                )
                 currentSnapshot = AuthSessionSnapshot(null)
                 prefs = null
                 false
@@ -170,10 +183,18 @@ class TokenManager(
                 if (prefs == null) throw IllegalStateException("Secure storage is unavailable")
                 val committed = prefs!!.edit().clear().commit()
                 if (!committed) throw IllegalStateException("Secure token storage clear failed")
+                advanceIdentityGeneration(
+                    currentSnapshot,
+                    AuthSessionSnapshot(null)
+                )
                 currentSnapshot = AuthSessionSnapshot(null)
                 true
             } catch (failure: Exception) {
                 reportStorageError("Token clear failed", failure)
+                advanceIdentityGeneration(
+                    currentSnapshot,
+                    AuthSessionSnapshot(null)
+                )
                 currentSnapshot = AuthSessionSnapshot(null)
                 prefs = null
                 false
@@ -202,6 +223,15 @@ class TokenManager(
 
     fun isExpired(): Boolean {
         return expiresAtUtcMillis()?.let { nowMillis() >= it } ?: true
+    }
+
+    private fun advanceIdentityGeneration(
+        previous: AuthSessionSnapshot,
+        next: AuthSessionSnapshot
+    ) {
+        val previousBinding = previous.serverIdentity to previous.ownerId
+        val nextBinding = next.serverIdentity to next.ownerId
+        if (previousBinding != nextBinding) identityGeneration++
     }
 
     private fun SharedPreferences.readSession(): StoredSession? {

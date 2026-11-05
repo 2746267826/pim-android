@@ -62,7 +62,7 @@ data class NoteAsrTaskRecord(
     val ownerName: String,
     val expectedUserId: String,
     val language: String = "auto",
-    val destination: AiAsrDestinationConsent,
+    val destination: AiAsrDestinationConsent?,
     val destinationDisplayName: String = "",
     val destinationModel: String = "",
     val destinationLanguages: List<String> = emptyList(),

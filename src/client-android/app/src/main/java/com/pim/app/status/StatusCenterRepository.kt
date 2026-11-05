@@ -7,6 +7,8 @@ import com.pim.app.location.PolicyTransitionWriteFailure
 import com.pim.app.location.PolicyTransitionWriteFailureSource
 import com.pim.app.location.service.ForegroundLocationService
 import com.pim.app.location.service.ForegroundLocationRuntimeState
+import com.pim.app.mobile.diagnostics.UsageTerminalLifecycleRepository
+import com.pim.app.mobile.diagnostics.UsageTerminalLifecycleSnapshot
 import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.mobile.sync.MobileSyncCoordinator
 import com.pim.app.mobile.sync.MobileSyncState
@@ -25,6 +27,7 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.combine
 import kotlinx.coroutines.flow.flowOn
+import kotlinx.coroutines.flow.onStart
 import kotlinx.coroutines.flow.transform
 
 private data class CoreFacts(
@@ -45,7 +48,13 @@ private data class ExternalFacts(
     val networkAvailability: NetworkAvailability,
     val workInfos: StatusWorkInfos,
     val permanentRejected: Int,
+    val terminalUsage: UsageTerminalLifecycleSnapshot,
     val accepted: StatusAcceptedState
+)
+
+private data class RejectedFacts(
+    val permanentRejected: Int,
+    val terminalUsage: UsageTerminalLifecycleSnapshot
 )
 
 internal data class StatusEmission(
@@ -85,6 +94,7 @@ class StatusCenterRepository internal constructor(
     private val queueStatusRepository: QueueStatusRepository,
     private val policyTransitionHistorySource: PolicyTransitionHistorySource,
     private val policyTransitionWriteFailureSource: PolicyTransitionWriteFailureSource,
+    private val usageTerminalLifecycleRepository: UsageTerminalLifecycleRepository,
     private val nowMillis: () -> Long
 ) {
     @Inject
@@ -104,7 +114,8 @@ class StatusCenterRepository internal constructor(
         scheduleWindowRepository: ScheduleWindowRepository,
         queueStatusRepository: QueueStatusRepository,
         policyTransitionHistorySource: PolicyTransitionHistorySource,
-        policyTransitionWriteFailureSource: PolicyTransitionWriteFailureSource
+        policyTransitionWriteFailureSource: PolicyTransitionWriteFailureSource,
+        usageTerminalLifecycleRepository: UsageTerminalLifecycleRepository
     ) : this(
         permissionStatusRepository = permissionStatusRepository,
         serverSettingsStore = serverSettingsStore,
@@ -122,6 +133,7 @@ class StatusCenterRepository internal constructor(
         queueStatusRepository = queueStatusRepository,
         policyTransitionHistorySource = policyTransitionHistorySource,
         policyTransitionWriteFailureSource = policyTransitionWriteFailureSource,
+        usageTerminalLifecycleRepository = usageTerminalLifecycleRepository,
         nowMillis = System::currentTimeMillis
     ) { }
 
@@ -147,14 +159,28 @@ class StatusCenterRepository internal constructor(
                 )
             }
 
+        val rejectedFactsFlow = combine(
+            dao.aggregateRejectedCount(),
+            usageTerminalLifecycleRepository.snapshot
+        ) { rejected, terminal ->
+            RejectedFacts(rejected, terminal)
+        }
+
         val externalFlow = combine(
             connectionProbeStore.result,
             networkStatusProvider.availability,
             workInfoStatusProvider.syncWorkInfos,
-            dao.aggregateRejectedCount(),
+            rejectedFactsFlow,
             acceptedSignal.state
         ) { probeResult, availability, workInfos, rejected, accepted ->
-            ExternalFacts(probeResult, availability, workInfos, rejected, accepted)
+            ExternalFacts(
+                probeResult,
+                availability,
+                workInfos,
+                rejected.permanentRejected,
+                rejected.terminalUsage,
+                accepted
+            )
         }
 
         return combine(coreFlow, scheduleFlow, externalFlow) { core, scheduleFacts, external ->
@@ -177,6 +203,7 @@ class StatusCenterRepository internal constructor(
                 syncState = core.syncState,
                 workInfos = external.workInfos,
                 permanentRejected = external.permanentRejected,
+                terminalUsage = external.terminalUsage,
                 networkAvailability = external.networkAvailability,
                 probeResult = external.probeResult,
                 justAccepted = external.accepted.isAccepted
@@ -189,6 +216,10 @@ class StatusCenterRepository internal constructor(
                 state = state,
                 clearAcceptedGenerationAfterEmission = external.accepted.generation.takeIf { shouldClear }
             )
+        }.onStart {
+            // The terminal summary is persisted outside Room; load it before the
+            // first status emission so the UI never presents a false all-zero state.
+            usageTerminalLifecycleRepository.refresh()
         }.flowOn(Dispatchers.IO)
             .emitStates(acceptedSignal::clearIfGeneration)
     }

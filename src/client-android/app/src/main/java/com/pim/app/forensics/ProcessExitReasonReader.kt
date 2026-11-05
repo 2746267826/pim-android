@@ -3,7 +3,11 @@ package com.pim.app.forensics
 import android.app.ActivityManager
 import android.content.Context
 import android.os.Build
+import com.pim.app.mobile.diagnostics.DiagnosticRedactor
 import dagger.hilt.android.qualifiers.ApplicationContext
+import java.io.ByteArrayOutputStream
+import java.io.InputStream
+import java.nio.charset.StandardCharsets
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -15,7 +19,10 @@ data class HistoricalExitRecord(
     val importance: Int?,
     val pssKb: Long?,
     val rssKb: Long?,
-    val description: String?
+    val description: String?,
+    val exitTrace: String? = null,
+    val exitTraceTruncated: Boolean = false,
+    val exitTraceFailureReason: String? = null
 )
 
 /**
@@ -44,7 +51,8 @@ interface ExitReasonSource {
  */
 @Singleton
 class AndroidExitReasonReader @Inject constructor(
-    @ApplicationContext private val context: Context
+    @ApplicationContext private val context: Context,
+    private val redactor: DiagnosticRedactor
 ) : ExitReasonSource {
 
     override fun read(limit: Int): ExitReasonReadResult {
@@ -71,6 +79,9 @@ class AndroidExitReasonReader @Inject constructor(
             )
 
             val records = infos?.map { info ->
+                val trace = ExitTraceReader.read(redactor) {
+                    info.traceInputStream
+                }
                 HistoricalExitRecord(
                     timestampMillis = info.timestamp,
                     apiReason = info.reason,
@@ -78,7 +89,10 @@ class AndroidExitReasonReader @Inject constructor(
                     importance = runCatching { info.importance }.getOrNull(),
                     pssKb = runCatching { info.pss }.getOrNull()?.takeIf { it > 0 },
                     rssKb = runCatching { info.rss }.getOrNull()?.takeIf { it > 0 },
-                    description = runCatching { info.description }.getOrNull()?.takeIf { it.isNotBlank() }
+                    description = runCatching { info.description }.getOrNull()?.takeIf { it.isNotBlank() },
+                    exitTrace = trace.text,
+                    exitTraceTruncated = trace.truncated,
+                    exitTraceFailureReason = trace.failureReason
                 )
             } ?: emptyList()
 
@@ -97,6 +111,112 @@ class AndroidExitReasonReader @Inject constructor(
         /** 系统历史条数有限，取一个够用的上限即可（平台依据：条数由系统配置决定）。 */
         const val MAX_RECORDS = 32
     }
+}
+
+data class ExitTraceResult(
+    val text: String?,
+    val truncated: Boolean,
+    val failureReason: String?
+)
+
+/**
+ * Reads an `ApplicationExitInfo` trace without allowing a platform stream to
+ * consume unbounded memory. The original stream is always closed.
+ */
+object ExitTraceReader {
+    const val MAX_BYTES = 32 * 1024
+    const val MAX_CHARS = 24_000
+
+    fun read(
+        redactor: DiagnosticRedactor,
+        open: () -> InputStream?
+    ): ExitTraceResult {
+        val stream = try {
+            open()
+        } catch (ex: Exception) {
+            return failed(redactor, "open-${errorName(ex)}")
+        } ?: return ExitTraceResult(
+            text = null,
+            truncated = false,
+            failureReason = "trace-unavailable"
+        )
+
+        return try {
+            stream.use { input ->
+                val bytes = ByteArrayOutputStream(minOf(MAX_BYTES, 8 * 1024))
+                val buffer = ByteArray(4096)
+                var total = 0
+                var truncated = false
+                var consecutiveZeroReads = 0
+                while (true) {
+                    val remaining = MAX_BYTES + 1 - total
+                    if (remaining <= 0) {
+                        truncated = true
+                        break
+                    }
+                    val read = input.read(buffer, 0, minOf(buffer.size, remaining))
+                    if (read < 0) break
+                    if (read == 0) {
+                        consecutiveZeroReads++
+                        if (consecutiveZeroReads >= 3) {
+                            return@use ExitTraceResult(
+                                text = null,
+                                truncated = false,
+                                failureReason = "trace-read-stalled"
+                            )
+                        }
+                        continue
+                    }
+                    consecutiveZeroReads = 0
+                    bytes.write(buffer, 0, read)
+                    total += read
+                }
+                if (total > MAX_BYTES) {
+                    truncated = true
+                }
+                val raw = String(
+                    bytes.toByteArray(),
+                    0,
+                    minOf(bytes.size(), MAX_BYTES),
+                    StandardCharsets.UTF_8
+                )
+                if (raw.isBlank()) {
+                    return@use ExitTraceResult(
+                        text = null,
+                        truncated = truncated,
+                        failureReason = "trace-empty"
+                    )
+                }
+                val redacted = redactor.redactText(raw)
+                if (redactor.findCredentialLeaks(redacted).isNotEmpty()) {
+                    ExitTraceResult(
+                        text = null,
+                        truncated = truncated,
+                        failureReason = "redaction-incomplete"
+                    )
+                } else {
+                    ExitTraceResult(
+                        text = redacted.take(MAX_CHARS),
+                        truncated = truncated || redacted.length > MAX_CHARS,
+                        failureReason = null
+                    )
+                }
+            }
+        } catch (ex: Exception) {
+            failed(redactor, "read-${errorName(ex)}")
+        }
+    }
+
+    private fun failed(redactor: DiagnosticRedactor, reason: String): ExitTraceResult =
+        ExitTraceResult(
+            text = null,
+            truncated = false,
+            failureReason = redactor.redactText(reason).take(160)
+        )
+
+    private fun errorName(ex: Exception): String =
+        ex.message?.takeIf { it.isNotBlank() }?.let { "${ex::class.java.simpleName}: $it" }
+            ?: ex::class.java.simpleName
 }
 
 /**
@@ -144,6 +264,9 @@ class ExitReasonRecorder @Inject constructor(
                     pssKb = record.pssKb,
                     rssKb = record.rssKb,
                     description = record.description,
+                    exitTrace = record.exitTrace,
+                    exitTraceTruncated = record.exitTraceTruncated,
+                    exitTraceFailureReason = record.exitTraceFailureReason,
                     inference = if (record.reason == ProcessExitReasons.NO_RECORD) {
                         "系统未提供该次退出的原因。"
                     } else {

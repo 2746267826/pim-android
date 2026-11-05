@@ -11,10 +11,12 @@ import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
 import com.pim.app.location.LocationSnapshot
+import com.pim.app.mobile.logs.StructuredLogRepository
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.channels.awaitClose
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.callbackFlow
+import kotlinx.coroutines.launch
 import javax.inject.Inject
 import javax.inject.Singleton
 
@@ -36,14 +38,17 @@ interface LocationUpdateSource {
 
 @Singleton
 class FusedLocationUpdateSource @Inject constructor(
-    @ApplicationContext context: Context
+    @ApplicationContext context: Context,
+    private val logs: StructuredLogRepository
 ) : LocationUpdateSource {
 
     private val fusedLocationClient: FusedLocationProviderClient =
         LocationServices.getFusedLocationProviderClient(context)
+    private val deduplicator = LocationCallbackDeduplicator()
 
     @SuppressLint("MissingPermission")
     override fun updates(request: LocationUpdateRequest): Flow<LocationUpdateEvent> = callbackFlow {
+        val traceScope = this
         val builder = LocationRequest.Builder(request.priority, request.intervalMillis)
             .setMinUpdateIntervalMillis(request.minUpdateIntervalMillis)
         if (request.durationMillis > 0L) {
@@ -56,8 +61,14 @@ class FusedLocationUpdateSource @Inject constructor(
 
         val callback = object : LocationCallback() {
             override fun onLocationResult(result: LocationResult) {
-                for (location in result.locations) {
-                    trySend(LocationUpdateEvent.Candidate(location.toSnapshot()))
+                val dedupResult = deduplicator.filterForDelivery(
+                    result.locations.map { it.toSnapshot() }
+                )
+                dedupResult.delivered.forEach { snapshot ->
+                    trySend(LocationUpdateEvent.Candidate(snapshot))
+                }
+                if (dedupResult.suppressions.isNotEmpty()) {
+                    traceScope.traceSuppressions(dedupResult)
                 }
             }
 
@@ -81,6 +92,41 @@ class FusedLocationUpdateSource @Inject constructor(
         }
     }
 
+    private fun kotlinx.coroutines.CoroutineScope.traceSuppressions(
+        result: LocationCallbackDedupResult
+    ) {
+        val reasonCounts = result.suppressions
+            .groupingBy { it.reason.code }
+            .eachCount()
+            .entries
+            .joinToString(separator = ",") { (reason, count) -> "$reason=$count" }
+        val suppressedProviders = result.suppressions
+            .map { it.suppressed.provider.lowercase() }
+            .distinct()
+            .sorted()
+            .joinToString(separator = ",")
+        val retainedProviders = result.suppressions
+            .map { it.retained.provider.lowercase() }
+            .distinct()
+            .sorted()
+            .joinToString(separator = ",")
+        launch {
+            runCatching {
+                logs.info(
+                    operation = "location-callback-dedup",
+                    message = "Suppressed duplicate platform location callbacks",
+                    details = mapOf(
+                        "suppressedThisResult" to result.suppressions.size,
+                        "cumulativeSuppressedCount" to result.cumulativeSuppressedCount,
+                        "reasonCounts" to reasonCounts,
+                        "suppressedProviders" to suppressedProviders,
+                        "retainedProviders" to retainedProviders
+                    )
+                )
+            }
+        }
+    }
+
     private companion object {
         private fun Location.toSnapshot(): LocationSnapshot = LocationSnapshot(
             latitude = latitude,
@@ -91,7 +137,8 @@ class FusedLocationUpdateSource @Inject constructor(
             altitudeMeters = if (hasAltitude()) altitude else null,
             speedMetersPerSecond = if (hasSpeed()) speed else null,
             bearingDegrees = if (hasBearing()) bearing else null,
-            timeMillis = time
+            timeMillis = time,
+            elapsedRealtimeNanos = elapsedRealtimeNanos
         )
     }
 }

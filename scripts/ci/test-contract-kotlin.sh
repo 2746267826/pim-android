@@ -9,7 +9,9 @@
 #   3) 契约快照变了、生成物没重新生成（加了字段）→ 红；
 #   4) 契约快照变了、生成物没重新生成（加了 operation 的字段依赖）→ 红；
 #   5) 生成物缺失 → 红；
-#   6) operation 清单里写了契约中不存在的端点 → 生成器拒绝产出（配置错误，非静默变绿）。
+#   6) operation 清单里写了契约中不存在的端点 → 生成器拒绝产出（配置错误，非静默变绿）；
+#   7) nullable 单引用 allOf 包装可生成；多成员/兄弟约束的复杂 allOf 继续 fail-closed；
+#   8) 无 type 的 nullable JSON 值映射为 JsonElement?。
 #
 # 用法：
 #   bash scripts/ci/test-contract-kotlin.sh
@@ -18,6 +20,7 @@ set -uo pipefail
 
 HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 ROOT="$(cd "$HERE/../.." && pwd)"
+. "$HERE/python-runtime.sh"
 
 GENERATED_REL="src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt"
 
@@ -32,6 +35,42 @@ log()  { printf '%s\n' "$*"; }
 ok()   { PASSED=$((PASSED + 1)); log "  ✅ $*"; }
 bad()  { FAILED=$((FAILED + 1)); log "  ❌ $*"; }
 
+PYTHON="$(pim_contract_python)" || { log "需要可运行的 Python 3 才能跑本测试。"; exit 2; }
+
+log "[0] Python 运行时探测：坏 python3 shim 回退到可运行 python，双失效时拒绝"
+PYTHON_REAL="$(command -v "$PYTHON")"
+FALLBACK_BIN="$TMP_ROOT/python-fallback-bin"
+NO_PYTHON_BIN="$TMP_ROOT/no-python-bin"
+PYTHON3_PRIORITY_BIN="$TMP_ROOT/python3-priority-bin"
+mkdir -p "$FALLBACK_BIN" "$NO_PYTHON_BIN" "$PYTHON3_PRIORITY_BIN"
+printf '#!/bin/sh\nexit 49\n' > "$FALLBACK_BIN/python3"
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$PYTHON_REAL" > "$FALLBACK_BIN/python"
+printf '#!/bin/sh\nexit 49\n' > "$NO_PYTHON_BIN/python3"
+printf '#!/bin/sh\nexit 49\n' > "$NO_PYTHON_BIN/python"
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$PYTHON_REAL" > "$PYTHON3_PRIORITY_BIN/python3"
+printf '#!/bin/sh\nexec "%s" "$@"\n' "$PYTHON_REAL" > "$PYTHON3_PRIORITY_BIN/python"
+chmod +x "$FALLBACK_BIN/python3" "$FALLBACK_BIN/python" "$NO_PYTHON_BIN/python3" "$NO_PYTHON_BIN/python" \
+  "$PYTHON3_PRIORITY_BIN/python3" "$PYTHON3_PRIORITY_BIN/python"
+FALLBACK_RESULT="$(PATH="$FALLBACK_BIN:$PATH" /bin/bash -c '. "$1"; pim_contract_python' _ "$ROOT/scripts/ci/python-runtime.sh" 2>/dev/null)"
+if [ "$FALLBACK_RESULT" = "python" ] &&
+   [ "$(PATH="$FALLBACK_BIN:$PATH" "$FALLBACK_RESULT" -c 'import sys; print(sys.version_info[0])')" = "3" ]; then
+  ok "不可执行 python3 shim 回退到可运行的 Python 3"
+else
+  bad "Python 运行时未正确回退到可运行的 Python 3"
+fi
+if NONE_RESULT="$(PATH="$NO_PYTHON_BIN" /bin/bash -c '. "$1"; pim_contract_python' _ "$ROOT/scripts/ci/python-runtime.sh" 2>/dev/null)"; then
+  bad "两个解释器均不可运行时仍返回成功（$NONE_RESULT）"
+else
+  NONE_RC=$?
+  if [ "$NONE_RC" = "3" ]; then ok "两个解释器均不可运行时 fail-closed（rc=3）"; else bad "双失效返回意外 rc=$NONE_RC"; fi
+fi
+PRIORITY_RESULT="$(PATH="$PYTHON3_PRIORITY_BIN:$PATH" /bin/bash -c '. "$1"; pim_contract_python' _ "$ROOT/scripts/ci/python-runtime.sh")"
+if [ "$PRIORITY_RESULT" = "python3" ]; then
+  ok "优先沿用 Linux CI 的 python3 选择顺序"
+else
+  bad "python3 与 python 均可运行时未优先选择 python3（实际 $PRIORITY_RESULT）"
+fi
+
 # 搭一个只含门禁所需文件的「假仓库」：脚本按自身位置推导 ROOT，因此可以直接整仓复制子集。
 make_fixture() { # <名称> -> 打印路径
   local name="$1"
@@ -39,6 +78,7 @@ make_fixture() { # <名称> -> 打印路径
   mkdir -p "$dir/scripts/ci" "$dir/scripts/contract" "$dir/contract" "$(dirname "$dir/$GENERATED_REL")"
   cp "$ROOT/scripts/ci/check-contract-kotlin.sh" "$dir/scripts/ci/"
   cp "$ROOT/scripts/ci/generate-contract-kotlin.sh" "$dir/scripts/ci/"
+  cp "$ROOT/scripts/ci/python-runtime.sh" "$dir/scripts/ci/"
   cp "$ROOT/scripts/contract/generate-kotlin.py" "$dir/scripts/contract/"
   cp "$ROOT/scripts/contract/client-operations.json" "$dir/scripts/contract/"
   cp "$ROOT/contract/openapi.json" "$dir/contract/"
@@ -52,6 +92,15 @@ run_check() { # <fixture> -> 打印 rc
   printf '%s' "$?"
 }
 
+run_generate() { # <fixture> <out-dir> -> 打印 rc
+  local dir="$1" out="$2"
+  "$PYTHON" "$dir/scripts/contract/generate-kotlin.py" \
+    --contract "$dir/contract/openapi.json" \
+    --operations "$dir/scripts/contract/client-operations.json" \
+    --out-dir "$out" >"$dir/generate.log" 2>&1
+  printf '%s' "$?"
+}
+
 expect_rc() { # <期望 rc> <实际 rc> <说明> <fixture>
   local expected="$1" actual="$2" what="$3" dir="$4"
   if [ "$actual" = "$expected" ]; then
@@ -62,7 +111,20 @@ expect_rc() { # <期望 rc> <实际 rc> <说明> <fixture>
   fi
 }
 
-command -v python3 >/dev/null 2>&1 || { log "需要 python3 才能跑本测试。"; exit 2; }
+log "[0b] Kotlin freshness check 也使用 fallback 解释器"
+F="$(make_fixture python-fallback)"
+if PATH="$FALLBACK_BIN:$PATH" bash "$F/scripts/ci/check-contract-kotlin.sh" >"$F/fallback.log" 2>&1; then
+  ok "不可执行 python3 shim 下 Kotlin freshness check 正常执行"
+else
+  bad "Kotlin freshness check 未使用可运行的 python fallback"
+  sed -n '1,40p' "$F/fallback.log" | sed 's/^/      | /'
+fi
+if PATH="$FALLBACK_BIN:$PATH" bash "$F/scripts/ci/generate-contract-kotlin.sh" >"$F/generate-fallback.log" 2>&1; then
+  ok "不可执行 python3 shim 下官方 Kotlin generator 正常执行"
+else
+  bad "官方 Kotlin generator 未使用可运行的 python fallback"
+  sed -n '1,40p' "$F/generate-fallback.log" | sed 's/^/      | /'
+fi
 
 log "== 契约 Kotlin 生成物门禁 · 行为测试（离线 fixture） =="
 log ""
@@ -75,7 +137,7 @@ expect_rc 0 "$rc" "一致时通过" "$F"
 # --- 2) 手工改生成物 → 红 --------------------------------------------------
 log "[2] 手工改生成物（加了契约里没有的字段）"
 F="$(make_fixture hand-edit)"
-python3 - "$F/$GENERATED_REL" <<'PY'
+"$PYTHON" - "$F/$GENERATED_REL" <<'PY'
 import sys, pathlib
 p = pathlib.Path(sys.argv[1])
 s = p.read_text(encoding="utf-8")
@@ -88,7 +150,7 @@ expect_rc 1 "$rc" "被手工改动的生成物会被逐字节比对抓出来" "$
 # --- 3) 契约快照改了、生成物没重新生成（字段）→ 红 --------------------------
 log "[3] 契约快照新增字段、生成物未重新生成"
 F="$(make_fixture contract-field-change)"
-python3 - "$F/contract/openapi.json" <<'PY'
+"$PYTHON" - "$F/contract/openapi.json" <<'PY'
 import json, sys, pathlib
 p = pathlib.Path(sys.argv[1])
 d = json.loads(p.read_text(encoding="utf-8"))
@@ -101,7 +163,7 @@ expect_rc 1 "$rc" "契约变了而生成物没跟上会被拦下" "$F"
 # --- 4) 契约快照的 required 变了、生成物没重新生成 → 红 ---------------------
 log "[4] 契约快照把可选字段改成必填、生成物未重新生成"
 F="$(make_fixture contract-required-change)"
-python3 - "$F/contract/openapi.json" <<'PY'
+"$PYTHON" - "$F/contract/openapi.json" <<'PY'
 import json, sys, pathlib
 p = pathlib.Path(sys.argv[1])
 d = json.loads(p.read_text(encoding="utf-8"))
@@ -124,7 +186,7 @@ expect_rc 1 "$rc" "生成物不在仓里属于不一致" "$F"
 # --- 6) operation 清单写了契约里没有的端点 → 生成器拒绝 ---------------------
 log "[6] operation 清单写了契约里不存在的端点"
 F="$(make_fixture fabricated-operation)"
-python3 - "$F/scripts/contract/client-operations.json" <<'PY'
+"$PYTHON" - "$F/scripts/contract/client-operations.json" <<'PY'
 import json, sys, pathlib
 p = pathlib.Path(sys.argv[1])
 d = json.loads(p.read_text(encoding="utf-8"))
@@ -134,12 +196,100 @@ PY
 rc="$(run_check "$F")"
 expect_rc 4 "$rc" "编造的 operation 让生成器直接报错（不是静默产出半张契约）" "$F"
 
-# --- 7) 门禁确实接进了必需检查链（否则「红了也没人拦」） --------------------
-log "[7] CI 必需检查链接线"
-if ! command -v python3 >/dev/null 2>&1 || ! python3 -c "import yaml" >/dev/null 2>&1; then
+# --- 7) nullable single-ref allOf 包装接受，复杂 allOf fail-closed -------------
+log "[7] nullable 单引用 allOf：包装元数据接受，复杂形状拒绝"
+F="$(make_fixture nullable-allof)"
+"$PYTHON" - "$F/scripts/contract/client-operations.json" <<'PY'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+d = json.loads(p.read_text(encoding="utf-8"))
+d["operations"].append({
+    "apiService": "reprocessNoteAsrTask",
+    "method": "POST",
+    "path": "/api/v1/native-notes/asr-tasks/{sourceTaskId}/reprocess",
+})
+p.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+PY
+OUT="$TMP_ROOT/nullable-allof-out"
+rc="$(run_generate "$F" "$OUT")"
+if [ "$rc" = 0 ] && "$PYTHON" - "$OUT/$GENERATED_REL" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+consent = "    val consent: AiAsrDestinationConsent? = null,"
+destination = "    val destination: AiAsrDestinationConsent? = null,"
+raise SystemExit(0 if text.count(consent) == 3 and text.count(destination) == 1 else 1)
+PY
+then
+  ok "单引用 nullable 包装生成 AiAsrDestinationConsent?，不把共享组件改成 nullable"
+else
+  bad "单引用 nullable 包装未按预期生成（generator rc=$rc）"
+  sed -n '1,40p' "$F/generate.log" | sed 's/^/      | /'
+fi
+
+F="$(make_fixture allof-multi-member)"
+"$PYTHON" - "$F/contract/openapi.json" <<'PY'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+d = json.loads(p.read_text(encoding="utf-8"))
+prop = d["components"]["schemas"]["StartNoteAsrRequest"]["properties"]["consent"]
+prop["allOf"].append({"$ref": "#/components/schemas/AiAsrDestinationConsent"})
+p.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+PY
+OUT="$TMP_ROOT/allof-multi-member-out"
+rc="$(run_generate "$F" "$OUT")"
+if [ "$rc" = 1 ] && grep -q '^ERROR:' "$F/generate.log" && [ ! -f "$OUT/src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt" ]; then
+  ok "多成员 allOf 被生成器拒绝（rc=1，未产出半张契约）"
+else
+  bad "多成员 allOf 未 fail-closed（generator rc=$rc）"
+  sed -n '1,40p' "$F/generate.log" | sed 's/^/      | /'
+fi
+
+F="$(make_fixture allof-ref-sibling)"
+"$PYTHON" - "$F/contract/openapi.json" <<'PY'
+import json, sys, pathlib
+p = pathlib.Path(sys.argv[1])
+d = json.loads(p.read_text(encoding="utf-8"))
+prop = d["components"]["schemas"]["StartNoteAsrRequest"]["properties"]["consent"]
+prop["allOf"][0]["maxProperties"] = 0
+p.write_text(json.dumps(d, indent=2, ensure_ascii=False), encoding="utf-8")
+PY
+OUT="$TMP_ROOT/allof-ref-sibling-out"
+rc="$(run_generate "$F" "$OUT")"
+if [ "$rc" = 1 ] && grep -q '^ERROR:' "$F/generate.log" && [ ! -f "$OUT/src/client-android/core/src/main/java/com/pim/core/contract/ContractModels.kt" ]; then
+  ok "\$ref 兄弟约束被生成器拒绝（rc=1，未丢约束）"
+else
+  bad "\$ref 兄弟约束未 fail-closed（generator rc=$rc）"
+  sed -n '1,40p' "$F/generate.log" | sed 's/^/      | /'
+fi
+
+# --- 8) nullable 无类型 JSON 响应字段保留 JSON 形状 --------------------------
+log "[8] 无 type 的 nullable JSON 字段"
+F="$(make_fixture untyped-nullable-json)"
+OUT="$TMP_ROOT/untyped-nullable-json-out"
+rc="$(run_generate "$F" "$OUT")"
+if [ "$rc" = 0 ] && "$PYTHON" - "$OUT/$GENERATED_REL" <<'PY'
+import pathlib
+import sys
+
+text = pathlib.Path(sys.argv[1]).read_text(encoding="utf-8")
+expected = "    val raw: JsonElement? = null,"
+raise SystemExit(0 if "import kotlinx.serialization.json.JsonElement" in text and expected in text else 1)
+PY
+then
+  ok "无类型 nullable JSON 映射为 JsonElement?"
+else
+  bad "无类型 nullable JSON 未按预期生成（generator rc=$rc）"
+  sed -n '1,40p' "$F/generate.log" | sed 's/^/      | /'
+fi
+
+# --- 9) 门禁确实接进了必需检查链（否则「红了也没人拦」） --------------------
+log "[9] CI 必需检查链接线"
+if ! "$PYTHON" -c "import yaml" >/dev/null 2>&1; then
   bad "需要 PyYAML 才能校验 CI 接线（本项无法执行，不算通过）"
 else
-  wiring="$(python3 - "$ROOT/.github/workflows/ci.yml" <<'PY'
+  wiring="$("$PYTHON" - "$ROOT/.github/workflows/ci.yml" <<'PY'
 import sys, yaml
 doc = yaml.safe_load(open(sys.argv[1], encoding="utf-8"))
 jobs = doc.get("jobs", {})

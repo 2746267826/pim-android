@@ -104,18 +104,26 @@ class NoteUploadBindingTest {
         assertEquals(0, server.requestCount)
     }
 
-    @Test fun autoSubmitAuthorizationPersistsAcrossRepositoryRestartAndIsBoundToTheAccount() = runBlocking {
+    @Test fun autoSubmitAuthorizationPersistsAcrossRepositoryRestartAndIsBoundToTheAccountAndServer() = runBlocking {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val repository = NoteUploadRepository(context, tokens, settings)
         val targetA = NoteUploadTarget(binding, "Alice")
         assertTrue(repository.authorizeAutoSubmit(targetA))
+        val storedA = NoteAutoSubmitAuthorization(targetA.binding.serverIdentity, targetA.binding.ownerId)
 
         val restored = NoteUploadRepository(context, tokens, settings)
-        assertTrue(restored.autoSubmitAuthorized(targetA))
+        assertEquals(storedA, restored.autoSubmitAuthorization.value)
         owner(b, "access-b")
-        assertFalse(restored.autoSubmitAuthorized(NoteUploadTarget(BoundUploadSession(binding.serverIdentity, b), "Bob")))
+        assertEquals(storedA, restored.autoSubmitAuthorization.value)
+        assertFalse(restored.submitIfAuthorized(newNoteId()).authorized)
+
+        owner(a, "access-a")
+        val otherServerTarget = NoteUploadTarget(BoundUploadSession("https://another.invalid", a), "Alice")
+        assertFalse(restored.authorizeAutoSubmit(otherServerTarget))
+        assertEquals(storedA, restored.autoSubmitAuthorization.value)
+
         assertTrue(restored.revokeAutoSubmitDurably())
-        assertFalse(NoteUploadRepository(context, tokens, settings).autoSubmitAuthorized(targetA))
+        assertNull(NoteUploadRepository(context, tokens, settings).autoSubmitAuthorization.value)
     }
 
     @Test fun accountChangeBeforeDurableAuthorizationPreventsEnablingIt() = runBlocking {
@@ -125,7 +133,7 @@ class NoteUploadBindingTest {
         owner(b, "access-b")
 
         assertFalse(repository.authorizeAutoSubmit(staleTarget))
-        assertFalse(repository.autoSubmitAuthorized(staleTarget))
+        assertFalse(repository.submitIfAuthorized(newNoteId()).authorized)
         assertNull(repository.autoSubmitAuthorization.value)
     }
 

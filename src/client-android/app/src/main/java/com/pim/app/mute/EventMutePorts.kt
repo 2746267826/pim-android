@@ -22,14 +22,8 @@ interface EventMuteDevicePort {
     fun applyMuted(): Boolean
 
     /**
-     * 本功能 applyMuted 成功后设备会处于的固定静音档案。
-     * 用于旧会话/中断窗口的保守所有权判断，以及新会话记录 [MuteSession.appliedState]。
-     */
-    fun mutedState(): DeviceMuteState
-
-    /**
      * 还原到给定状态（E3.5：不是「一律调成响铃」）。
-     * 返回 [RestoreResult]：只有读回状态与快照一致才算 Restored。
+     * 返回 [RestoreResult]：只有读回铃声模式与快照一致才算 Restored。
      */
     fun restore(state: DeviceMuteState): RestoreResult
 }

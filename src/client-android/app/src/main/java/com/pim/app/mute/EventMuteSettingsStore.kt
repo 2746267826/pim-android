@@ -85,7 +85,10 @@ class EventMuteSettingsStore @Inject constructor(
             }
             val appliedState = if (json.has(KEY_SESSION_APPLIED_RINGER)) {
                 DeviceMuteState(
-                    ringerMode = json.getInt(KEY_SESSION_APPLIED_RINGER)
+                    ringerMode = json.getInt(KEY_SESSION_APPLIED_RINGER),
+                    interruptionFilter = if (json.has(KEY_SESSION_APPLIED_FILTER)) {
+                        json.getInt(KEY_SESSION_APPLIED_FILTER)
+                    } else null
                 )
             } else {
                 null
@@ -93,7 +96,10 @@ class EventMuteSettingsStore @Inject constructor(
             MuteSession(
                 eventIds = eventIds,
                 state = DeviceMuteState(
-                    ringerMode = json.getInt(KEY_SESSION_RINGER)
+                    ringerMode = json.getInt(KEY_SESSION_RINGER),
+                    interruptionFilter = if (json.has(KEY_SESSION_OBSERVED_FILTER)) {
+                        json.getInt(KEY_SESSION_OBSERVED_FILTER)
+                    } else null
                 ),
                 enteredAtUtcMillis = json.getLong(KEY_SESSION_ENTERED_AT),
                 pendingRestoreReason = json.optString(KEY_SESSION_PENDING_RESTORE).takeIf { it.isNotEmpty() },
@@ -114,6 +120,7 @@ class EventMuteSettingsStore @Inject constructor(
             val json = JSONObject()
             json.put(KEY_SESSION_EVENT_IDS, JSONArray(session.eventIds.toList()))
             json.put(KEY_SESSION_RINGER, session.state.ringerMode)
+            session.state.interruptionFilter?.let { json.put(KEY_SESSION_OBSERVED_FILTER, it) }
             json.put(KEY_SESSION_ENTERED_AT, session.enteredAtUtcMillis)
             val ends = JSONObject()
             for ((id, end) in session.eventEndsUtcMillis) {
@@ -122,6 +129,7 @@ class EventMuteSettingsStore @Inject constructor(
             if (ends.length() > 0) json.put(KEY_SESSION_EVENT_ENDS, ends)
             session.appliedState?.let {
                 json.put(KEY_SESSION_APPLIED_RINGER, it.ringerMode)
+                it.interruptionFilter?.let { filter -> json.put(KEY_SESSION_APPLIED_FILTER, filter) }
             }
             if (session.pendingRestoreReason != null) {
                 json.put(KEY_SESSION_PENDING_RESTORE, session.pendingRestoreReason)
@@ -152,5 +160,7 @@ class EventMuteSettingsStore @Inject constructor(
         private const val KEY_SESSION_PENDING_RESTORE = "pending_restore_reason"
         private const val KEY_SESSION_EVENT_ENDS = "event_ends"
         private const val KEY_SESSION_APPLIED_RINGER = "applied_ringer_mode"
+        private const val KEY_SESSION_OBSERVED_FILTER = "observed_interruption_filter"
+        private const val KEY_SESSION_APPLIED_FILTER = "applied_interruption_filter"
     }
 }

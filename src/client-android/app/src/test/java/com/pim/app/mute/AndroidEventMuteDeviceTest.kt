@@ -70,7 +70,7 @@ class AndroidEventMuteDeviceTest {
     }
 
     @Test
-    fun `授权时各勿扰档位均可切换铃声静音并保留过滤器`() {
+    fun `已静音时各勿扰档位均保持铃声与过滤器`() {
         shadowOf(notificationManager).setNotificationPolicyAccessGranted(true)
 
         for (filter in listOf(
@@ -79,13 +79,32 @@ class AndroidEventMuteDeviceTest {
             NotificationManager.INTERRUPTION_FILTER_NONE,
             NotificationManager.INTERRUPTION_FILTER_ALARMS
         )) {
-            audioManager.ringerMode = AudioManager.RINGER_MODE_VIBRATE
+            audioManager.ringerMode = AudioManager.RINGER_MODE_SILENT
             notificationManager.setInterruptionFilter(filter)
 
             assertTrue("授权后 applyMuted 必须确认成功，filter=$filter", subject.applyMuted())
-            assertEquals(DeviceMuteState(AudioManager.RINGER_MODE_SILENT), subject.currentState())
+            assertEquals(DeviceMuteState(AudioManager.RINGER_MODE_SILENT, filter), subject.currentState())
             assertEquals("铃声已静音", AudioManager.RINGER_MODE_SILENT, audioManager.ringerMode)
             assertEquals("保留当前勿扰过滤器", filter, notificationManager.currentInterruptionFilter)
+        }
+    }
+
+    @Test
+    fun `已开启勿扰时保留用户响铃或振动模式并报告未应用`() {
+        shadowOf(notificationManager).setNotificationPolicyAccessGranted(true)
+        for (ringerMode in listOf(AudioManager.RINGER_MODE_NORMAL, AudioManager.RINGER_MODE_VIBRATE)) {
+            for (filter in listOf(
+                NotificationManager.INTERRUPTION_FILTER_PRIORITY,
+                NotificationManager.INTERRUPTION_FILTER_ALARMS,
+                NotificationManager.INTERRUPTION_FILTER_NONE
+            )) {
+                audioManager.ringerMode = ringerMode
+                notificationManager.setInterruptionFilter(filter)
+
+                assertFalse(subject.applyMuted())
+                assertEquals(ringerMode, audioManager.ringerMode)
+                assertEquals(filter, notificationManager.currentInterruptionFilter)
+            }
         }
     }
 

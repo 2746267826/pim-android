@@ -1,8 +1,11 @@
 package com.pim.app.mute
 
+import android.app.NotificationManager
+import android.media.AudioManager
 import com.pim.app.mobile.logs.StructuredLogRepository
 import javax.inject.Inject
 import javax.inject.Singleton
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
@@ -116,13 +119,19 @@ class EventMuteExecutor internal constructor(
                 mapOf(eventId to eventEndUtcMillis)
             } else {
                 emptyMap()
-            },
-            appliedState = device.mutedState()
+            }
         )
-        // 快照和预期状态必须先可靠落盘；写入失败时绝不能先改设备。
+        // 先可靠落盘快照。操作后的接管凭据确认落盘后才能恢复。
         sessions.write(session)
         val applied = device.applyMuted()
-        if (applied) {
+        val observed = readStableDeviceState()
+        val filterExpected = observed?.interruptionFilter != null && (
+            observed.interruptionFilter == state.interruptionFilter ||
+                (state.interruptionFilter == NotificationManager.INTERRUPTION_FILTER_ALL &&
+                    observed.interruptionFilter == NotificationManager.INTERRUPTION_FILTER_PRIORITY)
+            )
+        if (applied && observed?.ringerMode == AudioManager.RINGER_MODE_SILENT && filterExpected) {
+            sessions.write(session.copy(appliedState = observed))
             settings.recordError(null)
             logs.info(
                 LOG_TAG,
@@ -130,9 +139,14 @@ class EventMuteExecutor internal constructor(
             )
         } else {
             // 调用结果未能确认，记录此次操作后的状态，供本地重试安全回滚。
-            val observed = readDeviceState()
-            val failReason = "静音未成功确认，需恢复进入前状态"
-            sessions.write(session.copy(pendingRestoreReason = failReason, appliedState = observed ?: session.appliedState))
+            val failReason = if (!applied && state.ringerMode != AudioManager.RINGER_MODE_SILENT &&
+                state.interruptionFilter != NotificationManager.INTERRUPTION_FILTER_ALL
+            ) {
+                "勿扰已开启，请手动将铃声模式切换为静音"
+            } else {
+                "静音未成功确认，需恢复进入前状态"
+            }
+            sessions.write(session.copy(pendingRestoreReason = failReason, appliedState = observed.takeIf { filterExpected }))
             settings.recordError("$failReason，将在下次刷新重试")
             logs.warn(LOG_TAG, failReason)
         }
@@ -167,13 +181,24 @@ class EventMuteExecutor internal constructor(
      * 被用户手动改过 → 放弃接管，保留用户状态，清会话并留说明；
      * 恢复调用失败 → 保留会话与可见提示，下次刷新重试。
      *
-     * 部分恢复失败时记录操作后的真实状态；下一次也必须比对它，不能因为待重试就
-     * 无条件覆盖用户的新设置。旧会话无凭据时只按固定静音档案保守比对。
+     * 恢复失败时保留已确认的接管凭据，下一次再次核对。
+     * 缺少接管凭据时退出接管并提示。
      */
     private suspend fun finishSession(session: MuteSession, reason: String) {
         val currentState = readDeviceState() ?: return
-        val applied = session.appliedState ?: device.mutedState()
-        if (currentState != applied || currentState == session.state) {
+        val applied = session.appliedState
+        if (currentState.ringerMode == session.state.ringerMode) {
+            sessions.write(null)
+            settings.recordError(null)
+            return
+        }
+        if (applied?.interruptionFilter == null) {
+            sessions.write(null)
+            settings.recordError("静音接管状态未能确认，请检查并手动恢复铃声模式")
+            logs.warn(LOG_TAG, "$reason：缺少完整接管凭据，保留当前设置")
+            return
+        }
+        if (currentState != applied) {
             sessions.write(null)
             settings.recordError(null)
             logs.info(
@@ -204,8 +229,7 @@ class EventMuteExecutor internal constructor(
             is RestoreResult.Blocked -> {
                 // 不能先清快照假成功：保留会话，下次刷新/叫醒重试
                 val failReason = result.reason ?: "系统还原调用未成功"
-                val observed = readDeviceState()
-                sessions.write(session.copy(pendingRestoreReason = failReason, appliedState = observed ?: applied))
+                sessions.write(session.copy(pendingRestoreReason = failReason))
                 settings.recordError("$failReason，将在下次刷新重试")
                 logs.warn(LOG_TAG, "$reason：还原失败（$failReason），会话保留待重试")
             }
@@ -220,6 +244,20 @@ class EventMuteExecutor internal constructor(
         settings.recordError("无法读取本机铃声模式，请检查系统权限后重试")
         logs.warn(LOG_TAG, "无法确认设备状态：${ex::class.java.simpleName}")
         null
+    }
+
+    /** 每 50ms 采样，连续四次一致后确认异步勿扰更新，最多重试 20 次。 */
+    private suspend fun readStableDeviceState(): DeviceMuteState? {
+        var previous = readDeviceState() ?: return null
+        var unchanged = 0
+        repeat(20) {
+            delay(50)
+            val current = readDeviceState() ?: return null
+            unchanged = if (current == previous) unchanged + 1 else 0
+            if (unchanged >= 4) return current
+            previous = current
+        }
+        return null
     }
 
     /**

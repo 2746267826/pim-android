@@ -33,12 +33,12 @@ class EventMuteCoordinatorTest {
     private var cancelCalls = 0
 
     private class FakeDevice : EventMuteDevicePort {
-        var state = DeviceMuteState(0, 4)
+        var state = DeviceMuteState(0)
         var access = true
         var restoreCalls = 0
         override fun hasDoNotDisturbAccess() = access
         override fun currentState() = state
-        override fun mutedState() = DeviceMuteState(0, 4)
+        override fun mutedState() = DeviceMuteState(0)
         override fun applyMuted(): Boolean { state = mutedState(); return true }
         override fun restore(state: DeviceMuteState): RestoreResult {
             restoreCalls++
@@ -75,7 +75,7 @@ class EventMuteCoordinatorTest {
     }
 
     private fun seed(end: Long? = now - 1, pending: String? = null) {
-        store.write(MuteSession(setOf("event"), DeviceMuteState(1, 1), now - 3600000,
+        store.write(MuteSession(setOf("event"), DeviceMuteState(1), now - 3600000,
             pendingRestoreReason = pending,
             eventEndsUtcMillis = end?.let { mapOf("event" to it) }.orEmpty(),
             appliedState = device.mutedState()))
@@ -87,7 +87,7 @@ class EventMuteCoordinatorTest {
         subject.setFollowRuleEnabled(false)
         assertFalse(store.isFollowRuleEnabled())
         assertNull(store.read())
-        assertEquals(DeviceMuteState(1, 1), device.state)
+        assertEquals(DeviceMuteState(1), device.state)
         assertEquals(1, cancelCalls)
         assertEquals(0, apiCalls)
     }
@@ -115,7 +115,7 @@ class EventMuteCoordinatorTest {
         offline = true
         subject.refresh("offline")
         assertNull(store.read())
-        assertEquals(DeviceMuteState(1, 1), device.state)
+        assertEquals(DeviceMuteState(1), device.state)
         assertEquals(1, device.restoreCalls)
         assertTrue(store.readPersistedStatus().lastError?.contains("network unavailable") == true)
     }

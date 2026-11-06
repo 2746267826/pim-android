@@ -8,8 +8,8 @@ package com.pim.app.mute
 /**
  * 本机静音能力的接口。
  *
- * 生产实现 [AndroidEventMuteDevice]：铃声模式走 `AudioManager.setRingerMode`，
- * 免打扰走 `NotificationManager.setInterruptionFilter`（需要勿扰访问权限）。
+ * 生产实现 [AndroidEventMuteDevice] 通过 `AudioManager.setRingerMode` 切换铃声模式，
+ * 可能联动勿扰状态的切换需要勿扰访问权限。
  */
 interface EventMuteDevicePort {
     /** 是否已授予勿扰访问权限（`ACCESS_NOTIFICATION_POLICY`）。未授权时**不允许静默失效**（E3.3 / AC-5）。 */

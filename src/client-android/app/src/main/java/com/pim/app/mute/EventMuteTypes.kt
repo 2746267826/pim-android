@@ -37,10 +37,9 @@ data class UpcomingMuteEvent(
     val effectiveMuted: Boolean
 )
 
-/** 本机静音相关状态：铃声模式 + 免打扰过滤器。两者都要还原，缺一不可。 */
+/** 本功能管理的本机铃声模式。 */
 data class DeviceMuteState(
-    val ringerMode: Int,
-    val interruptionFilter: Int
+    val ringerMode: Int
 )
 
 /**

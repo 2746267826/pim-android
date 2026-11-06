@@ -126,11 +126,10 @@ class EventMuteExecutor internal constructor(
             settings.recordError(null)
             logs.info(
                 LOG_TAG,
-                "日程开始：已静音（进入前：ringerMode=${state.ringerMode}，" +
-                    "filter=${state.interruptionFilter}）"
+                "日程开始：已静音（进入前：ringerMode=${state.ringerMode}）"
             )
         } else {
-            // 可能只写成功一条系统通路，记录此次操作后的状态，供本地重试安全回滚。
+            // 调用结果未能确认，记录此次操作后的状态，供本地重试安全回滚。
             val observed = readDeviceState()
             val failReason = "静音未成功确认，需恢复进入前状态"
             sessions.write(session.copy(pendingRestoreReason = failReason, appliedState = observed ?: session.appliedState))
@@ -179,8 +178,8 @@ class EventMuteExecutor internal constructor(
             settings.recordError(null)
             logs.info(
                 LOG_TAG,
-                "$reason：设备已恢复或状态已被修改（当前 ringer=${currentState.ringerMode}，" +
-                    "filter=${currentState.interruptionFilter}），保留用户设置，退出接管"
+                "$reason：设备已恢复或状态已被修改（当前 ringer=${currentState.ringerMode}），" +
+                    "保留用户设置，退出接管"
             )
             return
         }
@@ -199,8 +198,7 @@ class EventMuteExecutor internal constructor(
                 settings.recordError(null)
                 logs.info(
                     LOG_TAG,
-                    "$reason：已恢复进入前状态（ringerMode=${session.state.ringerMode}，" +
-                        "filter=${session.state.interruptionFilter}）"
+                    "$reason：已恢复进入前状态（ringerMode=${session.state.ringerMode}）"
                 )
             }
             is RestoreResult.Blocked -> {
@@ -219,7 +217,7 @@ class EventMuteExecutor internal constructor(
     } catch (ex: kotlinx.coroutines.CancellationException) {
         throw ex
     } catch (ex: Exception) {
-        settings.recordError("无法读取本机铃声/勿扰状态，已停止后续修改；请检查系统权限后重试")
+        settings.recordError("无法读取本机铃声模式，请检查系统权限后重试")
         logs.warn(LOG_TAG, "无法确认设备状态：${ex::class.java.simpleName}")
         null
     }

@@ -2,6 +2,7 @@ package com.pim.app.mute
 
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
+import org.json.JSONObject
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNull
@@ -51,14 +52,14 @@ class EventMuteSettingsStoreTest {
     }
 
     @Test
-    fun `静音会话原样往返（含进入前的铃声模式与免打扰过滤器）`() {
+    fun `静音会话原样往返并保留进入前的铃声模式`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         context.getSharedPreferences("session-roundtrip", Context.MODE_PRIVATE).edit().clear().commit()
         val writer = EventMuteSettingsStore(context)
         writer.write(
             MuteSession(
                 eventIds = setOf("e1", "e2"),
-                state = DeviceMuteState(ringerMode = 1, interruptionFilter = 2),
+                state = DeviceMuteState(ringerMode = 1),
                 enteredAtUtcMillis = 1_700_000_000_000L
             )
         )
@@ -67,7 +68,7 @@ class EventMuteSettingsStoreTest {
         val reader = EventMuteSettingsStore(context)
         val session = reader.read()
         assertEquals(setOf("e1", "e2"), session?.eventIds)
-        assertEquals(DeviceMuteState(1, 2), session?.state)
+        assertEquals(DeviceMuteState(1), session?.state)
         assertEquals(1_700_000_000_000L, session?.enteredAtUtcMillis)
     }
 
@@ -79,10 +80,10 @@ class EventMuteSettingsStoreTest {
         writer.write(
             MuteSession(
                 eventIds = setOf("e1", "e2"),
-                state = DeviceMuteState(1, 2),
+                state = DeviceMuteState(1),
                 enteredAtUtcMillis = 1_700_000_000_000L,
                 eventEndsUtcMillis = mapOf("e1" to 1_700_000_360_000L, "e2" to 1_700_000_720_000L),
-                appliedState = DeviceMuteState(0, 4)
+                appliedState = DeviceMuteState(0)
             )
         )
 
@@ -92,7 +93,11 @@ class EventMuteSettingsStoreTest {
             mapOf("e1" to 1_700_000_360_000L, "e2" to 1_700_000_720_000L),
             session?.eventEndsUtcMillis
         )
-        assertEquals(DeviceMuteState(0, 4), session?.appliedState)
+        assertEquals(DeviceMuteState(0), session?.appliedState)
+        val preferences = context.getSharedPreferences(EventMuteSettingsStore.PREFS_NAME, Context.MODE_PRIVATE)
+        val persisted = JSONObject(checkNotNull(preferences.getString("mute_session", null)))
+        assertFalse("快照只保存铃声模式", persisted.has("interruption_filter"))
+        assertFalse("应用状态只保存铃声模式", persisted.has("applied_interruption_filter"))
     }
 
     @Test
@@ -103,7 +108,7 @@ class EventMuteSettingsStoreTest {
         writer.write(
             MuteSession(
                 eventIds = setOf("e1"),
-                state = DeviceMuteState(1, 2),
+                state = DeviceMuteState(1),
                 enteredAtUtcMillis = 1_700_000_000_000L,
                 pendingRestoreReason = "缺少「勿扰访问」权限，无法还原"
             )
@@ -114,29 +119,29 @@ class EventMuteSettingsStoreTest {
     }
 
     @Test
-    fun `旧版本会话没有待还原字段时按正常会话读取`() {
+    fun `会话缺少待还原字段时按正常会话读取`() {
         val context = ApplicationProvider.getApplicationContext<Context>()
         val prefs = context.getSharedPreferences(EventMuteSettingsStore.PREFS_NAME, Context.MODE_PRIVATE)
         prefs.edit().clear().commit()
-        // 旧版本写入的 JSON：没有 pending_restore_reason 字段
+        // 省略可选的 pending_restore_reason 字段。
         prefs.edit()
             .putString(
                 "mute_session",
-                """{"event_ids":["e1"],"ringer_mode":1,"interruption_filter":2,"entered_at":1700000000000}"""
+                """{"event_ids":["e1"],"ringer_mode":1,"entered_at":1700000000000}"""
             )
             .commit()
 
         val session = EventMuteSettingsStore(context).read()
 
         assertEquals(setOf("e1"), session?.eventIds)
-        assertEquals(DeviceMuteState(1, 2), session?.state)
-        assertNull("旧会话不能被误判为恢复失败", session?.pendingRestoreReason)
+        assertEquals(DeviceMuteState(1), session?.state)
+        assertNull("缺少待还原字段的会话按正常会话读取", session?.pendingRestoreReason)
     }
 
     @Test
     fun `清空会话后读回 null`() {
         val subject = store("session-clear")
-        subject.write(MuteSession(setOf("e1"), DeviceMuteState(0, 4), 1L))
+        subject.write(MuteSession(setOf("e1"), DeviceMuteState(0), 1L))
 
         subject.write(null)
 

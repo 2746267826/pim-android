@@ -23,7 +23,7 @@ import java.time.format.DateTimeFormatter
 /**
  * 设置页「日程静音」分区（工单 04 E3.4 / E3.3）。
  *
- * 四项内容：设备级开关、勿扰访问权限状态与授权入口、精确闹钟权限状态、当前计划状态。
+ * 四项内容：设备级开关、静音模式切换所需的勿扰访问权限、精确闹钟权限和当前计划状态。
  * 文案为简体中文；未授权时**明确提示**而不是留空（AC-5：不允许静默失效）。
  */
 @Composable
@@ -48,7 +48,7 @@ fun EventMuteSection(
                     text = if (state.followRuleEnabled) {
                         "已开启：日程期间自动静音，结束时恢复进入前的状态"
                     } else {
-                        "已关闭：本机不改变铃声与免打扰，任何日程都不会影响它"
+                        "已关闭：本机铃声模式不受日程影响"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
@@ -74,9 +74,9 @@ fun EventMuteSection(
                 Text("勿扰访问权限")
                 Text(
                     text = if (state.doNotDisturbAccessGranted) {
-                        "已授权：可以切换静音"
+                        "已授权，用于按日程切换静音模式"
                     } else {
-                        "未授权：无法在日程期间静音，请先授权"
+                        "未授权，请先授权以便按日程切换静音模式"
                     },
                     style = MaterialTheme.typography.bodySmall,
                     color = if (state.doNotDisturbAccessGranted) {

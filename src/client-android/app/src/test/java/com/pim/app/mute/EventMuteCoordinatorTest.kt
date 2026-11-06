@@ -33,12 +33,12 @@ class EventMuteCoordinatorTest {
     private var cancelCalls = 0
 
     private class FakeDevice : EventMuteDevicePort {
-        var state = DeviceMuteState(0, 4)
+        var state = DeviceMuteState(0, 1)
         var access = true
         var restoreCalls = 0
         override fun hasDoNotDisturbAccess() = access
         override fun currentState() = state
-        override fun mutedState() = DeviceMuteState(0, 4)
+        fun mutedState() = DeviceMuteState(0, 1)
         override fun applyMuted(): Boolean { state = mutedState(); return true }
         override fun restore(state: DeviceMuteState): RestoreResult {
             restoreCalls++

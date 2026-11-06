@@ -8,8 +8,8 @@ package com.pim.app.mute
 /**
  * 本机静音能力的接口。
  *
- * 生产实现 [AndroidEventMuteDevice]：铃声模式走 `AudioManager.setRingerMode`，
- * 免打扰走 `NotificationManager.setInterruptionFilter`（需要勿扰访问权限）。
+ * 生产实现 [AndroidEventMuteDevice] 通过 `AudioManager.setRingerMode` 切换铃声模式，
+ * 可能联动勿扰状态的切换需要勿扰访问权限。
  */
 interface EventMuteDevicePort {
     /** 是否已授予勿扰访问权限（`ACCESS_NOTIFICATION_POLICY`）。未授权时**不允许静默失效**（E3.3 / AC-5）。 */
@@ -22,14 +22,8 @@ interface EventMuteDevicePort {
     fun applyMuted(): Boolean
 
     /**
-     * 本功能 applyMuted 成功后设备会处于的固定静音档案。
-     * 用于旧会话/中断窗口的保守所有权判断，以及新会话记录 [MuteSession.appliedState]。
-     */
-    fun mutedState(): DeviceMuteState
-
-    /**
      * 还原到给定状态（E3.5：不是「一律调成响铃」）。
-     * 返回 [RestoreResult]：只有读回状态与快照一致才算 Restored。
+     * 返回 [RestoreResult]：只有读回铃声模式与快照一致才算 Restored。
      */
     fun restore(state: DeviceMuteState): RestoreResult
 }

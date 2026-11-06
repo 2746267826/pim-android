@@ -47,6 +47,7 @@ class EventMuteExecutorTest {
         var blockedState: DeviceMuteState? = null
         var applyOutcome = true
         var applyFailureState: DeviceMuteState? = null
+        var applyState = DeviceMuteState(ringerMode = 0, interruptionFilter = 2)
         var readFails = false
 
         override fun hasDoNotDisturbAccess(): Boolean = access
@@ -54,7 +55,6 @@ class EventMuteExecutorTest {
             check(!readFails) { "device state unavailable" }
             return state
         }
-        override fun mutedState(): DeviceMuteState = DeviceMuteState(ringerMode = 0, interruptionFilter = 4)
         override fun applyMuted(): Boolean {
             applyCalls++
             if (!access) return false
@@ -63,7 +63,7 @@ class EventMuteExecutorTest {
                 return false
             }
             muted = true
-            state = DeviceMuteState(ringerMode = 0, interruptionFilter = 4)
+            state = applyState
             return true
         }
 
@@ -72,7 +72,7 @@ class EventMuteExecutorTest {
             lastRestored = state
             if (restoreOutcome == RestoreResult.Restored) {
                 muted = false
-                this.state = state
+                this.state = this.state.copy(ringerMode = state.ringerMode)
             } else {
                 blockedState?.let { this.state = it }
             }
@@ -176,13 +176,14 @@ class EventMuteExecutorTest {
         subject.onAlarm("e1", MuteAction.START, now + hour)
         assertEquals(1, device.applyCalls)
         assertEquals(DeviceMuteState(1, 1), sessions.session?.state)
-        assertEquals(DeviceMuteState(0, 4), sessions.session?.appliedState)
+        assertEquals("应用后记录实际观察到的 PRIORITY 勿扰档", DeviceMuteState(0, 2), sessions.session?.appliedState)
         assertEquals(now + hour, sessions.session?.eventEndsUtcMillis?.get("e1"))
         assertTrue(device.muted)
 
         subject.onAlarm("e1", MuteAction.END)
         assertEquals(1, device.restoreCalls)
         assertEquals(DeviceMuteState(ringerMode = 1, interruptionFilter = 1), device.lastRestored)
+        assertEquals("恢复铃声时保留系统联动的勿扰档", DeviceMuteState(1, 2), device.state)
         assertNull(sessions.session)
     }
 
@@ -221,6 +222,7 @@ class EventMuteExecutorTest {
         subject.onAlarm("e1", MuteAction.END)
         assertEquals(1, device.restoreCalls)
         assertEquals(DeviceMuteState(1, 1), device.lastRestored)
+        assertEquals("仅恢复铃声，不回写勿扰", DeviceMuteState(1, 2), device.state)
     }
 
     @Test
@@ -267,19 +269,24 @@ class EventMuteExecutorTest {
 
         assertEquals(1, device.restoreCalls)
         assertEquals(DeviceMuteState(1, 1), device.lastRestored)
+        assertEquals("仅恢复铃声，不回写勿扰", DeviceMuteState(1, 2), device.state)
         assertNull(sessions.session)
     }
 
     @Test
     fun `恢复失败时保留会话与可见提示，不假成功`() = runTest {
-        // 旧会话没有 appliedState：按本功能固定静音档案保守比对，设备确实处于 (0,4)
         val device = FakeDevice(
-            state = DeviceMuteState(ringerMode = 0, interruptionFilter = 4),
+            state = DeviceMuteState(ringerMode = 0, interruptionFilter = 2),
             restoreOutcome = RestoreResult.Blocked("缺少「勿扰访问」权限，无法还原")
         )
         val settings = FakeSettings()
         val sessions = FakeSessions(
-            session = MuteSession(setOf("e1"), DeviceMuteState(1, 1), now)
+            session = MuteSession(
+                setOf("e1"),
+                DeviceMuteState(1, 1),
+                now,
+                appliedState = DeviceMuteState(0, 2)
+            )
         )
         val subject = executor(device, settings, sessions)
 
@@ -301,12 +308,17 @@ class EventMuteExecutorTest {
     @Test
     fun `恢复失败后重试成功则清会话并清提示`() = runTest {
         val device = FakeDevice(
-            state = DeviceMuteState(ringerMode = 0, interruptionFilter = 4),
+            state = DeviceMuteState(ringerMode = 0, interruptionFilter = 2),
             restoreOutcome = RestoreResult.Blocked("系统还原调用未成功")
         )
         val settings = FakeSettings()
         val sessions = FakeSessions(
-            session = MuteSession(setOf("e1"), DeviceMuteState(1, 1), now)
+            session = MuteSession(
+                setOf("e1"),
+                DeviceMuteState(1, 1),
+                now,
+                appliedState = DeviceMuteState(0, 2)
+            )
         )
         val subject = executor(device, settings, sessions)
 
@@ -324,7 +336,7 @@ class EventMuteExecutorTest {
     private fun sessionWithEnds(
         eventIds: Set<String>,
         ends: Map<String, Long>,
-        appliedState: DeviceMuteState? = DeviceMuteState(0, 4)
+        appliedState: DeviceMuteState? = DeviceMuteState(0, 2)
     ) = MuteSession(
         eventIds = eventIds,
         state = DeviceMuteState(1, 1),
@@ -335,8 +347,8 @@ class EventMuteExecutorTest {
 
     @Test
     fun `真实结束时刻已过才离线恢复；未结束或缺end都不动`() = runTest {
-        // 会话标记 appliedState=(0,4)：设备此刻应处于本功能写入的静音档案
-        val device = FakeDevice(state = DeviceMuteState(ringerMode = 0, interruptionFilter = 4))
+        // 会话标记 appliedState=静音模式：设备此刻应处于本功能写入的静音档案
+        val device = FakeDevice(state = DeviceMuteState(ringerMode = 0, interruptionFilter = 2))
         val settings = FakeSettings()
         val sessions = FakeSessions(sessionWithEnds(setOf("e1"), mapOf("e1" to now + 1000L)))
         val subject = executor(device, settings, sessions)
@@ -356,6 +368,7 @@ class EventMuteExecutorTest {
         subject.reconcileExpiredSession()
         assertEquals(1, device.restoreCalls)
         assertEquals(DeviceMuteState(1, 1), device.lastRestored)
+        assertEquals("只恢复铃声", DeviceMuteState(1, 2), device.state)
         assertNull(sessions.session)
     }
 
@@ -375,9 +388,8 @@ class EventMuteExecutorTest {
     }
 
     @Test
-    fun `缺end的旧会话不猜测：离线不动，刷新核实后恢复`() = runTest {
-        // 旧会话没有 appliedState，按本功能固定静音档案保守比对：设备确实处于 (0,4)
-        val device = FakeDevice(state = DeviceMuteState(ringerMode = 0, interruptionFilter = 4))
+    fun `缺少勿扰接管凭据的会话经刷新核实结束后仍不恢复`() = runTest {
+        val device = FakeDevice(state = DeviceMuteState(ringerMode = 0, interruptionFilter = 2))
         val settings = FakeSettings()
         val sessions = FakeSessions(
             MuteSession(setOf("old"), DeviceMuteState(1, 1), now - 80 * hour)
@@ -388,8 +400,9 @@ class EventMuteExecutorTest {
         assertEquals("没有真实 end 不能猜", 0, device.restoreCalls)
 
         subject.reconcileWithKnownEnds(mapOf("old" to now - 2000L))
-        assertEquals(1, device.restoreCalls)
+        assertEquals("没有已确认的勿扰凭据时不得按历史铃声档案接管", 0, device.restoreCalls)
         assertNull(sessions.session)
+        assertTrue(settings.lastError?.contains("接管状态未能确认") == true)
     }
 
     @Test
@@ -427,7 +440,7 @@ class EventMuteExecutorTest {
     @Test
     fun `对账恢复失败同样保留会话与提示`() = runTest {
         val device = FakeDevice(
-            state = DeviceMuteState(ringerMode = 0, interruptionFilter = 4),
+            state = DeviceMuteState(ringerMode = 0, interruptionFilter = 2),
             restoreOutcome = RestoreResult.Blocked("权限被撤销")
         )
         val settings = FakeSettings()
@@ -457,63 +470,212 @@ class EventMuteExecutorTest {
     }
 
     @Test
-    fun `部分还原失败后按实测状态重试并成功恢复`() = runTest {
-        val device = FakeDevice(state = DeviceMuteState(0, 4), restoreOutcome = RestoreResult.Blocked("partial failure"))
-        device.blockedState = DeviceMuteState(1, 4)
+    fun `还原调用报失败但铃声已恢复时下次对账确认后清会话`() = runTest {
+        val device = FakeDevice(state = DeviceMuteState(0, 2), restoreOutcome = RestoreResult.Blocked("partial failure"))
+        device.blockedState = DeviceMuteState(1, 2)
         val settings = FakeSettings()
         val sessions = FakeSessions(sessionWithEnds(setOf("e1"), mapOf("e1" to now - 1000L)))
         val subject = executor(device, settings, sessions)
 
         subject.reconcileExpiredSession()
-        assertEquals(DeviceMuteState(1, 4), sessions.session?.appliedState)
+        assertEquals("失败时保留最初确认的接管凭据", DeviceMuteState(0, 2), sessions.session?.appliedState)
         assertNotNull(sessions.session?.pendingRestoreReason)
         device.restoreOutcome = RestoreResult.Restored
         subject.reconcileExpiredSession()
 
-        assertEquals(2, device.restoreCalls)
+        assertEquals("已恢复的铃声模式无需重复写入", 1, device.restoreCalls)
         assertEquals(DeviceMuteState(1, 1), device.lastRestored)
         assertNull("重试成功后清会话", sessions.session)
     }
 
     @Test
-    fun `部分恢复失败后用户再改设置不能被重试覆盖`() = runTest {
-        val device = FakeDevice(state = DeviceMuteState(0, 4), restoreOutcome = RestoreResult.Blocked("partial failure"))
-        device.blockedState = DeviceMuteState(1, 4)
+    fun `恢复调用失败后用户再改铃声不能被重试覆盖`() = runTest {
+        val device = FakeDevice(state = DeviceMuteState(0, 2), restoreOutcome = RestoreResult.Blocked("partial failure"))
+        device.blockedState = DeviceMuteState(1, 2)
         val settings = FakeSettings()
         val sessions = FakeSessions(sessionWithEnds(setOf("e1"), mapOf("e1" to now - 1000L)))
         val subject = executor(device, settings, sessions)
 
         subject.reconcileExpiredSession()
-        device.state = DeviceMuteState(2, 1)
+        device.state = DeviceMuteState(2, 3)
         device.restoreOutcome = RestoreResult.Restored
         subject.reconcileExpiredSession()
 
         assertEquals(1, device.restoreCalls)
-        assertEquals(DeviceMuteState(2, 1), device.state)
+        assertEquals(DeviceMuteState(2, 3), device.state)
         assertNull(sessions.session)
     }
 
     @Test
-    fun `静音只应用一半失败后可离线回滚而非遗留勿扰`() = runTest {
+    fun `应用后记录实际PRIORITY档，用户切换勿扰后END关闭开关和离线对账都不恢复`() = runTest {
+        for (filter in listOf(4, 3)) {
+            for (finishPath in listOf("END", "关闭开关", "离线对账")) {
+                val device = FakeDevice(state = DeviceMuteState(1, 1))
+                val settings = FakeSettings()
+                val sessions = FakeSessions()
+                val subject = executor(device, settings, sessions)
+
+                subject.onAlarm("e1", MuteAction.START, now + hour)
+
+                assertEquals(DeviceMuteState(0, 2), sessions.session?.appliedState)
+                device.state = device.state.copy(interruptionFilter = filter)
+                when (finishPath) {
+                    "END" -> subject.onAlarm("e1", MuteAction.END)
+                    "关闭开关" -> subject.finishNow()
+                    "离线对账" -> {
+                        sessions.write(
+                            checkNotNull(sessions.session).copy(eventEndsUtcMillis = mapOf("e1" to now - 1L))
+                        )
+                        subject.reconcileExpiredSession()
+                    }
+                }
+
+                assertEquals("途径=$finishPath，勿扰=$filter 时不得还原铃声", 0, device.restoreCalls)
+                assertEquals(DeviceMuteState(0, filter), device.state)
+                assertNull(sessions.session)
+            }
+        }
+    }
+
+    @Test
+    fun `恢复失败后用户改变勿扰档时重试不得恢复铃声`() = runTest {
         val device = FakeDevice(state = DeviceMuteState(1, 1))
-        device.applyOutcome = false
-        device.applyFailureState = DeviceMuteState(1, 4)
         val settings = FakeSettings()
         val sessions = FakeSessions()
         val subject = executor(device, settings, sessions)
 
         subject.onAlarm("e1", MuteAction.START, now + hour)
-        assertEquals(DeviceMuteState(1, 4), sessions.session?.appliedState)
+        device.restoreOutcome = RestoreResult.Blocked("系统还原调用未成功")
+        subject.onAlarm("e1", MuteAction.END)
+
+        assertEquals(1, device.restoreCalls)
         assertNotNull(sessions.session?.pendingRestoreReason)
+        assertEquals(DeviceMuteState(0, 2), sessions.session?.appliedState)
+
+        device.state = device.state.copy(interruptionFilter = 4)
+        device.restoreOutcome = RestoreResult.Restored
         subject.reconcileExpiredSession()
 
-        assertEquals(DeviceMuteState(1, 1), device.state)
+        assertEquals("勿扰档变化后不得重试铃声恢复", 1, device.restoreCalls)
+        assertEquals(DeviceMuteState(0, 4), device.state)
         assertNull(sessions.session)
     }
 
     @Test
+    fun `还原调用失败期间过滤器变化不能被采纳为新的接管凭据`() = runTest {
+        for (filter in listOf(4, 3)) {
+            val device = FakeDevice(
+                state = DeviceMuteState(1, 1),
+                restoreOutcome = RestoreResult.Blocked("系统还原调用未成功")
+            ).apply {
+                blockedState = DeviceMuteState(0, filter)
+            }
+            val settings = FakeSettings()
+            val sessions = FakeSessions()
+            val subject = executor(device, settings, sessions)
+
+            subject.onAlarm("e1", MuteAction.START, now + hour)
+            subject.onAlarm("e1", MuteAction.END)
+
+            assertEquals(1, device.restoreCalls)
+            assertEquals("失败前的接管凭据不能被过滤器=$filter 替换", DeviceMuteState(0, 2), sessions.session?.appliedState)
+            assertNotNull(sessions.session?.pendingRestoreReason)
+
+            device.restoreOutcome = RestoreResult.Restored
+            subject.reconcileExpiredSession()
+
+            assertEquals("用户在失败还原期间更改勿扰后不得重试", 1, device.restoreCalls)
+            assertEquals(DeviceMuteState(0, filter), device.state)
+            assertNull(sessions.session)
+        }
+    }
+
+    @Test
+    fun `应用后的勿扰档变为ALARMS或NONE时所有权不确认且结束不恢复`() = runTest {
+        for (filter in listOf(4, 3)) {
+            val device = FakeDevice(state = DeviceMuteState(1, 1)).apply {
+                applyState = DeviceMuteState(0, filter)
+            }
+            val settings = FakeSettings()
+            val sessions = FakeSessions()
+            val subject = executor(device, settings, sessions)
+
+            subject.onAlarm("e1", MuteAction.START, now + hour)
+
+            assertNull(sessions.session?.appliedState)
+            assertNotNull(sessions.session?.pendingRestoreReason)
+            subject.onAlarm("e1", MuteAction.END)
+
+            assertEquals("应用期间勿扰=$filter 时不得采纳接管", 0, device.restoreCalls)
+            assertEquals(DeviceMuteState(0, filter), device.state)
+            assertNull(sessions.session)
+            assertTrue(settings.lastError?.contains("接管状态未能确认") == true)
+        }
+    }
+
+    @Test
+    fun `进程中断后缺少应用后接管凭据时对账不按铃声单独恢复`() = runTest {
+        val device = FakeDevice(state = DeviceMuteState(0, 2))
+        val settings = FakeSettings()
+        val sessions = FakeSessions(
+            MuteSession(
+                eventIds = setOf("e1"),
+                state = DeviceMuteState(1, 1),
+                enteredAtUtcMillis = now - hour,
+                eventEndsUtcMillis = mapOf("e1" to now - 1L)
+            )
+        )
+
+        executor(device, settings, sessions).reconcileExpiredSession()
+
+        assertEquals("接管凭据缺失时不得只凭静音铃声恢复", 0, device.restoreCalls)
+        assertEquals(DeviceMuteState(0, 2), device.state)
+        assertNull(sessions.session)
+        assertTrue(settings.lastError?.contains("接管状态未能确认") == true)
+    }
+
+    @Test
+    fun `静音写入后未能确认成功可离线恢复铃声快照`() = runTest {
+        val device = FakeDevice(state = DeviceMuteState(1, 1))
+        device.applyOutcome = false
+        device.applyFailureState = DeviceMuteState(0, 2)
+        val settings = FakeSettings()
+        val sessions = FakeSessions()
+        val subject = executor(device, settings, sessions)
+
+        subject.onAlarm("e1", MuteAction.START, now + hour)
+        assertEquals(DeviceMuteState(0, 2), sessions.session?.appliedState)
+        assertNotNull(sessions.session?.pendingRestoreReason)
+        subject.reconcileExpiredSession()
+
+        assertEquals("失败回滚只恢复铃声快照", DeviceMuteState(1, 2), device.state)
+        assertEquals(1, device.restoreCalls)
+        assertNull(sessions.session)
+    }
+
+    @Test
+    fun `静音失败且铃声未改变时下次对账清会话并保留原状态`() = runTest {
+        val device = FakeDevice(state = DeviceMuteState(1, 1))
+        device.applyOutcome = false
+        val settings = FakeSettings()
+        val sessions = FakeSessions()
+        val subject = executor(device, settings, sessions)
+
+        subject.onAlarm("e1", MuteAction.START, now + hour)
+        assertNotNull(sessions.session?.pendingRestoreReason)
+        assertNotNull(settings.lastError)
+
+        subject.reconcileExpiredSession()
+
+        assertEquals(DeviceMuteState(1, 1), device.state)
+        assertEquals(0, device.restoreCalls)
+        assertNull(sessions.session)
+        assertNull(settings.lastError)
+    }
+
+    @Test
     fun `结束动作删掉旧end不阻塞剩余事件的漏END恢复`() = runTest {
-        val device = FakeDevice(state = DeviceMuteState(0, 4))
+        val device = FakeDevice(state = DeviceMuteState(0, 2))
         val settings = FakeSettings()
         val sessions = FakeSessions(sessionWithEnds(setOf("a", "b"), mapOf("a" to now + hour, "b" to now - 1)))
         val subject = executor(device, settings, sessions)
@@ -569,7 +731,7 @@ class EventMuteExecutorTest {
 
     @Test
     fun `上次还原未完成时新START不能加入失败会话或清掉错误`() = runTest {
-        val device = FakeDevice(state = DeviceMuteState(0, 4), restoreOutcome = RestoreResult.Blocked("restore blocked"))
+        val device = FakeDevice(state = DeviceMuteState(0, 2), restoreOutcome = RestoreResult.Blocked("restore blocked"))
         val settings = FakeSettings()
         val sessions = FakeSessions(sessionWithEnds(setOf("old"), mapOf("old" to now - 1))
             .copy(pendingRestoreReason = "restore blocked"))
@@ -590,7 +752,7 @@ class EventMuteExecutorTest {
 
         subject.onAlarm("e1", MuteAction.START, now + hour)
         assertTrue(device.muted)
-        // 用户在静音期间手动改回（不再是本功能写的静音档案 0/4）
+        // 用户在静音期间手动改回（不再是本功能写入的静音模式）
         device.state = DeviceMuteState(ringerMode = 1, interruptionFilter = 1)
 
         subject.onAlarm("e1", MuteAction.END)

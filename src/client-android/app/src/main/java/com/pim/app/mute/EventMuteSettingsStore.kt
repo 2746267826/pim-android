@@ -86,7 +86,9 @@ class EventMuteSettingsStore @Inject constructor(
             val appliedState = if (json.has(KEY_SESSION_APPLIED_RINGER)) {
                 DeviceMuteState(
                     ringerMode = json.getInt(KEY_SESSION_APPLIED_RINGER),
-                    interruptionFilter = json.getInt(KEY_SESSION_APPLIED_FILTER)
+                    interruptionFilter = if (json.has(KEY_SESSION_APPLIED_FILTER)) {
+                        json.getInt(KEY_SESSION_APPLIED_FILTER)
+                    } else null
                 )
             } else {
                 null
@@ -95,7 +97,9 @@ class EventMuteSettingsStore @Inject constructor(
                 eventIds = eventIds,
                 state = DeviceMuteState(
                     ringerMode = json.getInt(KEY_SESSION_RINGER),
-                    interruptionFilter = json.getInt(KEY_SESSION_FILTER)
+                    interruptionFilter = if (json.has(KEY_SESSION_OBSERVED_FILTER)) {
+                        json.getInt(KEY_SESSION_OBSERVED_FILTER)
+                    } else null
                 ),
                 enteredAtUtcMillis = json.getLong(KEY_SESSION_ENTERED_AT),
                 pendingRestoreReason = json.optString(KEY_SESSION_PENDING_RESTORE).takeIf { it.isNotEmpty() },
@@ -116,7 +120,7 @@ class EventMuteSettingsStore @Inject constructor(
             val json = JSONObject()
             json.put(KEY_SESSION_EVENT_IDS, JSONArray(session.eventIds.toList()))
             json.put(KEY_SESSION_RINGER, session.state.ringerMode)
-            json.put(KEY_SESSION_FILTER, session.state.interruptionFilter)
+            session.state.interruptionFilter?.let { json.put(KEY_SESSION_OBSERVED_FILTER, it) }
             json.put(KEY_SESSION_ENTERED_AT, session.enteredAtUtcMillis)
             val ends = JSONObject()
             for ((id, end) in session.eventEndsUtcMillis) {
@@ -125,7 +129,7 @@ class EventMuteSettingsStore @Inject constructor(
             if (ends.length() > 0) json.put(KEY_SESSION_EVENT_ENDS, ends)
             session.appliedState?.let {
                 json.put(KEY_SESSION_APPLIED_RINGER, it.ringerMode)
-                json.put(KEY_SESSION_APPLIED_FILTER, it.interruptionFilter)
+                it.interruptionFilter?.let { filter -> json.put(KEY_SESSION_APPLIED_FILTER, filter) }
             }
             if (session.pendingRestoreReason != null) {
                 json.put(KEY_SESSION_PENDING_RESTORE, session.pendingRestoreReason)
@@ -139,7 +143,7 @@ class EventMuteSettingsStore @Inject constructor(
         const val PREFS_NAME = "pim_event_mute"
 
         /**
-         * 默认**关闭**：在用户明确打开「本设备是否遵循该规则」之前，本机铃声/免打扰一律不动。
+         * 默认**关闭**：用户明确打开「本设备是否遵循该规则」后，日程才会切换本机铃声模式。
          * 装上新版本就自动改用户手机行为是不能接受的（也会让 AC-7 的语义含糊）。
          */
         const val DEFAULT_FOLLOW_RULE_ENABLED = false
@@ -152,11 +156,11 @@ class EventMuteSettingsStore @Inject constructor(
         private const val KEY_SESSION = "mute_session"
         private const val KEY_SESSION_EVENT_IDS = "event_ids"
         private const val KEY_SESSION_RINGER = "ringer_mode"
-        private const val KEY_SESSION_FILTER = "interruption_filter"
         private const val KEY_SESSION_ENTERED_AT = "entered_at"
         private const val KEY_SESSION_PENDING_RESTORE = "pending_restore_reason"
         private const val KEY_SESSION_EVENT_ENDS = "event_ends"
         private const val KEY_SESSION_APPLIED_RINGER = "applied_ringer_mode"
+        private const val KEY_SESSION_OBSERVED_FILTER = "observed_interruption_filter"
         private const val KEY_SESSION_APPLIED_FILTER = "applied_interruption_filter"
     }
 }

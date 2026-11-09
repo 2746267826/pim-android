@@ -12,7 +12,7 @@ class HighSpeedComparatorsTest {
         val candidate = CorroboratedHighSpeedTracker()
 
         repeat(24) { index ->
-            val sample = sample(index * FIX_INTERVAL_MILLIS, eastMeters = 0.0, speed = 3.0f, speedAccuracy = 0.4f)
+            val sample = sample(index * FIX_INTERVAL_MILLIS, eastMeters = 0.0, speed = 3.0f, speedAccuracy = 1.5f)
             legacy.observe(sample.speedMetersPerSecond, sample.elapsedRealtimeMillis)
             candidate.observe(sample)
         }
@@ -72,7 +72,7 @@ class HighSpeedComparatorsTest {
     }
 
     @Test
-    fun weakSpeedAccuracyFallsBackToCoherentPositionSpeed() {
+    fun poorSpeedAccuracyDoesNotBlockCoherentHighSpeedTrack() {
         val candidate = CorroboratedHighSpeedTracker()
         val legacy = LegacyHighSpeedTracker()
 
@@ -83,6 +83,61 @@ class HighSpeedComparatorsTest {
         }
 
         assertEquals(LegacyMode.Active, legacy.mode)
+        assertEquals(ProposedMode.Active, candidate.mode)
+    }
+
+    @Test
+    fun lowReportedGpsSpeedCannotBeOverriddenByFastLookingPositionDrift() {
+        val candidate = CorroboratedHighSpeedTracker()
+
+        repeat(24) { index ->
+            candidate.observe(
+                sample(
+                    index * FIX_INTERVAL_MILLIS,
+                    eastMeters = index * 12.4,
+                    speed = 0.8f,
+                    speedAccuracy = 0.2f
+                )
+            )
+        }
+
+        assertEquals(ProposedMode.Inactive, candidate.mode)
+        assertTrue(candidate.reason.contains("GPS 速度低于阈值"))
+        assertTrue(candidate.derivedSpeedMetersPerSecond!! * 3.6 >= 8.0)
+    }
+
+    @Test
+    fun reportedHighSpeedWithOnlyWalkingDisplacementNeverActivates() {
+        val candidate = CorroboratedHighSpeedTracker()
+
+        repeat(24) { index ->
+            candidate.observe(
+                sample(
+                    index * FIX_INTERVAL_MILLIS,
+                    eastMeters = index * 2.0,
+                    speed = 2.9f,
+                    speedAccuracy = 0.4f
+                )
+            )
+            assertNotEquals(ProposedMode.Active, candidate.mode)
+        }
+    }
+
+    @Test
+    fun missingGpsSpeedMayUseSustainedHighSpeedPositionEvidence() {
+        val candidate = CorroboratedHighSpeedTracker()
+
+        repeat(20) { index ->
+            candidate.observe(
+                sample(
+                    index * FIX_INTERVAL_MILLIS,
+                    eastMeters = index * 7.4,
+                    speed = null,
+                    speedAccuracy = null
+                )
+            )
+        }
+
         assertEquals(ProposedMode.Active, candidate.mode)
     }
 
@@ -108,7 +163,7 @@ class HighSpeedComparatorsTest {
         assertEquals("可信位移证据已过期", candidate.reason)
     }
 
-    private fun sample(at: Long, eastMeters: Double, speed: Float, speedAccuracy: Float?) = LocationSample(
+    private fun sample(at: Long, eastMeters: Double, speed: Float?, speedAccuracy: Float?) = LocationSample(
         elapsedRealtimeMillis = at,
         latitude = BASE_LATITUDE,
         longitude = BASE_LONGITUDE + eastMeters / METERS_PER_DEGREE_LONGITUDE,

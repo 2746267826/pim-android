@@ -27,7 +27,7 @@ object DeviceDiagnostics {
         val lock = Any()
         val main = Handler(Looper.getMainLooper())
         val finished = AtomicBoolean(false)
-        var pending = 2
+        var pending = 3
 
         fun finish() {
             if (!finished.compareAndSet(false, true)) return
@@ -56,11 +56,17 @@ object DeviceDiagnostics {
 
         val timeout = Runnable {
             synchronized(lock) {
-                supplements.putIfAbsent("异步检测", "部分 Google Play Services 检测在 3 秒内未返回结果。")
+                supplements.putIfAbsent("异步检测", "部分 Google Play Services 或传感器运行时探针未在时限内返回。")
             }
             finish()
         }
         main.postAtTime(timeout, TIMEOUT_TOKEN, SystemClock.uptimeMillis() + ASYNC_TIMEOUT_MILLIS)
+
+        try {
+            SensorRuntimeProbe.run(context) { result -> complete("传感器运行时探针", result) }
+        } catch (error: Exception) {
+            complete("传感器运行时探针", "调用失败：${error.javaClass.simpleName}")
+        }
 
         try {
             val availabilityTask = LocationServices.getFusedLocationProviderClient(context).locationAvailability
@@ -187,6 +193,9 @@ object DeviceDiagnostics {
         appendLine("sample_count=${snapshot.sampleCount}")
         appendLine("retained_samples=${snapshot.records.size}")
         appendLine("older_samples_omitted=${snapshot.droppedHistoryCount}")
+        appendLine("samples_before_test_start=${snapshot.records.count {
+            it.sample.elapsedRealtimeMillis < (snapshot.startedAtElapsedRealtimeMillis ?: Long.MIN_VALUE)
+        }}")
         appendLine("fused_availability_callback=${snapshot.locationAvailable?.toString() ?: "尚未回调"}")
         appendLine("service_issue=${snapshot.issue?.safeText() ?: "无"}")
         appendLine("original_mode=${snapshot.legacyMode}")
@@ -219,7 +228,18 @@ object DeviceDiagnostics {
         appendLine("gps_speed_ge_8kmh_but_derived_speed_lt_8kmh=${gpsFastSamples.count {
             it.derivedSpeedMetersPerSecond?.let { derived -> derived * 3.6 < 8.0 } == true
         }}")
-
+        val derivedFastSamples = snapshot.records.filter {
+            it.derivedSpeedMetersPerSecond?.let { derived -> derived * 3.6 >= 8.0 } == true
+        }
+        appendLine("gps_speed_lt_8kmh_but_derived_speed_ge_8kmh=${derivedFastSamples.count {
+            it.sample.speedMetersPerSecond?.let { speed -> speed * 3.6f < 8f } == true
+        }}")
+        appendLine("gps_speed_missing_but_derived_speed_ge_8kmh=${derivedFastSamples.count { it.sample.speedMetersPerSecond == null }}")
+        appendLine("gps_vs_derived_speed_delta_ge_5kmh=${snapshot.records.count { row ->
+            val gps = row.sample.speedMetersPerSecond?.times(3.6f)?.toDouble()
+            val derived = row.derivedSpeedMetersPerSecond?.times(3.6)
+            gps != null && derived != null && kotlin.math.abs(gps - derived) >= 5.0
+        }}")
         val intervals = snapshot.records.zipWithNext { first, second ->
             second.sample.elapsedRealtimeMillis - first.sample.elapsedRealtimeMillis
         }.filter { it > 0L }
@@ -372,6 +392,6 @@ object DeviceDiagnostics {
     private const val GMS_PACKAGE = "com.google.android.gms"
     private const val MAX_SAMPLE_LINES = 1_200
     private const val MAX_TEXT_LENGTH = 120
-    private const val ASYNC_TIMEOUT_MILLIS = 3_000L
+    private const val ASYNC_TIMEOUT_MILLIS = 5_000L
     private val TIMEOUT_TOKEN = Any()
 }

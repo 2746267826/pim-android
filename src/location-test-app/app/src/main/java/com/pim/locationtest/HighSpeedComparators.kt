@@ -92,10 +92,7 @@ class LegacyHighSpeedTracker {
     }
 }
 
-/**
- * Candidate: require speed or position-derived speed plus coherent displacement to enter;
- * leave on a stationary cluster, sustained low speed, or expired movement evidence.
- */
+/** Candidate: a reported high speed needs high-speed displacement corroboration. */
 class CorroboratedHighSpeedTracker {
     private val fixes = ArrayDeque<LocationSample>()
     var mode: ProposedMode = ProposedMode.Inactive
@@ -144,12 +141,19 @@ class CorroboratedHighSpeedTracker {
                 exit("位置连续 ${STATIONARY_WINDOW_MILLIS / 1_000}s 保持在静止簇内")
                 return mode
             }
-            if (movement.isCoherent) lastMovementEvidenceAt = now
+            val currentSpeed = sample?.let(::reportedSpeed)
+            if (movement.isHighSpeedCoherent &&
+                (currentSpeed == null || currentSpeed >= FALLBACK_SPEED_METERS_PER_SECOND)
+            ) {
+                lastMovementEvidenceAt = now
+            }
 
-            val lowSpeed = sample?.let { reliableSpeed(it) }?.let {
+            val reportedLowSpeed = sample?.let { reportedSpeed(it) }?.let {
                 it < FALLBACK_SPEED_METERS_PER_SECOND
-            } == true || (movement.speedMetersPerSecond != null &&
-                movement.speedMetersPerSecond < FALLBACK_SPEED_METERS_PER_SECOND)
+            } == true
+            val derivedLowSpeed = movement.speedMetersPerSecond != null &&
+                movement.speedMetersPerSecond < FALLBACK_SPEED_METERS_PER_SECOND
+            val lowSpeed = derivedLowSpeed || (reportedLowSpeed && !movement.isHighSpeedCoherent)
             if (lowSpeed) {
                 val start = slowSince ?: now
                 slowSince = start
@@ -164,7 +168,13 @@ class CorroboratedHighSpeedTracker {
             if (lastMovementEvidenceAt?.let { now - it >= ACTIVE_EVIDENCE_TIMEOUT_MILLIS } == true) {
                 exit("可信位移证据已过期")
             } else {
-                reason = if (movement.isCoherent) "高速档：持续速度与位移证据有效" else "高速档：等待新的位移证据"
+                reason = if (movement.isHighSpeedCoherent &&
+                    (currentSpeed == null || currentSpeed >= FALLBACK_SPEED_METERS_PER_SECOND)
+                ) {
+                    "高速档：持续速度与位移证据有效"
+                } else {
+                    "高速档：等待新的高速位移证据"
+                }
             }
             return mode
         }
@@ -177,16 +187,22 @@ class CorroboratedHighSpeedTracker {
             return mode
         }
 
-        val fastSpeed = sample?.let(::reliableSpeed)?.let {
+        val currentSpeed = sample?.let(::reportedSpeed)
+        val fastSpeed = currentSpeed?.let {
             it >= TRIGGER_SPEED_METERS_PER_SECOND
         } == true
-        val fastDisplacement = sample != null && validSample(sample) && movement.isCoherent &&
-            movement.speedMetersPerSecond?.let { it >= TRIGGER_SPEED_METERS_PER_SECOND } == true
+        val fastDisplacement = sample != null && validSample(sample) &&
+            sample.speedMetersPerSecond == null && movement.isHighSpeedCoherent
         val fastEvidence = fastSpeed || fastDisplacement
 
         if (!fastEvidence) {
             if (mode == ProposedMode.Verifying) clearCandidate("高速速度证据中断，候选已清除")
-            else reason = if (sample != null && !validSample(sample)) "定位水平精度不足" else "等待 ≥${TRIGGER_SPEED_KMH.toInt()} km/h 速度证据"
+            else reason = when {
+                sample != null && !validSample(sample) -> "定位水平精度不足"
+                currentSpeed != null && currentSpeed < TRIGGER_SPEED_METERS_PER_SECOND && movement.isHighSpeedCoherent ->
+                    "GPS 速度低于阈值，位置漂移不作为高速证据"
+                else -> "等待 ≥${TRIGGER_SPEED_KMH.toInt()} km/h 速度证据"
+            }
             return mode
         }
 
@@ -197,29 +213,27 @@ class CorroboratedHighSpeedTracker {
         lastFastEvidenceAt = now
 
         val since = candidateSince ?: now
-        if (movement.isCoherent && now - since >= ENTRY_CONFIRMATION_MILLIS) {
+        if (movement.isHighSpeedCoherent && now - since >= ENTRY_CONFIRMATION_MILLIS) {
             mode = ProposedMode.Active
             reason = "速度与连续位移均已确认"
             lastMovementEvidenceAt = now
             slowSince = null
             return mode
         }
-        if (now - since >= CANDIDATE_MAX_DURATION_MILLIS && !movement.isCoherent) {
-            clearCandidate("持续高速速度未获得位移佐证")
+        if (now - since >= CANDIDATE_MAX_DURATION_MILLIS && !movement.isHighSpeedCoherent) {
+            clearCandidate("持续高速速度未获得高速位移佐证")
             return mode
         }
 
         mode = ProposedMode.Verifying
-        reason = if (movement.isCoherent) "位移已佐证，等待高速持续时间" else "高速速度已出现，等待连续位移佐证"
+        reason = if (movement.isHighSpeedCoherent) "高速位移已佐证，等待速度持续时间" else "高速速度已出现，等待高速位移佐证"
         return mode
     }
 
-    private fun reliableSpeed(sample: LocationSample): Float? {
+    private fun reportedSpeed(sample: LocationSample): Float? {
         if (!validSample(sample)) return null
         val speed = sample.speedMetersPerSecond ?: return null
         if (!speed.isFinite() || speed < 0f) return null
-        val accuracy = sample.speedAccuracyMetersPerSecond ?: return null
-        if (!accuracy.isFinite() || accuracy < 0f || accuracy > MAX_SPEED_ACCURACY_METERS_PER_SECOND) return null
         return speed
     }
 
@@ -238,8 +252,8 @@ class CorroboratedHighSpeedTracker {
         val medianAccuracy = medianAccuracy(points)
         val speed = distance / (span / 1_000.0)
         val displacementFloor = maxOf(MIN_DISPLACEMENT_METERS, medianAccuracy * ACCURACY_DISPLACEMENT_MULTIPLIER)
-        val coherent = distance >= displacementFloor &&
-            speed >= MIN_DERIVED_MOVEMENT_SPEED_METERS_PER_SECOND &&
+        val highSpeedCoherent = distance >= displacementFloor &&
+            speed >= TRIGGER_SPEED_METERS_PER_SECOND &&
             (pathLength == 0.0 || distance / pathLength >= MIN_PATH_COHERENCE)
 
         val stationary = fixes.filter { now - it.elapsedRealtimeMillis in 0..STATIONARY_WINDOW_MILLIS }
@@ -255,7 +269,7 @@ class CorroboratedHighSpeedTracker {
         val isStationary = stationary.size >= MIN_STATIONARY_FIXES &&
             stationarySpan >= STATIONARY_MIN_SPAN_MILLIS && radius <= radiusLimit
 
-        return MovementEvidence(coherent, isStationary, distance, speed, points.size)
+        return MovementEvidence(highSpeedCoherent, isStationary, distance, speed, points.size)
     }
 
     private fun medianAccuracy(points: List<LocationSample>): Double {
@@ -302,7 +316,7 @@ class CorroboratedHighSpeedTracker {
     }
 
     private data class MovementEvidence(
-        val isCoherent: Boolean,
+        val isHighSpeedCoherent: Boolean,
         val isStationary: Boolean,
         val displacementMeters: Double,
         val speedMetersPerSecond: Double?,
@@ -315,7 +329,6 @@ class CorroboratedHighSpeedTracker {
         const val TRIGGER_SPEED_METERS_PER_SECOND = TRIGGER_SPEED_KMH / 3.6f
         const val FALLBACK_SPEED_METERS_PER_SECOND = FALLBACK_SPEED_KMH / 3.6f
         const val MAX_HORIZONTAL_ACCURACY_METERS = 30f
-        const val MAX_SPEED_ACCURACY_METERS_PER_SECOND = 2f
         const val ENTRY_CONFIRMATION_MILLIS = 10_000L
         const val CANDIDATE_MAX_DURATION_MILLIS = 30_000L
         const val CANDIDATE_GAP_TIMEOUT_MILLIS = 7_500L
@@ -328,7 +341,6 @@ class CorroboratedHighSpeedTracker {
         const val MIN_EVIDENCE_FIXES = 4
         const val MIN_STATIONARY_FIXES = 5
         const val MIN_DISPLACEMENT_METERS = 20.0
-        const val MIN_DERIVED_MOVEMENT_SPEED_METERS_PER_SECOND = 0.5
         const val MIN_PATH_COHERENCE = 0.55
         const val MIN_STATIONARY_RADIUS_METERS = 15.0
         const val ACCURACY_DISPLACEMENT_MULTIPLIER = 2.0

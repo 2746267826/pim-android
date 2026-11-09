@@ -20,12 +20,12 @@ APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。包名为 `com.pim.loca
 6. “一键复制完整设备检测报告”读取设备、权限、provider、Google Play Services、Fused 状态、传感器清单和本次定位回调字段，并连同最多 1200 条样本元数据复制到剪贴板。报告不含经纬度、序列号或 Android ID。
 7. “导出 CSV”分享本次样本汇总。CSV 不含经纬度；应用不会把样本上传到 PIM 或其他业务服务。
 
-设备诊断包含：ROM/Android 与 ABI、定位和运动权限状态、系统定位开关与 GPS/network/passive provider、Google Play Services 安装版本和可用性、Fused `LocationAvailability` 与缓存位置、完整 SensorManager 传感器清单、回调字段覆盖率、provider 分布、回调间隔，以及 GPS 高速但位置推算速度低的矛盾计数。
+设备诊断包含：ROM/Android 与 ABI、定位和运动权限状态、系统定位开关与 GPS/network/passive provider、Google Play Services 安装版本和可用性、Fused `LocationAvailability` 与缓存位置、完整 SensorManager 传感器清单，以及短时注册加速度计/陀螺仪/线性加速度/步数传感器的运行时探针（包含注册成败、回调数和权限异常）。还会汇总回调字段覆盖率、provider 分布、回调间隔，以及 GPS 速度与位置推算速度相差至少 5 km/h、GPS 报低速但位置推算高速等矛盾计数。步数传感器探针只记录本次是否收到回调/变化，不复制累计步数值。
 
 实时定位需设备启用定位服务与 Google Play Services。Android/Google Play Services 作为系统定位提供方，可能使用网络辅助定位；这是设备定位行为，不是本 App 上传采集样本。速度精度字段由系统按设备/定位源提供；缺失时候选规则改用本机位置位移推算速度。
 
 ## 候选规则
 
-要求水平精度优于 30 m，并以速度精度不超过 2 m/s 的 GPS 速度，或连续位置推算速度，发现至少 8 km/h；位置窗口至少 4 个点、跨越 8 秒、位移大于 `max(20 m, 2 × 水平精度)`，且直线位移/路径长度不低于 0.55。速度与位移证据持续 10 秒后进入高速档。
+要求水平精度优于 30 m。Android 报告 GPS 速度时，需达到 8 km/h；只有速度字段缺失时，才允许位置推算速度作为速度来源。无论哪种来源，位置窗口至少 4 个点、跨越 8 秒、位移大于 `max(20 m, 2 × 水平精度)`、直线位移/路径长度不低于 0.55，且推算速度也达到 8 km/h，才能佐证高速；GPS 明确报告低速时，位置漂移不能覆盖它。速度精度字段会进入诊断，但不单独证明速度可信。条件持续 10 秒后进入高速档。
 
 连续 20 秒处于静止点簇、可信低速持续 10 秒或位移佐证过期 25 秒时退出。数值是实测起点，不代表最终产品阈值；本 APK 仅用于对照，不接入正式策略。

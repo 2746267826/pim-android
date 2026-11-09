@@ -26,20 +26,21 @@ object SensorRuntimeProbe {
         probeThread.start()
         val probeHandler = Handler(probeThread.looper)
         val mainHandler = Handler(Looper.getMainLooper())
-        val reports = LinkedHashMap<Int, MutableSensorProbe>()
-        val sensorsByType = LinkedHashMap<Int, Sensor>()
-        val stepCounterBaselines = mutableMapOf<Int, Float>()
+        val reports = LinkedHashMap<String, MutableSensorProbe>()
+        val sensorsByKey = LinkedHashMap<String, Sensor>()
+        val stepCounterBaselines = mutableMapOf<String, Float>()
         val lock = Any()
 
         val listener = object : SensorEventListener {
             override fun onSensorChanged(event: SensorEvent) {
                 synchronized(lock) {
-                    val row = reports[event.sensor.type] ?: return
+                    val key = sensorKey(event.sensor)
+                    val row = reports[key] ?: return
                     row.callbackCount++
                     when (event.sensor.type) {
                         Sensor.TYPE_STEP_COUNTER -> {
                             val value = event.values.firstOrNull() ?: return
-                            val baseline = stepCounterBaselines.putIfAbsent(event.sensor.type, value)
+                            val baseline = stepCounterBaselines.putIfAbsent(key, value)
                             if (baseline != null && value > baseline) row.valueChanged = true
                         }
                         Sensor.TYPE_STEP_DETECTOR -> row.valueChanged = true
@@ -51,7 +52,7 @@ object SensorRuntimeProbe {
             override fun onAccuracyChanged(sensor: Sensor?, accuracy: Int) {
                 if (sensor == null) return
                 synchronized(lock) {
-                    reports[sensor.type]?.lastAccuracy = accuracy
+                    reports[sensorKey(sensor)]?.lastAccuracy = accuracy
                 }
             }
         }
@@ -65,12 +66,30 @@ object SensorRuntimeProbe {
             }
         }
 
+        val targets = mutableListOf<Pair<String, Sensor?>>()
         PROBED_SENSOR_TYPES.forEach { type ->
             val sensor = runCatching { manager.getDefaultSensor(type) }.getOrNull()
-            val row = MutableSensorProbe(type = type, available = sensor != null)
-            reports[type] = row
+            val key = sensor?.let(::sensorKey) ?: "standard_${type}_${sensorLabel(type)}"
+            targets += key to sensor
+        }
+        val vendorSensors = runCatching {
+            manager.getSensorList(Sensor.TYPE_ALL).filter { sensor ->
+                val name = sensor.name.lowercase(Locale.US)
+                val vendor = sensor.vendor.lowercase(Locale.US)
+                VENDOR_SENSOR_KEYWORDS.any { it in name || it in vendor }
+            }
+        }.getOrDefault(emptyList())
+        vendorSensors.forEach { sensor ->
+            val key = sensorKey(sensor)
+            if (targets.none { it.first == key }) targets += key to sensor
+        }
+
+        targets.forEach { (key, sensor) ->
+            val type = sensor?.type ?: key.substringAfter("standard_").substringBefore('_').toIntOrNull() ?: -1
+            val row = MutableSensorProbe(key = key, type = type, available = sensor != null)
+            reports[key] = row
             if (sensor == null) return@forEach
-            sensorsByType[type] = sensor
+            sensorsByKey[key] = sensor
             try {
                 row.registered = manager.registerListener(
                     listener,
@@ -87,6 +106,7 @@ object SensorRuntimeProbe {
         }
 
         val triggerReport = MutableSensorProbe(
+            key = triggerSensor?.let(::sensorKey) ?: "standard_${Sensor.TYPE_SIGNIFICANT_MOTION}_significant_motion",
             type = Sensor.TYPE_SIGNIFICANT_MOTION,
             available = triggerSensor != null
         )
@@ -111,10 +131,7 @@ object SensorRuntimeProbe {
             val report = synchronized(lock) {
                 buildString {
                     appendLine("probe_duration_ms=$PROBE_DURATION_MILLIS")
-                    PROBED_SENSOR_TYPES.forEach { type ->
-                        val row = reports.getValue(type)
-                        appendLine(format(row, sensorsByType[type]))
-                    }
+                    reports.values.forEach { row -> appendLine(format(row, sensorsByKey[row.key])) }
                     append(
                         format(triggerReport, triggerSensor) +
                             " trigger_requested=${triggerRequested ?: false} trigger_fired=${triggerFired.get()}"
@@ -127,7 +144,7 @@ object SensorRuntimeProbe {
     }
 
     private fun format(row: MutableSensorProbe, sensor: Sensor?): String = buildString {
-        append("sensor_${row.type}=${sensorLabel(row.type)}")
+        append("sensor_${row.key.safeText()} type=${row.type}(${sensorLabel(row.type)})")
         append(" available=${row.available}")
         append(" registered=${row.registered}")
         append(" callbacks=${row.callbackCount}")
@@ -158,10 +175,15 @@ object SensorRuntimeProbe {
         else -> "sensor"
     }
 
+    private fun sensorKey(sensor: Sensor): String =
+        "${sensor.type}_${sensor.name.safeText()}_${sensor.vendor.safeText()}_${sensor.isWakeUpSensor}"
+            .replace(Regex("[^A-Za-z0-9_.-]"), "_")
+
     private fun Float.safeNumber(): String = if (isFinite()) "%.3f".format(Locale.US, this) else "invalid"
     private fun String.safeText(): String = replace(Regex("[\\r\\n\\t]"), " ").take(80)
 
     private data class MutableSensorProbe(
+        val key: String,
         val type: Int,
         val available: Boolean,
         var registered: Boolean = false,
@@ -179,6 +201,7 @@ object SensorRuntimeProbe {
         Sensor.TYPE_STEP_COUNTER,
         Sensor.TYPE_STEP_DETECTOR
     )
+    private val VENDOR_SENSOR_KEYWORDS = listOf("stationary", "car_motion", "act_recog")
     private const val PROBE_DURATION_MILLIS = 2_500L
     private const val MAX_REPORTED_VALUES = 3
 }

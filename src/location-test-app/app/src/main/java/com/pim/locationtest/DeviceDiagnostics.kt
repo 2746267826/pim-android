@@ -223,6 +223,10 @@ object DeviceDiagnostics {
         appendLine("gps_speed_ge_8kmh=${gpsFastSamples.size}")
         appendLine("gps_speed_ge_8kmh_with_speed_accuracy=${gpsFastSamples.count { it.sample.speedAccuracyMetersPerSecond != null }}")
         appendLine("gps_speed_ge_8kmh_horizontal_accuracy_lt_30m=${gpsFastSamples.count { it.sample.horizontalAccuracyMeters?.let { accuracy -> accuracy.isFinite() && accuracy < 30f } == true }}")
+        appendLine("gps_speed_ge_8kmh_derived_speed_unavailable=${gpsFastSamples.count { it.derivedSpeedMetersPerSecond == null }}")
+        appendLine("gps_speed_ge_8kmh_derived_speed_ge_8kmh=${gpsFastSamples.count {
+            it.derivedSpeedMetersPerSecond?.let { derived -> derived * 3.6 >= 8.0 } == true
+        }}")
         appendLine("gps_speed_ge_8kmh_but_derived_speed_lt_8kmh=${gpsFastSamples.count {
             it.derivedSpeedMetersPerSecond?.let { derived -> derived * 3.6 < 8.0 } == true
         }}")

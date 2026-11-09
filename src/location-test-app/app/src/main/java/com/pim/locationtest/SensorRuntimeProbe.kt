@@ -1,5 +1,6 @@
 package com.pim.locationtest
 
+import android.Manifest
 import android.content.Context
 import android.hardware.Sensor
 import android.hardware.SensorEvent
@@ -7,6 +8,7 @@ import android.hardware.SensorEventListener
 import android.hardware.SensorManager
 import android.hardware.TriggerEvent
 import android.hardware.TriggerEventListener
+import android.content.pm.PackageManager
 import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
@@ -90,6 +92,12 @@ object SensorRuntimeProbe {
             reports[key] = row
             if (sensor == null) return@forEach
             sensorsByKey[key] = sensor
+            if (type in STEP_SENSOR_TYPES &&
+                context.checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED
+            ) {
+                row.error = "permission_not_granted:ACTIVITY_RECOGNITION"
+                return@forEach
+            }
             try {
                 row.registered = manager.registerListener(
                     listener,
@@ -201,6 +209,7 @@ object SensorRuntimeProbe {
         Sensor.TYPE_STEP_COUNTER,
         Sensor.TYPE_STEP_DETECTOR
     )
+    private val STEP_SENSOR_TYPES = setOf(Sensor.TYPE_STEP_COUNTER, Sensor.TYPE_STEP_DETECTOR)
     private val VENDOR_SENSOR_KEYWORDS = listOf("stationary", "car_motion", "act_recog")
     private const val PROBE_DURATION_MILLIS = 2_500L
     private const val MAX_REPORTED_VALUES = 3

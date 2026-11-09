@@ -30,6 +30,7 @@ class MainActivity : Activity() {
     private lateinit var metrics: TextView
     private lateinit var feedback: TextView
     private lateinit var diagnosticStatus: TextView
+    private lateinit var requestActivityRecognitionButton: Button
     private lateinit var timeline: ModeTimelineView
     private lateinit var candidateTimeline: ModeTimelineView
     private lateinit var startButton: Button
@@ -148,6 +149,10 @@ class MainActivity : Activity() {
             setPadding(dp(2), dp(8), dp(2), dp(8))
         }
         content.addView(diagnosticStatus)
+        requestActivityRecognitionButton = button("授权运动识别并复测步数传感器", COLOR_SECONDARY) {
+            requestActivityRecognitionPermission()
+        }
+        content.addView(requestActivityRecognitionButton, matchParams(bottom = 8))
         content.addView(button("一键复制完整设备检测报告", COLOR_DARK) { copyDiagnosticReport() }, matchParams(bottom = 8))
 
         val resetButton = button("清除本次数据", COLOR_OUTLINE) { resetRun() }
@@ -268,6 +273,10 @@ class MainActivity : Activity() {
         }
         startButton.text = if (snapshot.running) "停止实时采样" else "开始实时采样"
         startButton.setBackgroundColor(if (snapshot.running) COLOR_STOP else COLOR_PROPOSED)
+        requestActivityRecognitionButton.visibility = if (
+            android.os.Build.VERSION.SDK_INT >= android.os.Build.VERSION_CODES.Q &&
+            checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION) != PackageManager.PERMISSION_GRANTED
+        ) View.VISIBLE else View.GONE
         replayButtons.forEach { it.isEnabled = !snapshot.running }
         timeline.records = snapshot.records
         timeline.invalidate()
@@ -311,6 +320,16 @@ class MainActivity : Activity() {
 
     override fun onRequestPermissionsResult(requestCode: Int, permissions: Array<out String>, grantResults: IntArray) {
         super.onRequestPermissionsResult(requestCode, permissions, grantResults)
+        if (requestCode == ACTIVITY_RECOGNITION_REQUEST) {
+            if (checkSelfPermission(Manifest.permission.ACTIVITY_RECOGNITION) == PackageManager.PERMISSION_GRANTED) {
+                diagnosticStatus.text = "运动识别权限已授予，正在复测步数传感器并复制报告…"
+                copyDiagnosticReport()
+            } else {
+                diagnosticStatus.text = "运动识别权限未授予。定位诊断仍可使用；步数传感器将标记为权限受限。"
+            }
+            render()
+            return
+        }
         if (requestCode != LOCATION_PERMISSION_REQUEST) return
         if (checkSelfPermission(Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
             onLiveToggle()
@@ -425,6 +444,14 @@ class MainActivity : Activity() {
         )
     }
 
+    private fun requestActivityRecognitionPermission() {
+        if (android.os.Build.VERSION.SDK_INT < android.os.Build.VERSION_CODES.Q) {
+            diagnosticStatus.text = "当前 Android 版本不要求 ACTIVITY_RECOGNITION 运行时授权。"
+            return
+        }
+        requestPermissions(arrayOf(Manifest.permission.ACTIVITY_RECOGNITION), ACTIVITY_RECOGNITION_REQUEST)
+    }
+
     private fun rounded(color: Int, radiusDp: Int, strokeColor: Int? = null): GradientDrawable =
         GradientDrawable().apply {
             setColor(color)
@@ -505,6 +532,7 @@ class MainActivity : Activity() {
 
     companion object {
         private const val LOCATION_PERMISSION_REQUEST = 5102
+        private const val ACTIVITY_RECOGNITION_REQUEST = 5103
         private const val REPLAY_INTERVAL_MILLIS = 240L
         private const val SIMULATED_FIX_INTERVAL_MILLIS = 2_500L
         private const val DEMO_LATITUDE = 31.2304

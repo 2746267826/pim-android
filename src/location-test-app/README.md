@@ -20,7 +20,7 @@ APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。当前版本为 `1.2 (3
 6. “一键复制完整设备检测报告”读取设备、权限、provider、Google Play Services、Fused 状态、传感器清单和本次定位回调字段，并连同最多 1200 条样本元数据复制到剪贴板。报告不含经纬度、序列号或 Android ID。
 7. “导出 CSV”分享本次样本汇总。CSV 不含经纬度；应用不会把样本上传到 PIM 或其他业务服务。
 
-设备诊断包含：ROM/Android 与 ABI、定位和运动权限状态、系统定位开关与 GPS/network/passive provider、Google Play Services 安装版本和可用性、Fused `LocationAvailability` 与缓存位置、完整 SensorManager 传感器清单，以及 5 秒注册加速度计/陀螺仪/线性加速度/步数传感器的运行时探针（包含注册成败、请求周期、回调数和权限异常）。若 `ACTIVITY_RECOGNITION` 未授予，步数传感器会标记权限受限；可选地点击“授权运动识别并复测步数传感器”，授予后 App 会重新探测并复制报告。还会汇总回调字段覆盖率、provider 分布、回调间隔，以及 GPS 速度与位置推算速度相差至少 5 km/h、GPS 报低速但位置推算高速等矛盾计数；位置窗口精度不足、无法推算时会单独计数，避免把“无比较数据”误读成两种速度一致。步数传感器探针只记录本次是否收到回调/变化，不复制累计步数值。
+设备诊断包含：ROM/Android 与 ABI、定位和运动权限状态、系统定位开关与 GPS/network/passive provider、Google Play Services 安装版本和可用性、Fused `LocationAvailability` 与缓存位置、完整 SensorManager 传感器清单，以及 5 秒注册加速度计/陀螺仪/线性加速度/步数传感器的运行时探针（包含注册成败、请求周期、实际回调间隔、回调数和权限异常）。若 `ACTIVITY_RECOGNITION` 未授予，步数传感器会标记权限受限；可选地点击“授权运动识别并复测步数传感器”，授予后 App 会重新探测并复制报告。还会汇总回调字段覆盖率、provider 分布、回调间隔，以及 GPS 速度与位置推算速度相差至少 5 km/h、GPS 报低速但位置推算高速等矛盾计数；位置窗口精度不足、无法推算时会单独计数，避免把“无比较数据”误读成两种速度一致。步数传感器探针只记录本次是否收到回调/变化，不复制累计步数值。
 
 实时定位需设备启用定位服务与 Google Play Services。Android/Google Play Services 作为系统定位提供方，可能使用网络辅助定位；这是设备定位行为，不是本 App 上传采集样本。速度精度字段由系统按设备/定位源提供；缺失时候选规则改用本机位置位移推算速度。
 

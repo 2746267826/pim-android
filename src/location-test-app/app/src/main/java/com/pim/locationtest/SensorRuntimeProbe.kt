@@ -39,6 +39,17 @@ object SensorRuntimeProbe {
                     val key = sensorKey(event.sensor)
                     val row = reports[key] ?: return
                     row.callbackCount++
+                    val eventAtMillis = event.timestamp / 1_000_000L
+                    row.lastEventElapsedRealtimeMillis?.let { previous ->
+                        val interval = eventAtMillis - previous
+                        if (interval >= 0L) {
+                            row.intervalCount++
+                            row.intervalTotalMillis += interval
+                            row.intervalMinMillis = row.intervalMinMillis?.let { minOf(it, interval) } ?: interval
+                            row.intervalMaxMillis = row.intervalMaxMillis?.let { maxOf(it, interval) } ?: interval
+                        }
+                    }
+                    row.lastEventElapsedRealtimeMillis = eventAtMillis
                     when (event.sensor.type) {
                         Sensor.TYPE_STEP_COUNTER -> {
                             val value = event.values.firstOrNull() ?: return
@@ -159,6 +170,11 @@ object SensorRuntimeProbe {
         append(" registered=${row.registered}")
         append(" requested_period_us=${row.requestedPeriodMicros ?: "n/a"}")
         append(" callbacks=${row.callbackCount}")
+        if (row.intervalCount > 0) {
+            append(" callback_interval_ms_min=${row.intervalMinMillis}")
+            append(" callback_interval_ms_avg=${(row.intervalTotalMillis / row.intervalCount).safeNumber()}")
+            append(" callback_interval_ms_max=${row.intervalMaxMillis}")
+        }
         row.valueChanged.takeIf { row.type == Sensor.TYPE_STEP_COUNTER || row.type == Sensor.TYPE_STEP_DETECTOR }?.let {
             append(" step_event_seen=$it")
         }
@@ -173,8 +189,8 @@ object SensorRuntimeProbe {
     }
 
     private fun samplingPeriodFor(type: Int): Int = when (type) {
-        Sensor.TYPE_STEP_COUNTER, Sensor.TYPE_STEP_DETECTOR -> SensorManager.SENSOR_DELAY_NORMAL
-        else -> SensorManager.SENSOR_DELAY_GAME
+        Sensor.TYPE_STEP_COUNTER, Sensor.TYPE_STEP_DETECTOR -> STEP_SENSOR_PERIOD_MICROS
+        else -> CONTINUOUS_SENSOR_PERIOD_MICROS
     }
 
     private fun sensorLabel(type: Int): String = when (type) {
@@ -192,6 +208,7 @@ object SensorRuntimeProbe {
             .replace(Regex("[^A-Za-z0-9_.-]"), "_")
 
     private fun Float.safeNumber(): String = if (isFinite()) "%.3f".format(Locale.US, this) else "invalid"
+    private fun Double.safeNumber(): String = if (isFinite()) "%.3f".format(Locale.US, this) else "invalid"
     private fun String.safeText(): String = replace(Regex("[\\r\\n\\t]"), " ").take(80)
 
     private data class MutableSensorProbe(
@@ -201,6 +218,11 @@ object SensorRuntimeProbe {
         var requestedPeriodMicros: Int? = null,
         var registered: Boolean = false,
         var callbackCount: Int = 0,
+        var lastEventElapsedRealtimeMillis: Long? = null,
+        var intervalCount: Int = 0,
+        var intervalTotalMillis: Double = 0.0,
+        var intervalMinMillis: Long? = null,
+        var intervalMaxMillis: Long? = null,
         var valueChanged: Boolean = false,
         var lastValues: List<String> = emptyList(),
         var lastAccuracy: Int? = null,
@@ -217,5 +239,7 @@ object SensorRuntimeProbe {
     private val STEP_SENSOR_TYPES = setOf(Sensor.TYPE_STEP_COUNTER, Sensor.TYPE_STEP_DETECTOR)
     private val VENDOR_SENSOR_KEYWORDS = listOf("stationary", "car_motion", "act_recog")
     private const val PROBE_DURATION_MILLIS = 5_000L
+    private const val CONTINUOUS_SENSOR_PERIOD_MICROS = 20_000
+    private const val STEP_SENSOR_PERIOD_MICROS = 200_000
     private const val MAX_REPORTED_VALUES = 3
 }

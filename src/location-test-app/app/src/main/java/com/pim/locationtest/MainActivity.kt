@@ -29,6 +29,7 @@ class MainActivity : Activity() {
     private lateinit var sourceLabel: TextView
     private lateinit var metrics: TextView
     private lateinit var feedback: TextView
+    private lateinit var diagnosticStatus: TextView
     private lateinit var timeline: ModeTimelineView
     private lateinit var candidateTimeline: ModeTimelineView
     private lateinit var startButton: Button
@@ -142,6 +143,12 @@ class MainActivity : Activity() {
         secondReplayRow.addView(cleanReplay, weightedParams(1f, end = 4))
         secondReplayRow.addView(exportButton, weightedParams(1f, start = 4))
         content.addView(secondReplayRow, matchParams(bottom = 8))
+
+        diagnosticStatus = text("尚未生成设备检测报告", 12f, COLOR_MUTED).apply {
+            setPadding(dp(2), dp(8), dp(2), dp(8))
+        }
+        content.addView(diagnosticStatus)
+        content.addView(button("一键复制完整设备检测报告", COLOR_DARK) { copyDiagnosticReport() }, matchParams(bottom = 8))
 
         val resetButton = button("清除本次数据", COLOR_OUTLINE) { resetRun() }
         content.addView(resetButton, matchParams())
@@ -397,6 +404,25 @@ class MainActivity : Activity() {
             putExtra(Intent.EXTRA_TEXT, csv)
         }
         startActivity(Intent.createChooser(send, "分享对照数据（不含坐标）"))
+    }
+
+    private fun copyDiagnosticReport() {
+        diagnosticStatus.text = "正在读取设备信息、权限、传感器和定位服务…"
+        DeviceDiagnostics.copyToClipboard(
+            activity = this,
+            onCopied = {
+                runOnUiThread {
+                    diagnosticStatus.text = "检测报告已复制。内容不含坐标或设备唯一标识，可粘贴回聊天。"
+                    Toast.makeText(this, "检测报告已复制到剪贴板", Toast.LENGTH_SHORT).show()
+                }
+            },
+            onError = { message ->
+                runOnUiThread {
+                    diagnosticStatus.text = message
+                    Toast.makeText(this, message, Toast.LENGTH_SHORT).show()
+                }
+            }
+        )
     }
 
     private fun rounded(color: Int, radiusDp: Int, strokeColor: Int? = null): GradientDrawable =

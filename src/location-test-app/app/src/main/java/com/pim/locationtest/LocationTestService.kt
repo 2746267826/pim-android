@@ -15,6 +15,7 @@ import android.os.IBinder
 import android.os.Looper
 import android.os.SystemClock
 import com.google.android.gms.location.LocationCallback
+import com.google.android.gms.location.LocationAvailability
 import com.google.android.gms.location.LocationRequest
 import com.google.android.gms.location.LocationResult
 import com.google.android.gms.location.LocationServices
@@ -58,6 +59,10 @@ class LocationTestService : Service() {
             .setMinUpdateIntervalMillis(MIN_UPDATE_INTERVAL_MILLIS)
             .build()
         val locationCallback = object : LocationCallback() {
+            override fun onLocationAvailability(availability: LocationAvailability) {
+                DemoRuntime.setLocationAvailability(availability.isLocationAvailable)
+            }
+
             override fun onLocationResult(result: LocationResult) {
                 result.locations.sortedBy { it.elapsedRealtimeNanos }.forEach { location ->
                     DemoRuntime.accept(location.toSample())
@@ -83,6 +88,30 @@ class LocationTestService : Service() {
         speedMetersPerSecond = if (hasSpeed()) speed else null,
         speedAccuracyMetersPerSecond = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && hasSpeedAccuracy()) {
             speedAccuracyMetersPerSecond
+        } else {
+            null
+        },
+        provider = provider ?: "unknown",
+        locationTimeMillis = time,
+        hasAltitude = hasAltitude(),
+        altitudeMeters = altitude.takeIf { hasAltitude() },
+        verticalAccuracyMeters = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && hasVerticalAccuracy()) {
+            verticalAccuracyMeters
+        } else {
+            null
+        },
+        hasBearing = hasBearing(),
+        bearingDegrees = bearing.takeIf { hasBearing() },
+        bearingAccuracyDegrees = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O && hasBearingAccuracy()) {
+            bearingAccuracyDegrees
+        } else {
+            null
+        },
+        isMock = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.S) isMock else isFromMockProvider,
+        elapsedRealtimeUncertaintyMillis = if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q &&
+            hasElapsedRealtimeUncertaintyNanos()
+        ) {
+            elapsedRealtimeUncertaintyNanos / 1_000_000.0
         } else {
             null
         }

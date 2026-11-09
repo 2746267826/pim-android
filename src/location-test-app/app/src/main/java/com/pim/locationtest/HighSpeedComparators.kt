@@ -11,7 +11,17 @@ data class LocationSample(
     val longitude: Double,
     val horizontalAccuracyMeters: Float?,
     val speedMetersPerSecond: Float?,
-    val speedAccuracyMetersPerSecond: Float?
+    val speedAccuracyMetersPerSecond: Float?,
+    val provider: String = "unknown",
+    val locationTimeMillis: Long? = null,
+    val hasAltitude: Boolean = false,
+    val altitudeMeters: Double? = null,
+    val verticalAccuracyMeters: Float? = null,
+    val hasBearing: Boolean = false,
+    val bearingDegrees: Float? = null,
+    val bearingAccuracyDegrees: Float? = null,
+    val isMock: Boolean = false,
+    val elapsedRealtimeUncertaintyMillis: Double? = null
 )
 
 enum class LegacyMode { Inactive, Accumulating, Active }
@@ -342,6 +352,7 @@ data class DemoSnapshot(
     val running: Boolean,
     val source: String,
     val issue: String?,
+    val locationAvailable: Boolean?,
     val startedAtElapsedRealtimeMillis: Long?,
     val latest: ComparisonRecord?,
     val legacyMode: LegacyMode,
@@ -351,6 +362,7 @@ data class DemoSnapshot(
     val derivedSpeedMetersPerSecond: Double?,
     val evidenceFixCount: Int,
     val sampleCount: Int,
+    val droppedHistoryCount: Int,
     val records: List<ComparisonRecord>
 )
 
@@ -361,11 +373,13 @@ object DemoRuntime {
     private var running = false
     private var source = "尚未开始"
     private var issue: String? = null
+    private var locationAvailable: Boolean? = null
     private var startedAt: Long? = null
     private var latest: ComparisonRecord? = null
     private var lastFixAt: Long? = null
     private var lastLegacyNoFixAt: Long? = null
     private var sampleCount = 0
+    private var droppedHistoryCount = 0
 
     @Synchronized
     fun begin(sourceName: String, isRunning: Boolean) {
@@ -375,11 +389,13 @@ object DemoRuntime {
         running = isRunning
         source = sourceName
         issue = null
+        locationAvailable = null
         startedAt = android.os.SystemClock.elapsedRealtime()
         latest = null
         lastFixAt = null
         lastLegacyNoFixAt = null
         sampleCount = 0
+        droppedHistoryCount = 0
     }
 
     @Synchronized
@@ -390,6 +406,11 @@ object DemoRuntime {
     @Synchronized
     fun setIssue(message: String?) {
         issue = message
+    }
+
+    @Synchronized
+    fun setLocationAvailability(available: Boolean?) {
+        locationAvailable = available
     }
 
     @Synchronized
@@ -415,7 +436,10 @@ object DemoRuntime {
         )
         latest = record
         records.addLast(record)
-        while (records.size > MAX_RECORDS) records.removeFirst()
+        while (records.size > MAX_RECORDS) {
+            records.removeFirst()
+            droppedHistoryCount++
+        }
     }
 
     @Synchronized
@@ -446,6 +470,7 @@ object DemoRuntime {
         running = running,
         source = source,
         issue = issue,
+        locationAvailable = locationAvailable,
         startedAtElapsedRealtimeMillis = startedAt,
         latest = latest,
         legacyMode = legacy.mode,
@@ -455,6 +480,7 @@ object DemoRuntime {
         derivedSpeedMetersPerSecond = proposed.derivedSpeedMetersPerSecond,
         evidenceFixCount = proposed.evidenceFixCount,
         sampleCount = sampleCount,
+        droppedHistoryCount = droppedHistoryCount,
         records = records.toList()
     )
 
@@ -462,13 +488,21 @@ object DemoRuntime {
     fun csv(): String {
         val origin = startedAt ?: 0L
         return buildString {
-            appendLine("elapsed_ms,speed_kmh,speed_accuracy_mps,horizontal_accuracy_m,displacement_m,derived_speed_kmh,position_evidence_fixes,original_mode,candidate_mode,candidate_reason")
+            appendLine("elapsed_ms,provider,speed_kmh,speed_accuracy_mps,horizontal_accuracy_m,has_altitude,altitude_m,vertical_accuracy_m,has_bearing,bearing_deg,bearing_accuracy_deg,is_mock,displacement_m,derived_speed_kmh,position_evidence_fixes,original_mode,candidate_mode,candidate_reason")
             records.forEach { row ->
                 val fix = row.sample
                 append(fix.elapsedRealtimeMillis - origin).append(',')
+                append(fix.provider.csvText()).append(',')
                 append(fix.speedMetersPerSecond?.times(3.6f)?.csvNumber() ?: "").append(',')
                 append(fix.speedAccuracyMetersPerSecond?.csvNumber() ?: "").append(',')
                 append(fix.horizontalAccuracyMeters?.csvNumber() ?: "").append(',')
+                append(fix.hasAltitude).append(',')
+                append(fix.altitudeMeters?.csvNumber() ?: "").append(',')
+                append(fix.verticalAccuracyMeters?.csvNumber() ?: "").append(',')
+                append(fix.hasBearing).append(',')
+                append(fix.bearingDegrees?.csvNumber() ?: "").append(',')
+                append(fix.bearingAccuracyDegrees?.csvNumber() ?: "").append(',')
+                append(fix.isMock).append(',')
                 append(row.displacementMeters.csvNumber()).append(',')
                 append(row.derivedSpeedMetersPerSecond?.times(3.6)?.csvNumber() ?: "").append(',')
                 append(row.evidenceFixCount).append(',')
@@ -481,6 +515,7 @@ object DemoRuntime {
 
     private fun Float.csvNumber(): String = if (isFinite()) "%.3f".format(java.util.Locale.US, this) else ""
     private fun Double.csvNumber(): String = if (isFinite()) "%.3f".format(java.util.Locale.US, this) else ""
+    private fun String.csvText(): String = replace(",", " ").replace("\n", " ").replace("\r", " ")
 
     private const val MAX_RECORDS = 1_200
 }

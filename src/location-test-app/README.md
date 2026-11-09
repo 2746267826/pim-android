@@ -17,7 +17,10 @@ APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。包名为 `com.pim.loca
 3. 点“真实高速后停车”观察两种算法都能识别移动；停下后候选算法根据静止点簇退出，原算法仍按原有低速计时等待。
 4. 点“持续高速”检查候选规则没有把真实连续移动一概挡掉。
 5. 选择“开始实时采样”并授予精确定位权限。App 启动 Android 前台定位服务，系统按通知权限设置展示前台提示，可锁屏实测；结束时点停止。
-6. “导出 CSV”分享本次样本汇总。CSV 不含经纬度；应用不会把样本上传到 PIM 或其他业务服务。
+6. “一键复制完整设备检测报告”读取设备、权限、provider、Google Play Services、Fused 状态、传感器清单和本次定位回调字段，并连同最多 1200 条样本元数据复制到剪贴板。报告不含经纬度、序列号或 Android ID。
+7. “导出 CSV”分享本次样本汇总。CSV 不含经纬度；应用不会把样本上传到 PIM 或其他业务服务。
+
+设备诊断包含：ROM/Android 与 ABI、定位和运动权限状态、系统定位开关与 GPS/network/passive provider、Google Play Services 安装版本和可用性、Fused `LocationAvailability` 与缓存位置、完整 SensorManager 传感器清单、回调字段覆盖率、provider 分布、回调间隔，以及 GPS 高速但位置推算速度低的矛盾计数。
 
 实时定位需设备启用定位服务与 Google Play Services。Android/Google Play Services 作为系统定位提供方，可能使用网络辅助定位；这是设备定位行为，不是本 App 上传采集样本。速度精度字段由系统按设备/定位源提供；缺失时候选规则改用本机位置位移推算速度。
 

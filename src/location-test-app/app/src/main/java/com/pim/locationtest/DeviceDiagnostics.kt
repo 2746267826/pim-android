@@ -112,6 +112,7 @@ object DeviceDiagnostics {
 
     private fun buildLocalReport(context: Context, snapshot: DemoSnapshot): String = buildString {
         appendLine("定位设备检测报告")
+        appendLine("diagnostic_report_version=$DIAGNOSTIC_REPORT_VERSION")
         appendLine("生成时间：${java.text.SimpleDateFormat("yyyy-MM-dd HH:mm:ss Z", Locale.US).format(java.util.Date())}")
         appendLine("经纬度与设备唯一标识已省略；以下内容由本机 Android API 读取。")
 
@@ -392,6 +393,7 @@ object DeviceDiagnostics {
     )
     private val PROVIDERS = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
     private const val GMS_PACKAGE = "com.google.android.gms"
+    private const val DIAGNOSTIC_REPORT_VERSION = 2
     private const val MAX_SAMPLE_LINES = 1_200
     private const val MAX_TEXT_LENGTH = 120
     private const val ASYNC_TIMEOUT_MILLIS = 5_000L

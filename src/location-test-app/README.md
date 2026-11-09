@@ -8,7 +8,7 @@
 ./gradlew :app:testDebugUnitTest :app:assembleDebug
 ```
 
-APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。包名为 `com.pim.locationtest`，可与 PIM 主应用并存安装。
+APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。当前版本为 `1.1 (2)`，报告头包含 `diagnostic_report_version=2`；包名为 `com.pim.locationtest`，可与 PIM 主应用并存安装。
 
 ## 使用
 

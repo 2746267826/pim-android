@@ -15,7 +15,7 @@ import kotlinx.coroutines.launch
  * 工单 04（E3.2）日程静音闹钟的接收器。
  *
  * 由 [EventMuteAlarmScheduler] 用 `setExactAndAllowWhileIdle` 登记，系统在精确时刻派发到这里。
- * 收到的是一小段同步工作（改铃声模式/免打扰过滤器 + 落盘），用 `goAsync()` 保证广播不被提前回收。
+ * 收到的是一小段同步工作（切换铃声模式和落盘），用 `goAsync()` 保证广播不被提前回收。
  *
  * 与 keepalive 的叫醒接收器是**两个独立的 action/接收器**，互不覆盖（见调度器的注释）。
  */

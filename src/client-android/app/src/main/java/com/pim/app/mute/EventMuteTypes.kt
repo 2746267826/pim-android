@@ -37,10 +37,10 @@ data class UpcomingMuteEvent(
     val effectiveMuted: Boolean
 )
 
-/** 本机静音相关状态：铃声模式 + 免打扰过滤器。两者都要还原，缺一不可。 */
+/** 铃声恢复目标及只读的勿扰接管凭据。 */
 data class DeviceMuteState(
     val ringerMode: Int,
-    val interruptionFilter: Int
+    val interruptionFilter: Int? = null
 )
 
 /**
@@ -74,9 +74,9 @@ data class MuteSession(
      */
     val eventEndsUtcMillis: Map<String, Long> = emptyMap(),
     /**
-     * 本功能预期写入的状态，或部分操作失败后的实测状态（所有权凭据）。
-     * 每次恢复前都比对；被用户改过就退出接管。null 是旧会话，只能按固定静音
-     * 档案保守比对。不能凭此分辨用户手动设成完全相同的状态。
+     * 操作后的实测铃声模式与勿扰过滤器（接管凭据）。
+     * 每次恢复前都比对，用户改变任一项后退出接管。
+     * null 表示操作后状态尚未确认，不能据此恢复设备。
      */
     val appliedState: DeviceMuteState? = null
 )

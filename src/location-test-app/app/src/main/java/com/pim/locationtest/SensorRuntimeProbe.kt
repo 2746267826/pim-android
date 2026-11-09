@@ -98,11 +98,13 @@ object SensorRuntimeProbe {
                 row.error = "permission_not_granted:ACTIVITY_RECOGNITION"
                 return@forEach
             }
+            val requestedPeriodMicros = samplingPeriodFor(type)
+            row.requestedPeriodMicros = requestedPeriodMicros
             try {
                 row.registered = manager.registerListener(
                     listener,
                     sensor,
-                    samplingPeriodFor(type),
+                    requestedPeriodMicros,
                     probeHandler
                 )
                 if (!row.registered) row.error = "registerListener=false"
@@ -155,6 +157,7 @@ object SensorRuntimeProbe {
         append("sensor_${row.key.safeText()} type=${row.type}(${sensorLabel(row.type)})")
         append(" available=${row.available}")
         append(" registered=${row.registered}")
+        append(" requested_period_us=${row.requestedPeriodMicros ?: "n/a"}")
         append(" callbacks=${row.callbackCount}")
         row.valueChanged.takeIf { row.type == Sensor.TYPE_STEP_COUNTER || row.type == Sensor.TYPE_STEP_DETECTOR }?.let {
             append(" step_event_seen=$it")
@@ -165,6 +168,7 @@ object SensorRuntimeProbe {
         sensor?.let {
             append(" vendor=${it.vendor.safeText()}")
             append(" wake_up=${it.isWakeUpSensor}")
+            append(" min_delay_us=${it.minDelay}")
         }
     }
 
@@ -194,6 +198,7 @@ object SensorRuntimeProbe {
         val key: String,
         val type: Int,
         val available: Boolean,
+        var requestedPeriodMicros: Int? = null,
         var registered: Boolean = false,
         var callbackCount: Int = 0,
         var valueChanged: Boolean = false,
@@ -211,6 +216,6 @@ object SensorRuntimeProbe {
     )
     private val STEP_SENSOR_TYPES = setOf(Sensor.TYPE_STEP_COUNTER, Sensor.TYPE_STEP_DETECTOR)
     private val VENDOR_SENSOR_KEYWORDS = listOf("stationary", "car_motion", "act_recog")
-    private const val PROBE_DURATION_MILLIS = 2_500L
+    private const val PROBE_DURATION_MILLIS = 5_000L
     private const val MAX_REPORTED_VALUES = 3
 }

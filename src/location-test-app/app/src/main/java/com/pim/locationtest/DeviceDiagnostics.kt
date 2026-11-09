@@ -396,6 +396,6 @@ object DeviceDiagnostics {
     private const val DIAGNOSTIC_REPORT_VERSION = 2
     private const val MAX_SAMPLE_LINES = 1_200
     private const val MAX_TEXT_LENGTH = 120
-    private const val ASYNC_TIMEOUT_MILLIS = 5_000L
+    private const val ASYNC_TIMEOUT_MILLIS = 8_000L
     private val TIMEOUT_TOKEN = Any()
 }

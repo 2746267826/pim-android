@@ -151,9 +151,12 @@ class CorroboratedHighSpeedTracker {
             val reportedLowSpeed = sample?.let { reportedSpeed(it) }?.let {
                 it < FALLBACK_SPEED_METERS_PER_SECOND
             } == true
-            val derivedLowSpeed = movement.speedMetersPerSecond != null &&
-                movement.speedMetersPerSecond < FALLBACK_SPEED_METERS_PER_SECOND
-            val lowSpeed = derivedLowSpeed || (reportedLowSpeed && !movement.isHighSpeedCoherent)
+            val lowSpeed = if (currentSpeed != null) {
+                reportedLowSpeed && !movement.isHighSpeedCoherent
+            } else {
+                movement.speedMetersPerSecond != null &&
+                    movement.speedMetersPerSecond < FALLBACK_SPEED_METERS_PER_SECOND
+            }
             if (lowSpeed) {
                 val start = slowSince ?: now
                 slowSince = start
@@ -196,7 +199,15 @@ class CorroboratedHighSpeedTracker {
         val fastEvidence = fastSpeed || fastDisplacement
 
         if (!fastEvidence) {
-            if (mode == ProposedMode.Verifying) clearCandidate("高速速度证据中断，候选已清除")
+            if (mode == ProposedMode.Verifying) {
+                clearCandidate(
+                    if (currentSpeed != null && currentSpeed < TRIGGER_SPEED_METERS_PER_SECOND && movement.isHighSpeedCoherent) {
+                        "GPS 速度低于阈值，位置漂移不作为高速证据"
+                    } else {
+                        "高速速度证据中断，候选已清除"
+                    }
+                )
+            }
             else reason = when {
                 sample != null && !validSample(sample) -> "定位水平精度不足"
                 currentSpeed != null && currentSpeed < TRIGGER_SPEED_METERS_PER_SECOND && movement.isHighSpeedCoherent ->
@@ -374,6 +385,7 @@ data class DemoSnapshot(
     val derivedSpeedMetersPerSecond: Double?,
     val evidenceFixCount: Int,
     val sampleCount: Int,
+    val preTestSampleCount: Int,
     val droppedHistoryCount: Int,
     val records: List<ComparisonRecord>
 )
@@ -391,6 +403,7 @@ object DemoRuntime {
     private var lastFixAt: Long? = null
     private var lastLegacyNoFixAt: Long? = null
     private var sampleCount = 0
+    private var preTestSampleCount = 0
     private var droppedHistoryCount = 0
 
     @Synchronized
@@ -407,6 +420,7 @@ object DemoRuntime {
         lastFixAt = null
         lastLegacyNoFixAt = null
         sampleCount = 0
+        preTestSampleCount = 0
         droppedHistoryCount = 0
     }
 
@@ -427,6 +441,10 @@ object DemoRuntime {
 
     @Synchronized
     fun accept(sample: LocationSample) {
+        if (startedAt?.let { sample.elapsedRealtimeMillis < it } == true) {
+            preTestSampleCount++
+            return
+        }
         lastFixAt = sample.elapsedRealtimeMillis
         val speedForLegacy = sample.speedMetersPerSecond?.takeIf {
             it.isFinite() && it >= 0f &&
@@ -492,6 +510,7 @@ object DemoRuntime {
         derivedSpeedMetersPerSecond = proposed.derivedSpeedMetersPerSecond,
         evidenceFixCount = proposed.evidenceFixCount,
         sampleCount = sampleCount,
+        preTestSampleCount = preTestSampleCount,
         droppedHistoryCount = droppedHistoryCount,
         records = records.toList()
     )

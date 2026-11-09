@@ -192,10 +192,8 @@ object DeviceDiagnostics {
         appendLine("running=${snapshot.running}")
         appendLine("sample_count=${snapshot.sampleCount}")
         appendLine("retained_samples=${snapshot.records.size}")
+        appendLine("pre_test_cached_samples_ignored=${snapshot.preTestSampleCount}")
         appendLine("older_samples_omitted=${snapshot.droppedHistoryCount}")
-        appendLine("samples_before_test_start=${snapshot.records.count {
-            it.sample.elapsedRealtimeMillis < (snapshot.startedAtElapsedRealtimeMillis ?: Long.MIN_VALUE)
-        }}")
         appendLine("fused_availability_callback=${snapshot.locationAvailable?.toString() ?: "尚未回调"}")
         appendLine("service_issue=${snapshot.issue?.safeText() ?: "无"}")
         appendLine("original_mode=${snapshot.legacyMode}")

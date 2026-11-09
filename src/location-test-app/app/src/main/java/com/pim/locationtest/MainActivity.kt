@@ -429,9 +429,13 @@ class MainActivity : Activity() {
         diagnosticStatus.text = "正在读取设备信息、权限、传感器和定位服务…"
         DeviceDiagnostics.copyToClipboard(
             activity = this,
-            onCopied = {
+            onCopied = { report ->
                 runOnUiThread {
-                    diagnosticStatus.text = "检测报告已复制。内容不含坐标或设备唯一标识，可粘贴回聊天。"
+                    diagnosticStatus.text = if (report.contains("## 传感器运行时探针")) {
+                        "检测报告已复制（传感器探针已完成）。内容不含坐标或设备唯一标识，可粘贴回聊天。"
+                    } else {
+                        "报告已复制，但传感器探针未完成；报告中会标注超时项，请稍后重试。"
+                    }
                     Toast.makeText(this, "检测报告已复制到剪贴板", Toast.LENGTH_SHORT).show()
                 }
             },

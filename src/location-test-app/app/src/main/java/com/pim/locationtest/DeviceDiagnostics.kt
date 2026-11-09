@@ -27,6 +27,11 @@ object DeviceDiagnostics {
         val lock = Any()
         val main = Handler(Looper.getMainLooper())
         val finished = AtomicBoolean(false)
+        val pendingSections = linkedSetOf(
+            "传感器运行时探针",
+            "Fused LocationAvailability",
+            "Fused lastLocation"
+        )
         var pending = 3
 
         fun finish() {
@@ -48,6 +53,7 @@ object DeviceDiagnostics {
         fun complete(title: String, value: String) {
             val allDone = synchronized(lock) {
                 supplements[title] = value
+                pendingSections.remove(title)
                 pending--
                 pending <= 0
             }
@@ -56,7 +62,9 @@ object DeviceDiagnostics {
 
         val timeout = Runnable {
             synchronized(lock) {
-                supplements.putIfAbsent("异步检测", "部分 Google Play Services 或传感器运行时探针未在时限内返回。")
+                if (pendingSections.isNotEmpty()) {
+                    supplements["异步检测"] = "等待超时，未完成：${pendingSections.joinToString(", ")}; 其余检测结果已包含。"
+                }
             }
             finish()
         }
@@ -98,12 +106,12 @@ object DeviceDiagnostics {
         }
     }
 
-    fun copyToClipboard(activity: Activity, onCopied: () -> Unit, onError: (String) -> Unit) {
+    fun copyToClipboard(activity: Activity, onCopied: (String) -> Unit, onError: (String) -> Unit) {
         collect(activity) { report ->
             try {
                 val clipboard = activity.getSystemService(Context.CLIPBOARD_SERVICE) as android.content.ClipboardManager
                 clipboard.setPrimaryClip(android.content.ClipData.newPlainText("定位设备检测报告", report))
-                onCopied()
+                onCopied(report)
             } catch (error: Exception) {
                 onError("复制失败：${error.javaClass.simpleName}")
             }
@@ -393,7 +401,7 @@ object DeviceDiagnostics {
     )
     private val PROVIDERS = listOf(LocationManager.GPS_PROVIDER, LocationManager.NETWORK_PROVIDER, LocationManager.PASSIVE_PROVIDER)
     private const val GMS_PACKAGE = "com.google.android.gms"
-    private const val DIAGNOSTIC_REPORT_VERSION = 2
+    private const val DIAGNOSTIC_REPORT_VERSION = 3
     private const val MAX_SAMPLE_LINES = 1_200
     private const val MAX_TEXT_LENGTH = 120
     private const val ASYNC_TIMEOUT_MILLIS = 8_000L

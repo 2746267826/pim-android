@@ -82,6 +82,12 @@ class DevLocationExperiment @Inject constructor(
         sessionToken++
         val now = SystemClock.elapsedRealtime()
         try {
+            // Android 36 also requires acknowledgement when we immediately stop
+            // for a disabled provider or expired session. The Activity requests
+            // precise permission before launching a location foreground service.
+            if (ContextCompat.checkSelfPermission(context, Manifest.permission.ACCESS_FINE_LOCATION) == PackageManager.PERMISSION_GRANTED) {
+                service.startForeground(NOTIFICATION_ID, notification())
+            }
             if (!store.requested) store.begin(now)
             if (!store.sameBoot || now < store.origin || now - store.origin >= LocationLabStore.MAX_SESSION_MILLIS) {
                 shutdown("上次联测已超过一小时或设备已重启，请开始新一轮", stopRequested = true, stopService = true)
@@ -92,7 +98,6 @@ class DevLocationExperiment @Inject constructor(
                 shutdown(prerequisite, stopRequested = true, stopService = true)
                 return Service.START_NOT_STICKY
             }
-            service.startForeground(NOTIFICATION_ID, notification())
             val thread = HandlerThread("PimJointLocationLab").also { it.start() }
             worker = thread
             val workHandler = Handler(thread.looper).also { handler = it }

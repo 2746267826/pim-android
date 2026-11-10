@@ -113,6 +113,10 @@ class LocationLabActivity : ComponentActivity() {
     }
 
     private fun launchService() {
+        if (!granted(Manifest.permission.ACCESS_FINE_LOCATION)) {
+            show("需要先授予精确定位权限")
+            return
+        }
         try {
             ContextCompat.startForegroundService(this, Intent(this, ForegroundLocationService::class.java).setAction(DevLocationExperiment.ACTION_START))
         } catch (error: Exception) { show("启动失败：${error.javaClass.simpleName}") }

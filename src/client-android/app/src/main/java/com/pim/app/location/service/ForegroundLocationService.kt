@@ -72,6 +72,8 @@ import kotlinx.coroutines.withContext
 
 @AndroidEntryPoint
 class ForegroundLocationService : Service() {
+    @Inject @JvmField var localExperiments: Set<@JvmSuppressWildcards LocalCollectionExperiment> = emptySet()
+    private var activeLocalExperiment: LocalCollectionExperiment? = null
     @Inject lateinit var trackingSettingsStore: TrackingSettingsStore
     @Inject lateinit var motionSignalRepository: MotionSignalRepository
     @Inject lateinit var scheduleWindowRepository: ScheduleWindowRepository
@@ -151,6 +153,11 @@ class ForegroundLocationService : Service() {
     }
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
+        for (experiment in localExperiments) {
+            val result = experiment.onStartCommand(this, intent, startId) ?: continue
+            activeLocalExperiment = experiment
+            return result
+        }
         when (intent?.action) {
             ForegroundLocationController.ACTION_PAUSE_COLLECTION -> {
                 isPausing = true
@@ -237,6 +244,13 @@ class ForegroundLocationService : Service() {
     override fun onBind(intent: Intent?): IBinder? = null
 
     override fun onDestroy() {
+        activeLocalExperiment?.let {
+            it.onDestroy(this)
+            scope.cancel()
+            publishRuntimeState(isRunning = false)
+            super.onDestroy()
+            return
+        }
         scope.cancel()
         // Foreground-notification cleanup is an ownership decision: only an
         // instance that engaged its own foreground lifecycle (an active

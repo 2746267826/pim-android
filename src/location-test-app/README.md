@@ -5,10 +5,12 @@
 ## 构建
 
 ```bash
-./gradlew :app:testDebugUnitTest :app:assembleDebug
+./gradlew :diagnostics:testDebugUnitTest :app:assembleDebug
 ```
 
 APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。当前版本为 `1.2 (3)`，报告头包含 `diagnostic_report_version=3`；包名为 `com.pim.locationtest`，可与 PIM 主应用并存安装。
+
+新的定位/惯性同步静止联测采用 PIM dev 宿主：包名 `com.pim.app.dev`，打开即进入免登录联测，详见 [PIM Dev 联测说明](../../docs/qa/location-lab.md)。公共诊断和算法代码在 `diagnostics` 模块；独立 App 仍可构建。
 
 ## 使用
 
@@ -29,3 +31,5 @@ APK 位于 `app/build/outputs/apk/debug/app-debug.apk`。当前版本为 `1.2 (3
 要求水平精度优于 30 m。Android 报告 GPS 速度时，需达到 8 km/h；只有速度字段缺失时，才允许位置推算速度作为速度来源。无论哪种来源，位置窗口至少 4 个点、跨越 8 秒、位移大于 `max(20 m, 2 × 水平精度)`、直线位移/路径长度不低于 0.55，且推算速度也达到 8 km/h，才能佐证高速；GPS 明确报告低速时，位置漂移不能覆盖它。速度精度字段会进入诊断，但不单独证明速度可信。条件持续 10 秒后进入高速档。
 
 连续 20 秒处于静止点簇、可信低速持续 10 秒或位移佐证过期 25 秒时退出。数值是实测起点，不代表最终产品阈值；本 APK 仅用于对照，不接入正式策略。
+
+位置佐证还要求相邻有效点间隔不超过 7.5 秒、至少三个移动片段且占比不低于 60%，避免单次坐标跳变触发。服务心跳保留点间确认状态，但不能用旧窗口续期位移证据。

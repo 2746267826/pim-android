@@ -163,6 +163,59 @@ class HighSpeedComparatorsTest {
         assertEquals("可信位移证据已过期", candidate.reason)
     }
 
+    @Test
+    fun heartbeatBetweenFixesDoesNotClearHighSpeedConfirmation() {
+        val candidate = CorroboratedHighSpeedTracker()
+        repeat(20) { index ->
+            val at = index * FIX_INTERVAL_MILLIS
+            candidate.observe(sample(at, index * 7.4, 2.9f, 0.4f))
+            candidate.advance(at + 1_000L)
+        }
+        assertEquals("没有新定位的心跳不能每秒清除候选", ProposedMode.Active, candidate.mode)
+    }
+
+    @Test
+    fun singlePositionJumpWithReportedHighSpeedNeverConfirmsTravel() {
+        val candidate = CorroboratedHighSpeedTracker()
+        repeat(10) { index ->
+            candidate.observe(sample(index * 5_000L, if (index < 3) 0.0 else 150.0, 20f, 1.5f))
+            assertNotEquals("单次跳点不能充当连续运动", ProposedMode.Active, candidate.mode)
+        }
+    }
+
+    @Test
+    fun oldTrackCannotRenewEvidenceOnEveryHeartbeatAfterSignalLoss() {
+        val candidate = CorroboratedHighSpeedTracker()
+        repeat(20) { index -> candidate.observe(sample(index * FIX_INTERVAL_MILLIS, index * 7.4, 2.9f, 0.4f)) }
+        assertEquals(ProposedMode.Active, candidate.mode)
+        val lastAt = 19 * FIX_INTERVAL_MILLIS
+        for (delta in 1_000L..25_000L step 1_000L) candidate.advance(lastAt + delta)
+        assertEquals("旧位置窗口不能被心跳当作新证据", ProposedMode.Inactive, candidate.mode)
+    }
+
+    @Test
+    fun precisePositionsSeparatedByLongQualityGapsAreInsufficient() {
+        val candidate = CorroboratedHighSpeedTracker()
+        repeat(15) { index ->
+            val at = index * 2_500L
+            val accuracy = if (index % 4 == 0) 5f else 120f
+            candidate.observe(sample(at, index * 25.0, 20f, 1.5f).copy(horizontalAccuracyMeters = accuracy))
+            assertNotEquals(ProposedMode.Active, candidate.mode)
+        }
+    }
+
+    @Test
+    fun staticTrackWithAlternatingAccuracyAndExtremeSpeedNeverActivates() {
+        val candidate = CorroboratedHighSpeedTracker()
+        val accuracies = listOf(20f, 140f, 35f, 25f, 100f)
+        repeat(80) { index ->
+            val at = index * 5_000L
+            candidate.observe(sample(at, (index % 3 - 1) * 2.0, 25f, 1.5f).copy(horizontalAccuracyMeters = accuracies[index % accuracies.size]))
+            candidate.advance(at + 1_000L)
+            assertNotEquals(ProposedMode.Active, candidate.mode)
+        }
+    }
+
     private fun sample(at: Long, eastMeters: Double, speed: Float?, speedAccuracy: Float?) = LocationSample(
         elapsedRealtimeMillis = at,
         latitude = BASE_LATITUDE,

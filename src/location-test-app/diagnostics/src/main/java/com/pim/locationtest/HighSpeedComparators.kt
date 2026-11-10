@@ -142,7 +142,7 @@ class CorroboratedHighSpeedTracker {
                 return mode
             }
             val currentSpeed = sample?.let(::reportedSpeed)
-            if (movement.isHighSpeedCoherent &&
+            if (sample != null && validSample(sample) && movement.isHighSpeedCoherent &&
                 (currentSpeed == null || currentSpeed >= FALLBACK_SPEED_METERS_PER_SECOND)
             ) {
                 lastMovementEvidenceAt = now
@@ -187,6 +187,16 @@ class CorroboratedHighSpeedTracker {
             reason = "位置连续 ${STATIONARY_WINDOW_MILLIS / 1_000}s 保持在静止簇内"
             candidateSince = null
             lastFastEvidenceAt = null
+            return mode
+        }
+
+        // A service heartbeat is not a new speed observation. Preserve a live
+        // confirmation between fixes, but do not bridge an expired evidence gap.
+        if (sample == null) {
+            if (mode == ProposedMode.Verifying &&
+                lastFastEvidenceAt?.let { now - it > CANDIDATE_GAP_TIMEOUT_MILLIS } == true) {
+                clearCandidate("高速速度证据已过期")
+            }
             return mode
         }
 
@@ -263,8 +273,17 @@ class CorroboratedHighSpeedTracker {
         val medianAccuracy = medianAccuracy(points)
         val speed = distance / (span / 1_000.0)
         val displacementFloor = maxOf(MIN_DISPLACEMENT_METERS, medianAccuracy * ACCURACY_DISPLACEMENT_MULTIPLIER)
+        val segments = points.zipWithNext()
+        val continuous = segments.all { (a, b) ->
+            b.elapsedRealtimeMillis - a.elapsedRealtimeMillis in 1..CANDIDATE_GAP_TIMEOUT_MILLIS
+        }
+        val movingSegments = segments.count { (a, b) ->
+            val seconds = (b.elapsedRealtimeMillis - a.elapsedRealtimeMillis) / 1_000.0
+            seconds > 0 && distanceMeters(a, b) / seconds >= TRIGGER_SPEED_METERS_PER_SECOND * 0.5
+        }
         val highSpeedCoherent = distance >= displacementFloor &&
             speed >= TRIGGER_SPEED_METERS_PER_SECOND &&
+            continuous && movingSegments >= 3 && movingSegments.toDouble() / segments.size >= 0.6 &&
             (pathLength == 0.0 || distance / pathLength >= MIN_PATH_COHERENCE)
 
         val stationary = fixes.filter { now - it.elapsedRealtimeMillis in 0..STATIONARY_WINDOW_MILLIS }

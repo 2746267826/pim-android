@@ -1,0 +1,20 @@
+<?xml version="1.0" encoding="utf-8"?>
+<manifest xmlns:android="http://schemas.android.com/apk/res/android"
+    xmlns:tools="http://schemas.android.com/tools">
+    <application android:label="PIM Dev 定位联测" tools:replace="android:label">
+        <activity android:name=".MainActivity" android:enabled="false">
+            <intent-filter tools:node="removeAll" />
+        </activity>
+        <receiver android:name=".recovery.StartupRecoveryReceiver" android:enabled="false" />
+        <receiver android:name=".keepalive.KeepAliveAlarmReceiver" android:enabled="false" />
+        <receiver android:name=".keepalive.ExactAlarmPermissionReceiver" android:enabled="false" />
+        <receiver android:name=".mute.EventMuteAlarmReceiver" android:enabled="false" />
+        <receiver android:name=".notifications.NotificationActionReceiver" android:enabled="false" />
+        <activity android:name=".location.lab.LocationLabActivity" android:exported="true">
+            <intent-filter>
+                <action android:name="android.intent.action.MAIN" />
+                <category android:name="android.intent.category.LAUNCHER" />
+            </intent-filter>
+        </activity>
+    </application>
+</manifest>

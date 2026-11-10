@@ -60,7 +60,11 @@ cd src/client-android
 - 有效 RED：`/tmp/pim-location-lab-red.log`，19 项中 9 项失败；其中三项从原候选实现复现心跳清候选、旧窗口每拍续证据、单次跳点确认运动，另外六项验证尚未实现的覆盖统计。
 - 正常实现：`/tmp/pim-location-lab-green.log`，21 项通过（13 项算法、8 项覆盖/新鲜度）。补充覆盖整批延迟投递与历史缺口后恢复。
 - 故障对照：仓外 `/tmp/pim-location-lab-mutation` 副本临时关闭候选心跳保留与覆盖时长检查，`/tmp/pim-location-lab-mutation.log` 为 21 项中 2 项实际断言失败；仓库源文件没有改为故障版本。
-- 首次全量 dev 单测：2276 项，2275 通过、1 失败、0 skipped；失败为 `NoteAutoSubmitSchedulingTest.submitWaitsBehindPreparationAndRevocationLeavesPreparationIntact` 第 65 行（异步准备 worker 状态）。保留失败，不描述成全绿；相关测试与该类重跑结果后续补充。
-- 初次 AVD：全新安装 dev 免登录进入、精确定位授权、现有前台服务运行、3 种传感器约 50 Hz；模拟定位进入 `fused` 回调。脱敏时间轴 55 行，其中定位 20 行、灭屏期间 28 行；最后一条灭屏心跳三种惯性覆盖均为 4980 ms，候选未激活。最终 APK 的停止/重启/导出验证后续补充。
+- 首次全量 dev 单测：2276 项，2275 通过、1 失败、0 skipped；失败为 `NoteAutoSubmitSchedulingTest.submitWaitsBehindPreparationAndRevocationLeavesPreparationIntact` 第 65 行（异步准备 worker 状态）。保留失败，不描述成全绿。清理 app 构建缓存后执行 `:app:assembleDev :app:testDevUnitTest --tests '*LocationLabStoreTest' --tests '*ForegroundLocationServiceTest' --tests '*NoteAutoSubmitSchedulingTest'`，81/81 通过（3 个存储、73 个服务、5 个笔记调度测试）；`/tmp/pim-location-lab-final-dev.log`。
+- 初次 AVD：全新安装 dev 免登录进入、精确定位授权、现有前台服务运行、3 种传感器约 50 Hz；模拟定位进入 `fused` 回调。脱敏时间轴 55 行，其中定位 20 行、灭屏期间 28 行；最后一条灭屏心跳三种惯性覆盖均为 4980 ms，候选未激活。
+- 最终代码 `65b925d` 的 APK：新安装免登录、运行时定位授权、锁屏继续采样、快速停止/重开、复制报告、系统 CSV 分享面板、停止后强停再打开留存记录，以及页面六项合成回归（6/6 PASS）已执行。进程 `6133` 在回桌面后被测试命令杀掉，sticky 重建为 `6293`，段号从 1 变为 2，记录约 7495 ms 心跳缺口，新段重建证据窗口。最终导出样本保留两个段号，检查无原始坐标。
+- 最终 dev APK SHA-256：`681bfed28a936a92a849fca600db48e2ba3161d6794410b54ed5916f4b055688`（21691926 字节）。AVD 同时安装 `com.pim.app` 与 `com.pim.app.dev`，未覆盖正式包；debug DEX 无联测入口与候选算法，dev DEX 两者均存在。dev merged manifest 的五个业务 receiver 均禁用。
+- 独立 App `:app:assembleDebug` 构建通过；共享测试在 PIM 工程用 `:location-diagnostics:testDebugUnitTest` 再执行也通过。普通 debug 构建通过。并行构建 debug/release 曾触发 Kotlin 编译器堆不足，改用串行与较大堆；该环境失败不记为通过。
+- PR #74 的代码提交 `65b925d`：[GitHub Actions 42851090773](https://github.com/2746267826/pim-android/actions/runs/42851090773) `CI Gate`、resolve-version、两项 Android 构建、契约 freshness/codegen 全部通过；PR release job 按条件不发版。独立 review 先审有效 RED，再审最终生命周期与 dev 隔离，未留 Critical/Important。
 - 契约 Kotlin 生成校验与上游契约新鲜度校验均通过；不涉及接口变更。
 - OPPO 真机亮屏/锁屏长时静止与真实行驶识别、停车退出：`NOT-VERIFIED`。静止测试不能证明真实行驶识别率或停车退出时延。

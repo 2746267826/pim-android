@@ -37,5 +37,5 @@
 - 契约codegen与上游freshness校验通过；不涉及接口变更。
 - AVD Android 16 API 36 正式客户端 instrumentation：`HighSpeedProductionPlatformTest` 1/1 PASS，97.781s；授权定位/通知与mock-location shell权限，不登录。实际启动生产 `ForegroundLocationService` 和 Fused GPS test provider，固定坐标+20m/s毛刺持续40s始终不Active；停止/重启采样流后注入连续25m/2.5s的32km/h轨迹并进入Active，通知显示“高速轨迹记录中”，再次停止清除高速态。输出：`src/client-android/app/build/outputs/androidTest-results/connected/debug/TEST-emulator-5580 - 16-_app-.xml`。这是 Android framework/GMS emulator模拟定位测试，不等于OPPO真实行驶。
 - 正式 debug APK 与 instrumentation APK已构建；本地release unsigned APK亦构建通过（8m11s，lintVitalRelease通过），包名 `com.pim.app`，DEX含 `HighSpeedTracker`，不含dev联测入口或候选库。release unsigned SHA-256 `b4a89ca93b13ef279b0635310fb019c2d76fbc349d793bc9925a52bb8c6189c7`。签名正式产物与更新资产由 master CI release负责。
-- 最新提交`cee2e66`仍在等待 PR CI Gate（全量单测与正式/壳应用构建）；合同生成与 freshness已通过。PR检查通过后才合并；合并后等待 master release成功并核实发出的版本资产。
+- 本地提交`17960de`包含算法与接入，`4544367`收敛边界，`cee2e66`和随后的文档提交更新测试夹具/证据。PR head的必需CI仍在运行；契约生成与freshness已通过。CI Gate通过后走正常PR合并；合并后确认master release和发布资产。
 - OPPO真实行驶识别率与停车退出时延保持 `NOT-VERIFIED`。用户确认暂不扩展保活测试；正式通知与闹钟保活代码未改。无需追加静止或保活实测。

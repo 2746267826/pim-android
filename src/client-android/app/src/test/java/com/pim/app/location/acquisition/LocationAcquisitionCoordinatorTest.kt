@@ -164,6 +164,29 @@ class LocationAcquisitionCoordinatorTest {
     }
 
     @Test
+    fun `warm-up preserves monotonic event time for high speed evidence`() = runTest {
+        createCoordinator(this)
+        prerequisiteChecker.ready()
+        val monotonic = aSnapshot.copy(elapsedRealtimeNanos = 123_456_789_000L)
+        var recorded: LocationSnapshot? = null
+        coordinator.onRecorded = { recorded = it }
+        coordinator.startAutomaticStream(automaticContext)
+        runner.waitForAcquire()
+        runner.emitCandidate(monotonic)
+        runner.complete(LocationEngineResult(
+            sessionId = runner.acquiredRequest!!.sessionId,
+            bestLocation = monotonic,
+            completion = LocationEngineCompletion.TimedOut
+        ))
+        runCurrent()
+        assertEquals(monotonic.elapsedRealtimeNanos, recorded?.elapsedRealtimeNanos)
+        assertEquals(1, operations.enqueueCount)
+        assertFalse("runtime timestamp is not an upload field", operations.enqueued.single().rawJson.contains("elapsedRealtime"))
+        coordinator.stopAutomaticStream()
+        runCurrent()
+    }
+
+    @Test
     fun `manual enqueue failure reaches Failed with errorReason and is not retried`() = runTest {
         createCoordinator(this)
         prerequisiteChecker.ready()

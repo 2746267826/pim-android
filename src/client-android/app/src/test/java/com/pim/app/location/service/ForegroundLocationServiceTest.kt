@@ -2898,7 +2898,7 @@ class ForegroundLocationServiceTest {
         assertEquals(180_000L, harness.runner.lastStreamRequest!!.intervalMillis)
 
         harness.runner.emitStreamCandidate(
-            acceptedSnapshot().copy(speedMetersPerSecond = 9f)
+            freshFastSnapshot(0L)
         )
         idleUntil { harness.coordinator.streamState.value.requestIntervalMillis == 2_500L }
 
@@ -2926,22 +2926,22 @@ class ForegroundLocationServiceTest {
         harness.runner.waitForStreamStart()
 
         val base = System.currentTimeMillis()
-        val fast = acceptedSnapshot(timeMillis = base).copy(speedMetersPerSecond = 9f)
+        val fast = freshFastSnapshot(0L, base)
         harness.runner.emitStreamCandidate(fast)
         idleUntil { harness.coordinator.streamState.value.requestIntervalMillis == 2_500L }
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 4_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(4_000L, base))
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 8_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(8_000L, base))
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 12_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(12_000L, base))
 
         idleUntil { ForegroundLocationService.runtimeState.value.highSpeedActive }
         assertTrue(ForegroundLocationService.runtimeState.value.highSpeedActive)
 
         // 高速档持续期间：新 fix 刷新已记录时长
         shadowOf(Looper.getMainLooper()).idleFor(5_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 17_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(17_000L, base))
         idleUntil {
             ForegroundLocationService.runtimeState.value.highSpeedElapsedSeconds >= 5L
         }
@@ -2961,7 +2961,7 @@ class ForegroundLocationServiceTest {
 
     @Test
     @LooperMode(LooperMode.Mode.PAUSED)
-    fun slowFixesForSixtySecondsFallBackFromHighSpeed() {
+    fun stationaryFixesFallBackFromHighSpeedWithoutWaitingSixtySeconds() {
         val harness = newHarness()
         val store = trackingStore("fg_hs_fall_", enabled = true)
         val service = buildService(harness = harness, trackingStore = store)
@@ -2978,26 +2978,25 @@ class ForegroundLocationServiceTest {
         harness.runner.waitForStreamStart()
 
         val base = System.currentTimeMillis()
-        val fast = acceptedSnapshot(timeMillis = base).copy(speedMetersPerSecond = 9f)
+        val fast = freshFastSnapshot(0L, base)
         harness.runner.emitStreamCandidate(fast)
         idleUntil { harness.coordinator.streamState.value.requestIntervalMillis == 2_500L }
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 4_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(4_000L, base))
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 8_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(8_000L, base))
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 12_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(12_000L, base))
         idleUntil { ForegroundLocationService.runtimeState.value.highSpeedActive }
 
-        // 等红灯/停车：低速样本持续 60s 后回落
-        val slow = acceptedSnapshot(timeMillis = base + 20_000L).copy(speedMetersPerSecond = 0.1f)
-        harness.runner.emitStreamCandidate(slow)
-        shadowOf(Looper.getMainLooper()).idleFor(20_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(slow.copy(timeMillis = base + 40_000L))
-        shadowOf(Looper.getMainLooper()).idleFor(20_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(slow.copy(timeMillis = base + 60_000L))
-        shadowOf(Looper.getMainLooper()).idleFor(20_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(slow.copy(timeMillis = base + 80_000L))
+        // 连续新鲜静止点簇，即使系统速度仍有毛刺也应退出。
+        repeat(8) { index ->
+            shadowOf(Looper.getMainLooper()).idleFor(2_500L, TimeUnit.MILLISECONDS)
+            harness.runner.emitStreamCandidate(freshFastSnapshot(12_000L, base).copy(
+                timeMillis = base + 14_500L + index * 2_500L,
+                elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
+            ))
+        }
 
         idleUntil { !ForegroundLocationService.runtimeState.value.highSpeedActive }
         assertFalse(ForegroundLocationService.runtimeState.value.highSpeedActive)
@@ -3023,15 +3022,15 @@ class ForegroundLocationServiceTest {
         harness.runner.waitForStreamStart()
 
         val base = System.currentTimeMillis()
-        val fast = acceptedSnapshot(timeMillis = base).copy(speedMetersPerSecond = 9f)
+        val fast = freshFastSnapshot(0L, base)
         harness.runner.emitStreamCandidate(fast)
         idleUntil { harness.coordinator.streamState.value.requestIntervalMillis == 2_500L }
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 4_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(4_000L, base))
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 8_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(8_000L, base))
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 12_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(12_000L, base))
         idleUntil { ForegroundLocationService.runtimeState.value.highSpeedActive }
 
         invokeStopCollection(service)
@@ -3062,24 +3061,51 @@ class ForegroundLocationServiceTest {
         harness.runner.waitForStreamStart()
 
         val base = System.currentTimeMillis()
-        val fast = acceptedSnapshot(timeMillis = base).copy(speedMetersPerSecond = 9f)
+        val fast = freshFastSnapshot(0L, base)
         harness.runner.emitStreamCandidate(fast)
         idleUntil { harness.coordinator.streamState.value.requestIntervalMillis == 2_500L }
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 4_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(4_000L, base))
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 8_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(8_000L, base))
         shadowOf(Looper.getMainLooper()).idleFor(4_000L, TimeUnit.MILLISECONDS)
-        harness.runner.emitStreamCandidate(fast.copy(timeMillis = base + 12_000L))
+        harness.runner.emitStreamCandidate(freshFastSnapshot(12_000L, base))
         idleUntil { ForegroundLocationService.runtimeState.value.highSpeedActive }
 
-        // GPS 失锁：不再有新 fix，仅 30s 兜底重算按 null 观察速度，
-        // 60s（含首个 30s 兜底）后回落
-        shadowOf(Looper.getMainLooper()).idleFor(30_000L, TimeUnit.MILLISECONDS)
-        shadowOf(Looper.getMainLooper()).idleFor(30_000L, TimeUnit.MILLISECONDS)
+        // GPS 失锁：没有新位移的心跳不得续期；原有30秒兜底重算时退出。
         shadowOf(Looper.getMainLooper()).idleFor(30_000L, TimeUnit.MILLISECONDS)
 
         idleUntil { !ForegroundLocationService.runtimeState.value.highSpeedActive }
+        assertFalse(ForegroundLocationService.runtimeState.value.highSpeedActive)
+        service.onDestroy()
+    }
+
+    private fun freshFastSnapshot(travelAtMillis: Long, base: Long = System.currentTimeMillis()): LocationSnapshot =
+        acceptedSnapshot(base + travelAtMillis).copy(
+            longitude = 121.4737 + travelAtMillis * 0.009 / 95_000.0,
+            speedMetersPerSecond = 9f,
+            elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
+        )
+
+    @Test
+    @LooperMode(LooperMode.Mode.PAUSED)
+    fun delayedFixesDoNotReenterCurrentHighSpeed() = kotlinx.coroutines.runBlocking {
+        val harness = newHarness()
+        val service = buildService(harness = harness, trackingStore = trackingStore("hs_delayed_", enabled = true))
+        invokeInitializeAutomaticRuntime(service)
+        shadowOf(Looper.getMainLooper()).idleFor(40_000L, TimeUnit.MILLISECONDS)
+        val at = android.os.SystemClock.elapsedRealtimeNanos()
+        repeat(8) { index ->
+            val oldFix = acceptedSnapshot(System.currentTimeMillis() - 30_000L + index * 2_500L).copy(
+                speedMetersPerSecond = 20f,
+                longitude = 121.4737 + index * 0.001,
+                elapsedRealtimeNanos = at - (30_000L - index * 2_500L) * 1_000_000L
+            )
+            requireNotNull(harness.coordinator.onRecorded).invoke(oldFix)
+        }
+        val engine = ForegroundLocationService::class.java.getDeclaredField("policyEngine").apply { isAccessible = true }
+            .get(service) as com.pim.app.location.policy.LocationPolicyEngine
+        assertEquals(com.pim.app.location.highspeed.HighSpeedMode.Inactive, engine.highSpeedTracker.mode)
         assertFalse(ForegroundLocationService.runtimeState.value.highSpeedActive)
         service.onDestroy()
     }

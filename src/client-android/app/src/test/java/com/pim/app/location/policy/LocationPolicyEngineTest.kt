@@ -13,7 +13,7 @@ class LocationPolicyEngineTest {
     private val policy = TrackingSettings.defaults().toTrackingPolicy()
     private val now = 1_000_000L
     private val schedule = ScheduleWindow("s1", "办公室", "上海市黄浦区", now - 1_000L, now + 60_000L)
-    private var fakeElapsed = 0L
+    private var fakeElapsed = 100_000L
 
     private fun makeEngine(policy: TrackingPolicy = this.policy): LocationPolicyEngine =
         LocationPolicyEngine(
@@ -21,39 +21,44 @@ class LocationPolicyEngineTest {
             highSpeedTracker = HighSpeedTracker(nowElapsedRealtimeMillis = { fakeElapsed })
         )
 
-    private fun fastSpeed(): Float = HighSpeedTracker.TRIGGER_SPEED_METERS_PER_SECOND
+    private fun fastSpeed(): Float = 9f
+
+    private var lastSyntheticAt = 100_000L
+    private var eastMeters = 0.0
 
     private fun reduce(
         engine: LocationPolicyEngine,
         speed: Float? = null,
         motion: MotionSignal = MotionSignal.Unknown,
         schedule: ScheduleWindow? = null,
-        motionObservedAtElapsed: Long? =
-            if (motion == MotionSignal.Walking || motion == MotionSignal.Still) {
-                fakeElapsed
-            } else {
-                null
-            }
-    ): PolicyDecision = engine.reduce(
-        LocationPolicyInput(
-            nowMillis = now,
-            collectionEnabled = true,
-            currentScheduleWindow = schedule,
-            motionSignal = motion,
-            speedMetersPerSecond = speed,
-            nowElapsedRealtimeMillis = fakeElapsed,
+        motionObservedAtElapsed: Long? = fakeElapsed
+    ): PolicyDecision {
+        if (speed != null) {
+            val dt = (fakeElapsed - lastSyntheticAt).coerceAtLeast(0)
+            eastMeters += dt * speed / 1000.0
+            lastSyntheticAt = fakeElapsed
+            engine.observeHighSpeedLocation(com.pim.app.location.LocationSnapshot(
+                latitude = 0.0, longitude = eastMeters / 111_194.927,
+                horizontalAccuracyMeters = 5f, provider = "fused", source = "synthetic",
+                altitudeMeters = null, speedMetersPerSecond = speed, bearingDegrees = null,
+                timeMillis = now, elapsedRealtimeNanos = fakeElapsed * 1_000_000L
+            ))
+        }
+        return engine.reduce(LocationPolicyInput(
+            nowMillis = now, collectionEnabled = true, currentScheduleWindow = schedule,
+            motionSignal = motion, nowElapsedRealtimeMillis = fakeElapsed,
             motionSignalObservedAtElapsedRealtimeMillis = motionObservedAtElapsed
-        )
-    )
+        ))
+    }
 
-    /** 通过 3 次高速样本（间隔 5s）让内置 tracker 进入 Active。 */
     private fun activateHighSpeed(engine: LocationPolicyEngine) {
-        fakeElapsed = 0L
-        reduce(engine, speed = fastSpeed())
-        fakeElapsed = 5_000L
-        reduce(engine, speed = fastSpeed())
-        fakeElapsed = 10_000L
-        reduce(engine, speed = fastSpeed())
+        fakeElapsed = 100_000L
+        lastSyntheticAt = fakeElapsed
+        eastMeters = 0.0
+        repeat(5) { index ->
+            fakeElapsed = 100_000L + index * 2_500L
+            reduce(engine, speed = fastSpeed())
+        }
         assertEquals("precondition: tracker must be active", HighSpeedMode.Active, engine.highSpeedTracker.mode)
     }
 
@@ -367,7 +372,8 @@ class LocationPolicyEngineTest {
     fun `accumulating high speed requests dense sampling`() {
         val engine = makeEngine()
 
-        fakeElapsed = 0L
+        fakeElapsed = 100_000L
+        lastSyntheticAt = fakeElapsed
         val decision = reduce(engine, speed = fastSpeed())
 
         assertEquals(LocationPolicyMode.HighSpeed, decision.mode)
@@ -379,7 +385,8 @@ class LocationPolicyEngineTest {
     @Test
     fun `inactive tracker leaves normal flow untouched`() {
         val engine = makeEngine()
-        fakeElapsed = 0L
+        fakeElapsed = 100_000L
+        lastSyntheticAt = fakeElapsed
         reduce(engine, speed = 1.5f)
 
         val decision = reduce(engine, speed = 1.5f)
@@ -394,7 +401,7 @@ class LocationPolicyEngineTest {
         activateHighSpeed(engine)
 
         val decision = engine.reduce(
-            LocationPolicyInput(nowMillis = now, collectionEnabled = false, speedMetersPerSecond = fastSpeed())
+            LocationPolicyInput(nowMillis = now, collectionEnabled = false)
         )
 
         assertEquals(LocationPolicyMode.Off, decision.mode)
@@ -408,124 +415,46 @@ class LocationPolicyEngineTest {
         val active = reduce(engine, speed = fastSpeed())
         assertTrue(active.reason.contains("持续高速"))
 
-        fakeElapsed = 10_500L
+        fakeElapsed = 110_500L
         reduce(engine, speed = 0.1f)
-        fakeElapsed = 70_500L
+        fakeElapsed = 140_500L
         val fallenBack = reduce(engine, speed = 0.1f)
         assertEquals(LocationPolicyMode.PowerSavingNormal, fallenBack.mode)
     }
 
     @Test
-    fun `walking exits dense sampling despite occasional speed spikes`() {
+    fun `walking after confirmed travel returns to motion policy`() {
         val engine = makeEngine()
         activateHighSpeed(engine)
-
-        for (atMillis in 10_000L..67_500L step 2_500) {
-            fakeElapsed = atMillis
-            val isIsolatedSpike = (atMillis - 10_000L) % 20_000L == 0L
-            val decision = reduce(
-                engine,
-                speed = if (isIsolatedSpike) 12f / 3.6f else 5.5f / 3.6f,
-                motion = MotionSignal.Walking
-            )
-            assertEquals(LocationPolicyMode.HighSpeed, decision.mode)
-        }
-
-        fakeElapsed = 69_999L
-        val stillBeforeDebounce = reduce(
-            engine,
-            speed = 5.5f / 3.6f,
-            motion = MotionSignal.Walking
-        )
-        assertEquals(LocationPolicyMode.HighSpeed, stillBeforeDebounce.mode)
-
-        fakeElapsed = 70_000L
-        val exited = reduce(
-            engine,
-            speed = 5.5f / 3.6f,
-            motion = MotionSignal.Walking
-        )
-
-        assertEquals(LocationPolicyMode.MotionObservation, exited.mode)
-        assertEquals(policy.movementIntervalMillis, exited.requestIntervalMillis)
-    }
-
-    @Test
-    fun `sustained high speed resets earlier walking corroboration`() {
-        val engine = makeEngine()
-        activateHighSpeed(engine)
-
-        for (atMillis in 10_000L..37_500L step 2_500) {
-            fakeElapsed = atMillis
-            reduce(
-                engine,
-                speed = 5.5f / 3.6f,
-                motion = MotionSignal.Walking
-            )
-        }
-        for (atMillis in 40_000L..70_000L step 2_500) {
-            fakeElapsed = atMillis
-            val decision = reduce(
-                engine,
-                speed = 30f / 3.6f,
-                motion = MotionSignal.Walking
-            )
-            assertEquals(LocationPolicyMode.HighSpeed, decision.mode)
-        }
-
-        assertEquals(HighSpeedMode.Active, engine.highSpeedTracker.mode)
-    }
-
-    @Test
-    fun `fresh walking label alone does not exit corroborated high speed`() {
-        val engine = makeEngine()
-        activateHighSpeed(engine)
-
         var decision: PolicyDecision? = null
-        for (atMillis in 10_000L..70_000L step 2_500) {
-            fakeElapsed = atMillis
-            decision = reduce(engine, speed = 30f / 3.6f, motion = MotionSignal.Walking)
+        repeat(25) { index ->
+            fakeElapsed = 112_500L + index * 2_500L
+            decision = reduce(engine, speed = 1.2f, motion = MotionSignal.Walking)
         }
-
-        assertEquals(LocationPolicyMode.HighSpeed, decision?.mode)
-        assertEquals(HighSpeedMode.Active, engine.highSpeedTracker.mode)
+        assertEquals(LocationPolicyMode.MotionObservation, decision?.mode)
     }
 
     @Test
-    fun `sparse low speed glides do not mask sustained high speed`() {
-        val engine = makeEngine()
-        activateHighSpeed(engine)
-
-        var decision: PolicyDecision? = null
-        for (atMillis in 10_000L..70_000L step 2_500L) {
-            fakeElapsed = atMillis
-            val isSparseLowGlide = (atMillis - 10_000L) % 10_000L == 0L
-            decision = reduce(
-                engine,
-                speed = if (isSparseLowGlide) 6.5f / 3.6f else 30f / 3.6f,
-                motion = MotionSignal.Walking
-            )
+    fun `walking or still labels cannot veto coherent uniform travel`() {
+        for (label in listOf(MotionSignal.Still, MotionSignal.Walking)) {
+            val engine = makeEngine()
+            activateHighSpeed(engine)
+            repeat(25) { index ->
+                fakeElapsed = 112_500L + index * 2_500L
+                val decision = reduce(engine, speed = 9f, motion = label)
+                assertEquals(LocationPolicyMode.HighSpeed, decision.mode)
+                assertEquals(HighSpeedMode.Active, engine.highSpeedTracker.mode)
+            }
         }
-
-        assertEquals(LocationPolicyMode.HighSpeed, decision?.mode)
-        assertEquals(HighSpeedMode.Active, engine.highSpeedTracker.mode)
     }
 
     @Test
-    fun `stale walking label cannot exit corroborated high speed`() {
+    fun `heartbeats cannot create or renew high speed evidence`() {
         val engine = makeEngine()
         activateHighSpeed(engine)
-
-        repeat(2) { index ->
-            fakeElapsed = if (index == 0) 10_000L else 70_000L
-            val decision = reduce(
-                engine,
-                speed = 12f / 3.6f,
-                motion = MotionSignal.Walking,
-                motionObservedAtElapsed = 0L
-            )
-            assertEquals(LocationPolicyMode.HighSpeed, decision.mode)
-        }
-        assertEquals(HighSpeedMode.Active, engine.highSpeedTracker.mode)
+        fakeElapsed += 25_000
+        val decision = reduce(engine)
+        assertEquals(HighSpeedMode.Inactive, engine.highSpeedTracker.mode)
+        assertEquals(LocationPolicyMode.PowerSavingNormal, decision.mode)
     }
 }

@@ -27,10 +27,7 @@ class LocationPolicyEngine(
             )
         }
 
-        highSpeedTracker.observe(
-            speedMetersPerSecond = input.speedMetersPerSecond,
-            freshWalkingOrStill = input.hasFreshWalkingOrStillEvidence()
-        )
+        highSpeedTracker.advance()
 
         // 优先级：高速档 > 常规策略档 > 日程降频
         if (highSpeedTracker.mode != HighSpeedMode.Inactive) {
@@ -102,6 +99,11 @@ class LocationPolicyEngine(
         }
     }
 
+    /** Feed each new location callback before the policy loop can coalesce wakeups. */
+    fun observeHighSpeedLocation(location: com.pim.app.location.LocationSnapshot) {
+        highSpeedTracker.observeLocation(location)
+    }
+
     private fun normalDecision(nowMillis: Long, reason: String): PolicyDecision =
         decision(
             mode = LocationPolicyMode.PowerSavingNormal,
@@ -163,16 +165,6 @@ class LocationPolicyEngine(
         MotionSignal.Still -> false
     }
 
-    private fun LocationPolicyInput.hasFreshWalkingOrStillEvidence(): Boolean {
-        if (motionSignal != MotionSignal.Walking && motionSignal != MotionSignal.Still) {
-            return false
-        }
-        val nowElapsed = nowElapsedRealtimeMillis ?: return false
-        val observedAt = motionSignalObservedAtElapsedRealtimeMillis ?: return false
-        val age = nowElapsed - observedAt
-        return age in 0..MOTION_SIGNAL_MAX_AGE_MILLIS
-    }
-
     private data class ScheduleKey(
         val id: String,
         val startsAtMillis: Long,
@@ -187,9 +179,4 @@ class LocationPolicyEngine(
         }
     }
 
-    private companion object {
-        // Sensor windows are emitted about every three seconds. Ten seconds tolerates
-        // scheduler jitter while ensuring an unchanged, stale enum cannot drive an exit.
-        const val MOTION_SIGNAL_MAX_AGE_MILLIS = 10_000L
-    }
 }

@@ -828,7 +828,8 @@ class LocationAcquisitionCoordinator @Inject constructor(
         scheduleLowFrequency = context?.scheduleLowFrequency ?: false,
         motionSignal = context?.motionSignal ?: "Unknown",
         speedMetersPerSecond = speedMetersPerSecond,
-        bearingDegrees = bearingDegrees
+        bearingDegrees = bearingDegrees,
+        elapsedRealtimeNanos = elapsedRealtimeNanos
     )
 
     private fun RawLocationFix.toSnapshot(): LocationSnapshot = LocationSnapshot(
@@ -840,7 +841,8 @@ class LocationAcquisitionCoordinator @Inject constructor(
         altitudeMeters = altitudeMeters,
         speedMetersPerSecond = speedMetersPerSecond,
         bearingDegrees = bearingDegrees,
-        timeMillis = recordedAtMillis
+        timeMillis = recordedAtMillis,
+        elapsedRealtimeNanos = elapsedRealtimeNanos
     )
 
     private companion object {

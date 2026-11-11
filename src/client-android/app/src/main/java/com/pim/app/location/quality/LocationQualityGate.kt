@@ -13,7 +13,9 @@ data class RawLocationFix(
     val scheduleLowFrequency: Boolean,
     val motionSignal: String,
     val speedMetersPerSecond: Float? = null,
-    val bearingDegrees: Float? = null
+    val bearingDegrees: Float? = null,
+    /** Runtime-only event time; deliberately omitted from LocationPointPayload. */
+    val elapsedRealtimeNanos: Long? = null
 )
 
 data class QualityAcceptedLocation(

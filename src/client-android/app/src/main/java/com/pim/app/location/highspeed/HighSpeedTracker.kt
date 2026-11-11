@@ -1,244 +1,276 @@
 package com.pim.app.location.highspeed
 
-/** 高速轨迹模式状态：未激活 / 触发累计中（密集采样确认）/ 高速档生效。 */
-enum class HighSpeedMode {
-    Inactive,
-    Accumulating,
-    Active
-}
+import com.pim.app.location.LocationSnapshot
+import kotlin.math.atan2
+import kotlin.math.cos
+import kotlin.math.sin
+import kotlin.math.sqrt
+
+/** High-speed tracking mode with fresh GPS-speed and continuous-position corroboration. */
+enum class HighSpeedMode { Inactive, Accumulating, Active }
 
 /**
- * 高速轨迹模式状态机（设计文档 PR#63 §2.1）：纯逻辑，不依赖 Android API，可单测。
- *
- * - 未激活：GPS speed ≥ 8 km/h 持续 10s → [HighSpeedMode.Active]；期间为
- *   [HighSpeedMode.Accumulating]（策略引擎借此切换到 2.5s 密集采样以便快速确认）。
- *   短暂的低速毛刺可被 3s 容差吸收；持续低速仍会重置触发累计。
- * - 激活：speed < 7 km/h 或 speed 为 null 持续 60s → 回落 [HighSpeedMode.Inactive]。
- *   新鲜且连续的 Walking/Still 证据持续 60s，且其中大部分时段的 GPS 速度
- *   低于 8 km/h 时，也可回落；偶发高速度毛刺允许通过，但单一低速点或持续
- *   高速不能被 AR 的 Walking 误标覆盖。10s 的可靠高速会清空更早的步行证据，
- *   避免“先步行、后上高速”仍被旧低速样本带出密集档。
- * - 速度来源为 GPS 多普勒速度 [android.location.Location.getSpeed]，不依赖运动检测。
- *
- * 时钟使用单调时钟（elapsedRealtime），避免墙钟回拨/调整破坏防抖累计。
+ * Consumes new, fresh location events. Timer ticks only expire evidence and can
+ * never replay a cached speed or renew a movement window. Coordinates are kept
+ * in memory only for this short corroboration window.
  */
 class HighSpeedTracker(
-    private val triggerSpeedMetersPerSecond: Float = TRIGGER_SPEED_METERS_PER_SECOND,
-    private val fallbackSpeedMetersPerSecond: Float = FALLBACK_SPEED_METERS_PER_SECOND,
-    private val triggerDebounceMillis: Long = TRIGGER_DEBOUNCE_MILLIS,
-    private val fallbackDebounceMillis: Long = FALLBACK_DEBOUNCE_MILLIS,
     private val nowElapsedRealtimeMillis: () -> Long
 ) {
     var mode: HighSpeedMode = HighSpeedMode.Inactive
         private set
-
-    /** 进入高速档的单调时钟时刻；未激活时为 null。 */
     var activeSinceElapsedRealtimeMillis: Long? = null
         private set
 
-    private var fastStreakStartAtMillis: Long? = null
-    private var lowSpeedSinceMillis: Long? = null
-    private var slowStreakStartAtMillis: Long? = null
-    private var reliableHighSpeedSinceMillis: Long? = null
-    private var walkingEvidenceSinceMillis: Long? = null
-    private var lastWalkingEvidenceAtMillis: Long? = null
-    private var walkingCorroborationSinceMillis: Long? = null
-    private var lastWalkingLowSpeedAtMillis: Long? = null
-    private var walkingObservationCount: Long = 0L
-    private var walkingLowSpeedObservationCount: Long = 0L
+    private data class TimedFix(val location: LocationSnapshot, val elapsedMillis: Long)
+    private val fixes = ArrayDeque<TimedFix>()
+    private var lastFixAtMillis: Long? = null
+    private var candidateSinceMillis: Long? = null
+    private var lastFastEvidenceAtMillis: Long? = null
+    private var lastMovementEvidenceAtMillis: Long? = null
+    private var slowSinceMillis: Long? = null
+    private var candidateRetryAtMillis: Long = 0L
 
-    fun observe(
-        speedMetersPerSecond: Float?,
-        freshWalkingOrStill: Boolean = false
-    ) {
+    fun observeLocation(location: LocationSnapshot) {
+        val eventNanos = location.elapsedRealtimeNanos ?: return
+        if (eventNanos < 0L || !location.horizontalAccuracyMeters.isValidAccuracy() ||
+            !location.latitude.isFinite() || !location.longitude.isFinite() ||
+            location.latitude !in -90.0..90.0 || location.longitude !in -180.0..180.0) return
+        val eventAt = eventNanos / NANOS_PER_MILLI
         val now = nowElapsedRealtimeMillis()
+        if (now - eventAt !in 0..MAX_FIX_AGE_MILLIS || lastFixAtMillis?.let { eventAt <= it } == true) return
+
+        if (lastFixAtMillis?.let { eventAt - it > CANDIDATE_GAP_TIMEOUT_MILLIS } == true) {
+            fixes.clear()
+            resetCandidate()
+            slowSinceMillis = null
+        }
+        if (mode == HighSpeedMode.Active &&
+            lastMovementEvidenceAtMillis?.let { now - it >= ACTIVE_EVIDENCE_TIMEOUT_MILLIS } == true) {
+            exitActive()
+        }
+        lastFixAtMillis = eventAt
+        fixes.addLast(TimedFix(location, eventAt))
+        pruneFixes(now)
+        val movement = movementEvidence(now)
+        val speed = location.speedMetersPerSecond?.takeIf { it.isFinite() && it >= 0f }
+        val fastSpeed = speed != null && speed >= TRIGGER_SPEED_METERS_PER_SECOND
+        val positionOnlyFast = location.speedMetersPerSecond == null && movement.isHighSpeedCoherent
+
+        if (mode == HighSpeedMode.Active) {
+            if (movement.isStationary) {
+                exitActive()
+                return
+            }
+            if (movement.isHighSpeedCoherent &&
+                (location.speedMetersPerSecond == null || speed?.let { it >= FALLBACK_SPEED_METERS_PER_SECOND } == true)) {
+                lastMovementEvidenceAtMillis = eventAt
+            }
+            val lowSpeed = if (speed != null) {
+                speed < FALLBACK_SPEED_METERS_PER_SECOND && !movement.isHighSpeedCoherent
+            } else {
+                movement.derivedSpeedMetersPerSecond?.let { it < FALLBACK_SPEED_METERS_PER_SECOND } == true
+            }
+            if (lowSpeed) {
+                val start = slowSinceMillis ?: now
+                slowSinceMillis = start
+                if (now - start >= LOW_SPEED_EXIT_MILLIS) {
+                    exitActive()
+                    return
+                }
+            } else {
+                slowSinceMillis = null
+            }
+            if (lastMovementEvidenceAtMillis?.let { now - it >= ACTIVE_EVIDENCE_TIMEOUT_MILLIS } == true) {
+                exitActive()
+            }
+            return
+        }
+
+        if (movement.isStationary) {
+            resetCandidate()
+            mode = HighSpeedMode.Inactive
+            return
+        }
+        if (!fastSpeed && !positionOnlyFast) {
+            resetCandidate()
+            mode = HighSpeedMode.Inactive
+            return
+        }
+        if (now < candidateRetryAtMillis && !movement.isHighSpeedCoherent) {
+            mode = HighSpeedMode.Inactive
+            return
+        }
+
+        val previousFast = lastFastEvidenceAtMillis
+        if (candidateSinceMillis == null ||
+            previousFast?.let { eventAt - it > CANDIDATE_GAP_TIMEOUT_MILLIS } == true
+        ) {
+            candidateSinceMillis = eventAt
+        }
+        lastFastEvidenceAtMillis = eventAt
+        val started = candidateSinceMillis ?: eventAt
+        if (movement.isHighSpeedCoherent && eventAt - started >= ENTRY_CONFIRMATION_MILLIS) {
+            mode = HighSpeedMode.Active
+            activeSinceElapsedRealtimeMillis = eventAt
+            lastMovementEvidenceAtMillis = eventAt
+            slowSinceMillis = null
+            candidateRetryAtMillis = 0L
+        } else if (eventAt - started >= CANDIDATE_MAX_DURATION_MILLIS && !movement.isHighSpeedCoherent) {
+            resetCandidate()
+            candidateRetryAtMillis = now + CANDIDATE_RETRY_DELAY_MILLIS
+            mode = HighSpeedMode.Inactive
+        } else {
+            mode = HighSpeedMode.Accumulating
+        }
+    }
+
+    /** Advance debounce/expiry using current time without treating time as a fix. */
+    fun advance() {
+        val now = nowElapsedRealtimeMillis()
+        pruneFixes(now)
+        if (lastFixAtMillis?.let { now - it > MAX_FIX_AGE_MILLIS } == true) {
+            fixes.clear()
+        }
+        if (lastFixAtMillis?.let { now - it > CANDIDATE_GAP_TIMEOUT_MILLIS } == true) {
+            slowSinceMillis = null
+        }
         when (mode) {
-            HighSpeedMode.Active -> observeWhileActive(
-                speedMetersPerSecond = speedMetersPerSecond,
-                freshWalkingOrStill = freshWalkingOrStill,
-                now = now
-            )
-            else -> observeWhileIdle(speedMetersPerSecond, now)
+            HighSpeedMode.Inactive -> Unit
+            HighSpeedMode.Accumulating -> {
+                if (lastFastEvidenceAtMillis?.let { now - it > CANDIDATE_GAP_TIMEOUT_MILLIS } == true) {
+                    resetCandidate()
+                    mode = HighSpeedMode.Inactive
+                }
+            }
+            HighSpeedMode.Active -> {
+                if (lastMovementEvidenceAtMillis?.let { now - it >= ACTIVE_EVIDENCE_TIMEOUT_MILLIS } == true) {
+                    exitActive()
+                }
+            }
         }
     }
 
     fun reset() {
         mode = HighSpeedMode.Inactive
         activeSinceElapsedRealtimeMillis = null
-        fastStreakStartAtMillis = null
-        lowSpeedSinceMillis = null
-        slowStreakStartAtMillis = null
-        reliableHighSpeedSinceMillis = null
-        walkingEvidenceSinceMillis = null
-        lastWalkingEvidenceAtMillis = null
-        walkingCorroborationSinceMillis = null
-        lastWalkingLowSpeedAtMillis = null
-        walkingObservationCount = 0L
-        walkingLowSpeedObservationCount = 0L
+        lastFixAtMillis = null
+        fixes.clear()
+        resetCandidate()
+        lastMovementEvidenceAtMillis = null
+        slowSinceMillis = null
+        candidateRetryAtMillis = 0L
     }
 
-    private fun observeWhileIdle(speedMetersPerSecond: Float?, now: Long) {
-        if (speedMetersPerSecond != null && speedMetersPerSecond >= triggerSpeedMetersPerSecond) {
-            val lowSince = lowSpeedSinceMillis
-            val lowSpeedPersisted = lowSince != null &&
-                now - lowSince >= LOW_SPEED_TOLERANCE_MILLIS
-            val start = if (lowSpeedPersisted) {
-                now
-            } else {
-                fastStreakStartAtMillis ?: now
-            }
-            fastStreakStartAtMillis = start
-            lowSpeedSinceMillis = null
-            if (now - start >= triggerDebounceMillis) {
-                enterActive(now)
-            } else {
-                mode = HighSpeedMode.Accumulating
-            }
-        } else {
-            if (fastStreakStartAtMillis == null) {
-                lowSpeedSinceMillis = null
-                return
-            }
-            val lowSince = lowSpeedSinceMillis ?: now
-            lowSpeedSinceMillis = lowSince
-            if (now - lowSince >= LOW_SPEED_TOLERANCE_MILLIS) {
-                fastStreakStartAtMillis = null
-                lowSpeedSinceMillis = null
-                if (mode == HighSpeedMode.Accumulating) {
-                    mode = HighSpeedMode.Inactive
-                }
-            }
+    private fun movementEvidence(now: Long): MovementEvidence {
+        val points = fixes.filter { now - it.elapsedMillis in 0..POSITION_WINDOW_MILLIS }
+        val segments = points.zipWithNext()
+        if (points.size < MIN_EVIDENCE_FIXES || segments.isEmpty()) return MovementEvidence.EMPTY.copy(fixCount = points.size)
+        val first = points.first()
+        val last = points.last()
+        val span = last.elapsedMillis - first.elapsedMillis
+        if (span < MIN_EVIDENCE_SPAN_MILLIS) return MovementEvidence.EMPTY.copy(fixCount = points.size)
+
+        val net = distanceMeters(first.location, last.location)
+        val path = segments.sumOf { (a, b) -> distanceMeters(a.location, b.location) }
+        val derivedSpeed = net / (span / 1000.0)
+        val floor = maxOf(MIN_DISPLACEMENT_METERS, medianAccuracy(points) * ACCURACY_DISPLACEMENT_MULTIPLIER)
+        val continuous = segments.all { (a, b) ->
+            b.elapsedMillis - a.elapsedMillis in 1..CANDIDATE_GAP_TIMEOUT_MILLIS
         }
+        val movingSegments = segments.count { (a, b) ->
+            val seconds = (b.elapsedMillis - a.elapsedMillis) / 1000.0
+            seconds > 0.0 && distanceMeters(a.location, b.location) / seconds >=
+                TRIGGER_SPEED_METERS_PER_SECOND * MIN_SEGMENT_SPEED_RATIO
+        }
+        val coherent = continuous && net >= floor && derivedSpeed >= TRIGGER_SPEED_METERS_PER_SECOND &&
+            movingSegments >= MIN_MOVING_SEGMENTS && movingSegments.toDouble() / segments.size >= MIN_MOVING_SEGMENT_RATIO &&
+            (path == 0.0 || net / path >= MIN_PATH_COHERENCE)
+
+        val recent = fixes.filter { now - it.elapsedMillis in 0..STATIONARY_WINDOW_MILLIS }
+        val recentSpan = recent.lastOrNull()?.elapsedMillis?.minus(recent.firstOrNull()?.elapsedMillis ?: 0L) ?: 0L
+        val radiusLimit = maxOf(MIN_STATIONARY_RADIUS_METERS, medianAccuracy(recent) * STATIONARY_ACCURACY_MULTIPLIER)
+        val radius = recent.firstOrNull()?.let { anchor ->
+            recent.maxOfOrNull { distanceMeters(anchor.location, it.location) } ?: Double.MAX_VALUE
+        } ?: Double.MAX_VALUE
+        val recentNet = if (recent.size >= 2) distanceMeters(recent.first().location, recent.last().location) else 0.0
+        val recentTravelSpeed = if (recentSpan > 0L) recentNet / (recentSpan / 1000.0) else 0.0
+        val stationary = recent.size >= MIN_STATIONARY_FIXES && recentSpan >= STATIONARY_MIN_SPAN_MILLIS &&
+            radius <= radiusLimit && recentTravelSpeed < FALLBACK_SPEED_METERS_PER_SECOND
+        return MovementEvidence(coherent, stationary, derivedSpeed, points.size)
     }
 
-    private fun observeWhileActive(
-        speedMetersPerSecond: Float?,
-        freshWalkingOrStill: Boolean,
-        now: Long
-    ) {
-        val lowSpeedEvidence = speedMetersPerSecond == null ||
-            speedMetersPerSecond < fallbackSpeedMetersPerSecond
-        if (lowSpeedEvidence) {
-            val start = slowStreakStartAtMillis ?: now
-            slowStreakStartAtMillis = start
-            if (now - start >= fallbackDebounceMillis) {
-                exitActive()
-                return
-            }
-        } else {
-            slowStreakStartAtMillis = null
-        }
-
-        if (speedMetersPerSecond != null &&
-            speedMetersPerSecond >= triggerSpeedMetersPerSecond
-        ) {
-            val highSpeedStart = reliableHighSpeedSinceMillis ?: now
-            reliableHighSpeedSinceMillis = highSpeedStart
-            if (now - highSpeedStart >= RELIABLE_HIGH_SPEED_RESET_MILLIS) {
-                resetWalkingEvidence()
-            }
-        } else {
-            reliableHighSpeedSinceMillis = null
-        }
-
-        if (freshWalkingOrStill) {
-            val lastMotion = lastWalkingEvidenceAtMillis
-            if (lastMotion != null && now - lastMotion > MOTION_EVIDENCE_GAP_TOLERANCE_MILLIS) {
-                resetWalkingEvidence()
-            }
-            val walkingStart = walkingEvidenceSinceMillis ?: now
-            walkingEvidenceSinceMillis = walkingStart
-            lastWalkingEvidenceAtMillis = now
-
-            val walkingSpeedCorroborates = speedMetersPerSecond != null &&
-                speedMetersPerSecond < triggerSpeedMetersPerSecond
-            walkingObservationCount += 1L
-            if (walkingSpeedCorroborates) {
-                walkingLowSpeedObservationCount += 1L
-                val priorLowSpeedAt = lastWalkingLowSpeedAtMillis
-                val corroborationStart = walkingCorroborationSinceMillis
-                if (priorLowSpeedAt != null &&
-                    now - priorLowSpeedAt > MOTION_EVIDENCE_GAP_TOLERANCE_MILLIS
-                ) {
-                    walkingCorroborationSinceMillis = now
-                } else if (corroborationStart == null) {
-                    walkingCorroborationSinceMillis = now
-                }
-                lastWalkingLowSpeedAtMillis = now
-            } else {
-                val lastLowSpeedAt = lastWalkingLowSpeedAtMillis
-                if (lastLowSpeedAt == null ||
-                    now - lastLowSpeedAt > MOTION_EVIDENCE_GAP_TOLERANCE_MILLIS
-                ) {
-                    walkingCorroborationSinceMillis = null
-                    lastWalkingLowSpeedAtMillis = null
-                }
-            }
-
-            val corroborationStart = walkingCorroborationSinceMillis
-            val mostlyLowSpeedEvidence =
-                walkingLowSpeedObservationCount * 3L >= walkingObservationCount * 2L
-            if (now - walkingStart >= fallbackDebounceMillis &&
-                corroborationStart != null &&
-                now - corroborationStart >= WALKING_MIN_SUB_TRIGGER_EVIDENCE_MILLIS &&
-                mostlyLowSpeedEvidence
-            ) {
-                exitActive()
-            }
-        } else {
-            resetWalkingEvidence()
-        }
+    private fun medianAccuracy(points: List<TimedFix>): Double {
+        val values = points.mapNotNull { it.location.horizontalAccuracyMeters?.toDouble() }.sorted()
+        return values.getOrNull(values.size / 2) ?: 0.0
     }
 
-    private fun resetWalkingEvidence() {
-        walkingEvidenceSinceMillis = null
-        lastWalkingEvidenceAtMillis = null
-        walkingCorroborationSinceMillis = null
-        lastWalkingLowSpeedAtMillis = null
-        walkingObservationCount = 0L
-        walkingLowSpeedObservationCount = 0L
+    private fun pruneFixes(now: Long) {
+        while (fixes.firstOrNull()?.let { now - it.elapsedMillis > POSITION_WINDOW_MILLIS } == true) fixes.removeFirst()
     }
 
-    private fun enterActive(now: Long) {
-        mode = HighSpeedMode.Active
-        activeSinceElapsedRealtimeMillis = now
-        fastStreakStartAtMillis = null
-        lowSpeedSinceMillis = null
-        slowStreakStartAtMillis = null
-        reliableHighSpeedSinceMillis = null
-        walkingEvidenceSinceMillis = null
-        lastWalkingEvidenceAtMillis = null
-        walkingCorroborationSinceMillis = null
-        lastWalkingLowSpeedAtMillis = null
-        walkingObservationCount = 0L
-        walkingLowSpeedObservationCount = 0L
+    private fun resetCandidate() {
+        candidateSinceMillis = null
+        lastFastEvidenceAtMillis = null
     }
 
     private fun exitActive() {
         mode = HighSpeedMode.Inactive
         activeSinceElapsedRealtimeMillis = null
-        fastStreakStartAtMillis = null
-        lowSpeedSinceMillis = null
-        slowStreakStartAtMillis = null
-        reliableHighSpeedSinceMillis = null
-        walkingEvidenceSinceMillis = null
-        lastWalkingEvidenceAtMillis = null
-        walkingCorroborationSinceMillis = null
-        lastWalkingLowSpeedAtMillis = null
-        walkingObservationCount = 0L
-        walkingLowSpeedObservationCount = 0L
+        resetCandidate()
+        lastMovementEvidenceAtMillis = null
+        slowSinceMillis = null
+    }
+
+    private fun Float?.isValidAccuracy() = this != null && isFinite() && this >= 0f && this < MAX_HORIZONTAL_ACCURACY_METERS
+
+    private fun distanceMeters(a: LocationSnapshot, b: LocationSnapshot): Double {
+        val dLat = Math.toRadians(b.latitude - a.latitude)
+        val dLon = Math.toRadians(b.longitude - a.longitude)
+        val lat1 = Math.toRadians(a.latitude)
+        val lat2 = Math.toRadians(b.latitude)
+        val h = sin(dLat / 2).let { it * it } + cos(lat1) * cos(lat2) * sin(dLon / 2).let { it * it }
+        val clamped = h.coerceIn(0.0, 1.0)
+        return EARTH_RADIUS_METERS * 2 * atan2(sqrt(clamped), sqrt(1 - clamped))
+    }
+
+    private data class MovementEvidence(
+        val isHighSpeedCoherent: Boolean,
+        val isStationary: Boolean,
+        val derivedSpeedMetersPerSecond: Double?,
+        val fixCount: Int
+    ) {
+        companion object { val EMPTY = MovementEvidence(false, false, null, 0) }
     }
 
     companion object {
         const val TRIGGER_SPEED_KMH = 8f
         const val FALLBACK_SPEED_KMH = 7f
-        const val TRIGGER_DEBOUNCE_MILLIS = 10_000L
-        const val FALLBACK_DEBOUNCE_MILLIS = 60_000L
-        const val LOW_SPEED_TOLERANCE_MILLIS = 3_000L
-        const val MOTION_EVIDENCE_GAP_TOLERANCE_MILLIS = 10_000L
-        const val RELIABLE_HIGH_SPEED_RESET_MILLIS = 10_000L
-        const val WALKING_MIN_SUB_TRIGGER_EVIDENCE_MILLIS = 30_000L
         const val TRIGGER_SPEED_METERS_PER_SECOND = TRIGGER_SPEED_KMH / 3.6f
         const val FALLBACK_SPEED_METERS_PER_SECOND = FALLBACK_SPEED_KMH / 3.6f
+        const val MAX_HORIZONTAL_ACCURACY_METERS = com.pim.app.location.quality.LocationQualityGate.MAX_ACCURACY_METERS_EXCLUSIVE
+        const val MAX_FIX_AGE_MILLIS = 5_000L
+        const val CANDIDATE_GAP_TIMEOUT_MILLIS = 7_500L
+        const val ACTIVE_EVIDENCE_TIMEOUT_MILLIS = 25_000L
+        const val ENTRY_CONFIRMATION_MILLIS = 10_000L
+        const val CANDIDATE_MAX_DURATION_MILLIS = 30_000L
+        const val CANDIDATE_RETRY_DELAY_MILLIS = 30_000L
+        const val LOW_SPEED_EXIT_MILLIS = 10_000L
+        const val POSITION_WINDOW_MILLIS = 30_000L
+        const val STATIONARY_WINDOW_MILLIS = 20_000L
+        const val STATIONARY_MIN_SPAN_MILLIS = 15_000L
+        const val MIN_EVIDENCE_SPAN_MILLIS = 8_000L
+        const val MIN_EVIDENCE_FIXES = 4
+        const val MIN_STATIONARY_FIXES = 5
+        const val MIN_DISPLACEMENT_METERS = 20.0
+        const val MIN_STATIONARY_RADIUS_METERS = 15.0
+        const val ACCURACY_DISPLACEMENT_MULTIPLIER = 2.0
+        const val MIN_PATH_COHERENCE = 0.55
+        const val MIN_MOVING_SEGMENTS = 3
+        const val MIN_MOVING_SEGMENT_RATIO = 0.6
+        const val MIN_SEGMENT_SPEED_RATIO = 0.5
+        const val STATIONARY_ACCURACY_MULTIPLIER = 1.5
+        const val NANOS_PER_MILLI = 1_000_000L
+        const val EARTH_RADIUS_METERS = 6_371_000.0
     }
 }

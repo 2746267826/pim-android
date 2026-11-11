@@ -78,7 +78,5 @@ data class LocationPolicyInput(
     val nowMillis: Long,
     val collectionEnabled: Boolean,
     val currentScheduleWindow: ScheduleWindow? = null,
-    val motionSignal: MotionSignal = MotionSignal.Unknown,
-    val nowElapsedRealtimeMillis: Long? = null,
-    val motionSignalObservedAtElapsedRealtimeMillis: Long? = null
+    val motionSignal: MotionSignal = MotionSignal.Unknown
 )

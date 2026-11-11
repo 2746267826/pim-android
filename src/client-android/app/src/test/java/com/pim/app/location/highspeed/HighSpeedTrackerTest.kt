@@ -6,7 +6,7 @@ import org.junit.Test
 
 class HighSpeedTrackerTest {
     private var now = 100_000L
-    private val tracker = HighSpeedTracker { now }
+    private val tracker = HighSpeedTracker(nowElapsedRealtimeMillis = { now })
     private fun fix(at: Long, east: Double, speed: Float? = 10f, accuracy: Float = 5f) = LocationSnapshot(
         latitude = 0.0, longitude = east / 111_194.927, horizontalAccuracyMeters = accuracy,
         provider = "fused", source = "synthetic", altitudeMeters = null, speedMetersPerSecond = speed,
@@ -129,6 +129,32 @@ class HighSpeedTrackerTest {
             tracker.observeLocation(fix(now, index * 25.0).copy(latitude = Double.NaN))
             assertNotEquals(HighSpeedMode.Active, tracker.mode)
         }
+    }
+
+    @Test fun missingMonotonicTimestampReportsAndRateLimitsDiagnostics() {
+        val reportedCounts = mutableListOf<Int>()
+        val diagnosticTracker = HighSpeedTracker(
+            nowElapsedRealtimeMillis = { now },
+            onMissingElapsedRealtimeFixes = reportedCounts::add
+        )
+
+        repeat(3) {
+            diagnosticTracker.observeLocation(fix(now, 0.0).copy(elapsedRealtimeNanos = null))
+        }
+        assertEquals(listOf(1), reportedCounts)
+
+        now += 60_000L
+        diagnosticTracker.observeLocation(fix(now, 0.0).copy(elapsedRealtimeNanos = null))
+        assertEquals(listOf(1, 3), reportedCounts)
+    }
+
+    @Test fun evenAccuracySampleUsesMedianOfTheMiddlePair() {
+        val accuracies = listOf(1f, 5f, 20f, 30f, 20f, 5f)
+        repeat(accuracies.size) { index ->
+            feed(100_000L + index * 2_500L, index * 6.0, accuracy = accuracies[index])
+        }
+
+        assertEquals(HighSpeedMode.Active, tracker.mode)
     }
 
     @Test fun activeEvidenceExpiresExactlyAtTwentyFiveSeconds() {

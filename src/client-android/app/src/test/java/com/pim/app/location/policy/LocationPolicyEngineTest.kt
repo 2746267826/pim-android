@@ -30,8 +30,7 @@ class LocationPolicyEngineTest {
         engine: LocationPolicyEngine,
         speed: Float? = null,
         motion: MotionSignal = MotionSignal.Unknown,
-        schedule: ScheduleWindow? = null,
-        motionObservedAtElapsed: Long? = fakeElapsed
+        schedule: ScheduleWindow? = null
     ): PolicyDecision {
         if (speed != null) {
             val dt = (fakeElapsed - lastSyntheticAt).coerceAtLeast(0)
@@ -46,8 +45,7 @@ class LocationPolicyEngineTest {
         }
         return engine.reduce(LocationPolicyInput(
             nowMillis = now, collectionEnabled = true, currentScheduleWindow = schedule,
-            motionSignal = motion, nowElapsedRealtimeMillis = fakeElapsed,
-            motionSignalObservedAtElapsedRealtimeMillis = motionObservedAtElapsed
+            motionSignal = motion
         ))
     }
 

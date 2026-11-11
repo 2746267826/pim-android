@@ -17,6 +17,7 @@ import com.google.android.gms.location.Priority
 import com.pim.app.location.LocationSnapshot
 import com.pim.app.location.PolicyTransitionRecorder
 import com.pim.app.location.PolicyTransitionWriteFailureStore
+import com.pim.app.location.highspeed.HighSpeedTracker
 import com.pim.app.location.acquisition.AcquisitionContext
 import com.pim.app.location.acquisition.AcquisitionPhase
 import com.pim.app.location.acquisition.LocationAcquisitionCoordinator
@@ -34,6 +35,7 @@ import com.pim.app.location.policy.LocationPolicyInput
 import com.pim.app.location.policy.LocationPolicyMode
 import com.pim.app.location.policy.PolicyDecision
 import com.pim.app.location.policy.PolicyLocation
+import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.mobile.sync.EndpointHeartbeatSink
 import com.pim.app.mobile.sync.MobileSyncScheduler
 import com.pim.app.notifications.LocationNotificationRenderer
@@ -86,6 +88,7 @@ class ForegroundLocationService : Service() {
      * 真正发送由 reporter 自己节流（最小间隔 5 分钟），这里只负责"在既有的唤醒节拍上问一次"。
      */
     @Inject lateinit var endpointHeartbeatReporter: EndpointHeartbeatSink
+    @Inject lateinit var structuredLogRepository: StructuredLogRepository
 
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private var scheduleRefreshJob: Job? = null
@@ -523,7 +526,21 @@ class ForegroundLocationService : Service() {
     }
 
     private fun initializeAutomaticRuntime(settings: TrackingSettings) {
-        policyEngine = LocationPolicyEngine(settings.toTrackingPolicy())
+        policyEngine = LocationPolicyEngine(
+            settings.toTrackingPolicy(),
+            highSpeedTracker = HighSpeedTracker(
+                nowElapsedRealtimeMillis = { SystemClock.elapsedRealtime() },
+                onMissingElapsedRealtimeFixes = { count ->
+                    scope.launch {
+                        structuredLogRepository.warn(
+                            operation = "high-speed-tracker",
+                            message = "Location fix missing monotonic timestamp",
+                            details = mapOf("missingFixCountSinceLastReport" to count)
+                        )
+                    }
+                }
+            )
+        )
         locationAcquisitionCoordinator.onRecorded = { snapshot ->
             recordAccepted(snapshot)
         }
@@ -532,10 +549,7 @@ class ForegroundLocationService : Service() {
             policyEngine!!.reduce(
                 LocationPolicyInput(
                     nowMillis = System.currentTimeMillis(),
-                    collectionEnabled = settings.continuousCollectionEnabled,
-                    nowElapsedRealtimeMillis = SystemClock.elapsedRealtime(),
-                    motionSignalObservedAtElapsedRealtimeMillis =
-                        motionSignalRepository.status.value.observedAtElapsedRealtimeMillis
+                    collectionEnabled = settings.continuousCollectionEnabled
                 )
             )
         )
@@ -545,16 +559,16 @@ class ForegroundLocationService : Service() {
     }
 
     private suspend fun recordAccepted(snapshot: LocationSnapshot) {
-        lastAcceptedLocationText = timeFormatter.format(
-            Instant.ofEpochMilli(snapshot.timeMillis)
-                .atZone(ZoneId.systemDefault())
-        )
-        lastAccuracyText = "${snapshot.horizontalAccuracyMeters?.toInt() ?: 0}m"
-        lastDroppedReason = null
         // currentDecision 的所有写必须串行在 Main 线程（自动循环与各 ACTION
         // 分支也在 Main 写）：fix 驱动的唤醒使并发读-改-写碰撞窗口从分钟级
         // 缩到 2.5s 级，跨线程 copy 会丢失整对象赋值（applyDecision）。
         withContext(Dispatchers.Main.immediate) {
+            lastAcceptedLocationText = timeFormatter.format(
+                Instant.ofEpochMilli(snapshot.timeMillis)
+                    .atZone(ZoneId.systemDefault())
+            )
+            lastAccuracyText = "${snapshot.horizontalAccuracyMeters?.toInt() ?: 0}m"
+            lastDroppedReason = null
             policyEngine?.onAcceptedLocation(
                 PolicyLocation(
                     latitude = snapshot.latitude,
@@ -699,10 +713,7 @@ class ForegroundLocationService : Service() {
                     scheduleWindowRepository.snapshotForCurrentServer().windows,
                     now
                 ),
-                motionSignal = motionStatus.signal,
-                nowElapsedRealtimeMillis = SystemClock.elapsedRealtime(),
-                motionSignalObservedAtElapsedRealtimeMillis =
-                    motionStatus.observedAtElapsedRealtimeMillis
+                motionSignal = motionStatus.signal
             )
         ) ?: currentDecision
     }

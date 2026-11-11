@@ -15,7 +15,8 @@ enum class HighSpeedMode { Inactive, Accumulating, Active }
  * in memory only for this short corroboration window.
  */
 class HighSpeedTracker(
-    private val nowElapsedRealtimeMillis: () -> Long
+    private val nowElapsedRealtimeMillis: () -> Long,
+    private val onMissingElapsedRealtimeFixes: (count: Int) -> Unit = {}
 ) {
     var mode: HighSpeedMode = HighSpeedMode.Inactive
         private set
@@ -32,12 +33,17 @@ class HighSpeedTracker(
     private var candidateLowSpeedSinceMillis: Long? = null
     private var candidateRetryAtMillis: Long = 0L
     private var warmRecoveryUntilMillis: Long = 0L
+    private var missingElapsedRealtimeFixCount = 0
+    private var lastMissingElapsedRealtimeReportAtMillis: Long? = null
 
     fun isInWarmRecoveryWindow(): Boolean =
         mode == HighSpeedMode.Inactive && nowElapsedRealtimeMillis() < warmRecoveryUntilMillis
 
     fun observeLocation(location: LocationSnapshot) {
-        val eventNanos = location.elapsedRealtimeNanos ?: return
+        val eventNanos = location.elapsedRealtimeNanos ?: run {
+            reportMissingElapsedRealtime()
+            return
+        }
         if (eventNanos <= 0L || !location.horizontalAccuracyMeters.isValidAccuracy() ||
             !location.latitude.isFinite() || !location.longitude.isFinite() ||
             location.latitude !in -90.0..90.0 || location.longitude !in -180.0..180.0) return
@@ -219,7 +225,13 @@ class HighSpeedTracker(
 
     private fun medianAccuracy(points: List<TimedFix>): Double {
         val values = points.mapNotNull { it.location.horizontalAccuracyMeters?.toDouble() }.sorted()
-        return values.getOrNull(values.size / 2) ?: 0.0
+        if (values.isEmpty()) return 0.0
+        val middle = values.size / 2
+        return if (values.size % 2 == 0) {
+            (values[middle - 1] + values[middle]) / 2.0
+        } else {
+            values[middle]
+        }
     }
 
     private fun pruneFixes(now: Long) {
@@ -230,6 +242,17 @@ class HighSpeedTracker(
         candidateSinceMillis = null
         lastFastEvidenceAtMillis = null
         candidateLowSpeedSinceMillis = null
+    }
+
+    private fun reportMissingElapsedRealtime() {
+        missingElapsedRealtimeFixCount++
+        val now = nowElapsedRealtimeMillis()
+        val lastReport = lastMissingElapsedRealtimeReportAtMillis
+        if (lastReport == null || now - lastReport >= MISSING_ELAPSED_REPORT_INTERVAL_MILLIS) {
+            onMissingElapsedRealtimeFixes(missingElapsedRealtimeFixCount)
+            missingElapsedRealtimeFixCount = 0
+            lastMissingElapsedRealtimeReportAtMillis = now
+        }
     }
 
     private fun exitActive(now: Long) {
@@ -274,6 +297,7 @@ class HighSpeedTracker(
         const val ENTRY_CONFIRMATION_MILLIS = 10_000L
         const val CANDIDATE_MAX_DURATION_MILLIS = 30_000L
         const val CANDIDATE_RETRY_DELAY_MILLIS = 30_000L
+        const val MISSING_ELAPSED_REPORT_INTERVAL_MILLIS = 60_000L
         const val LOW_SPEED_TOLERANCE_MILLIS = 3_000L
         const val LOW_SPEED_EXIT_MILLIS = 60_000L
         const val WARM_RECOVERY_WINDOW_MILLIS = 90_000L

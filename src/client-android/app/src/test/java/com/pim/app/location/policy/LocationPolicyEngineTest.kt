@@ -372,7 +372,8 @@ class LocationPolicyEngineTest {
     fun `accumulating high speed requests dense sampling`() {
         val engine = makeEngine()
 
-        fakeElapsed = 0L
+        fakeElapsed = 100_000L
+        lastSyntheticAt = fakeElapsed
         val decision = reduce(engine, speed = fastSpeed())
 
         assertEquals(LocationPolicyMode.HighSpeed, decision.mode)
@@ -384,7 +385,8 @@ class LocationPolicyEngineTest {
     @Test
     fun `inactive tracker leaves normal flow untouched`() {
         val engine = makeEngine()
-        fakeElapsed = 0L
+        fakeElapsed = 100_000L
+        lastSyntheticAt = fakeElapsed
         reduce(engine, speed = 1.5f)
 
         val decision = reduce(engine, speed = 1.5f)

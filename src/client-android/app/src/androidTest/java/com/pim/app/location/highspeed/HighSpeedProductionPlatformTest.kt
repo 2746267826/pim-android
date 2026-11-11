@@ -35,8 +35,8 @@ class HighSpeedProductionPlatformTest {
         automation.executeShellCommand("pm grant ${context.packageName} ${Manifest.permission.ACCESS_COARSE_LOCATION}").close()
         automation.executeShellCommand("pm grant ${context.packageName} ${Manifest.permission.ACCESS_BACKGROUND_LOCATION}").close()
         automation.executeShellCommand("pm grant ${context.packageName} ${Manifest.permission.POST_NOTIFICATIONS}").close()
-        instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         settings.write(originalSettings.copy(continuousCollectionEnabled = false, sprintEnabled = false))
+        instrumentation.startActivitySync(Intent(context, MainActivity::class.java).addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
         automation.adoptShellPermissionIdentity("android.permission.ACCESS_MOCK_LOCATION")
         try {
             @Suppress("DEPRECATION")

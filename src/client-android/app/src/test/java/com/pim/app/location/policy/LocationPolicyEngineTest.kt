@@ -502,4 +502,22 @@ class LocationPolicyEngineTest {
         assertEquals(LocationPolicyMode.PowerSavingNormal, decision.mode)
         assertEquals(policy.normalIntervalMillis, decision.requestIntervalMillis)
     }
+
+    @Test
+    fun `high speed recovery window holds until its last millisecond`() {
+        val engine = makeEngine()
+        activateHighSpeed(engine)
+        repeat(25) { index ->
+            fakeElapsed = 112_500L + index * 2_500L
+            reduce(engine, speed = 1f)
+        }
+        assertEquals(HighSpeedMode.Inactive, engine.highSpeedTracker.mode)
+
+        // 退出发生在 172_500，恢复窗 90 秒：最后一毫秒仍必须留在恢复档。
+        fakeElapsed = 262_499L
+        val decision = reduce(engine)
+
+        assertEquals(LocationPolicyMode.MovementRecovery, decision.mode)
+        assertEquals(30_000L, decision.requestIntervalMillis)
+    }
 }

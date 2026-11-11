@@ -86,6 +86,30 @@ class HighSpeedTrackerTest {
         assertEquals(HighSpeedMode.Inactive, tracker.mode)
     }
 
+    @Test fun coherentPositionsDoNotRenewEvidenceWhenReportedSpeedIsLow() {
+        activate()
+        // 位置一致度足以证明 36 km/h 的位移，但系统速度只报 5 km/h：以速度为准进入低速宽限。
+        var at = 115_000L
+        var east = 150.0
+        repeat(12) {
+            at += 2_500L
+            east += 25.0
+            feed(at, east, 5f / 3.6f)
+            assertEquals(
+                "系统速度 <7km/h 时位置一致度既不能续期也不能提前退出",
+                HighSpeedMode.Active,
+                tracker.mode
+            )
+        }
+        repeat(13) {
+            at += 2_500L
+            east += 25.0
+            feed(at, east, 5f / 3.6f)
+        }
+
+        assertEquals(HighSpeedMode.Inactive, tracker.mode)
+    }
+
     @Test fun highSpeedCannotBridgeAnUnobservedGap() {
         feed(100_000, 0.0)
         feed(105_000, 50.0)

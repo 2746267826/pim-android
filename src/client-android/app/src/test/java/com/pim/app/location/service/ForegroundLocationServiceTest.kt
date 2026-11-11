@@ -2961,7 +2961,7 @@ class ForegroundLocationServiceTest {
 
     @Test
     @LooperMode(LooperMode.Mode.PAUSED)
-    fun stationaryFixesFallBackFromHighSpeedWithoutWaitingSixtySeconds() {
+    fun stationaryFixesKeepHighSpeedThroughThirtySecondsAndEnableRecoveryWindow() {
         val harness = newHarness()
         val store = trackingStore("fg_hs_fall_", enabled = true)
         val service = buildService(harness = harness, trackingStore = store)
@@ -2989,17 +2989,45 @@ class ForegroundLocationServiceTest {
         harness.runner.emitStreamCandidate(freshFastSnapshot(12_000L, base))
         idleUntil { ForegroundLocationService.runtimeState.value.highSpeedActive }
 
-        // 连续新鲜静止点簇，即使系统速度仍有毛刺也应退出。
-        repeat(8) { index ->
+        // 红灯中定位速度可能仍有毛刺；静止坐标 30 秒不得掉档。
+        repeat(13) { index ->
             shadowOf(Looper.getMainLooper()).idleFor(2_500L, TimeUnit.MILLISECONDS)
             harness.runner.emitStreamCandidate(freshFastSnapshot(12_000L, base).copy(
+                longitude = 121.4737 + 12_000L * 0.009 / 95_000.0,
+                speedMetersPerSecond = 20f,
                 timeMillis = base + 14_500L + index * 2_500L,
                 elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
             ))
         }
 
+        assertTrue(ForegroundLocationService.runtimeState.value.highSpeedActive)
+
+        // 持续低速达到60秒才退出，并且退出后为90秒恢复窗口保留30秒采样。
+        repeat(19) { index ->
+            shadowOf(Looper.getMainLooper()).idleFor(2_500L, TimeUnit.MILLISECONDS)
+            harness.runner.emitStreamCandidate(freshFastSnapshot(12_000L, base).copy(
+                longitude = 121.4737 + 12_000L * 0.009 / 95_000.0,
+                speedMetersPerSecond = 0.5f,
+                timeMillis = base + 47_000L + index * 2_500L,
+                elapsedRealtimeNanos = android.os.SystemClock.elapsedRealtimeNanos()
+            ))
+        }
         idleUntil { !ForegroundLocationService.runtimeState.value.highSpeedActive }
         assertFalse(ForegroundLocationService.runtimeState.value.highSpeedActive)
+        assertEquals(30_000L, ForegroundLocationService.runtimeState.value.requestIntervalMillis)
+
+        // Recovery window: high-speed locations re-enter without waiting for normal 180s cadence.
+        shadowOf(Looper.getMainLooper()).idleFor(2_500L, TimeUnit.MILLISECONDS)
+        harness.runner.emitStreamCandidate(freshFastSnapshot(80_000L, base).copy(timeMillis = base + 95_000L))
+        idleUntil { harness.coordinator.streamState.value.requestIntervalMillis == 2_500L }
+        repeat(12) { index ->
+            shadowOf(Looper.getMainLooper()).idleFor(2_500L, TimeUnit.MILLISECONDS)
+            harness.runner.emitStreamCandidate(freshFastSnapshot(82_500L + index * 2_500L, base).copy(
+                timeMillis = base + 97_500L + index * 2_500L
+            ))
+        }
+        idleUntil { ForegroundLocationService.runtimeState.value.highSpeedActive }
+        assertTrue(ForegroundLocationService.runtimeState.value.highSpeedActive)
         service.onDestroy()
     }
 

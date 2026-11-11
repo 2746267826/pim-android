@@ -48,9 +48,65 @@ class HighSpeedTrackerTest {
         assertEquals(HighSpeedMode.Inactive, tracker.mode)
     }
 
-    @Test fun lowReportedSpeedInterruptsConfirmationImmediately() {
+    @Test fun lowReportedSpeedWithinToleranceKeepsConfirmation() {
         feed(now, 0.0)
         feed(now + 2_500, 25.0, 0.1f)
+        assertEquals(HighSpeedMode.Accumulating, tracker.mode)
+        feed(now + 500, 30.0)
+        assertEquals(HighSpeedMode.Accumulating, tracker.mode)
+    }
+
+    @Test fun oneSevenPointEightKmhFixDoesNotResetFastConfirmation() {
+        feed(100_000, 0.0)
+        feed(102_500, 25.0)
+        feed(105_000, 30.4, 7.8f / 3.6f)
+        feed(107_500, 55.4)
+        feed(110_000, 80.4)
+
+        assertEquals(HighSpeedMode.Active, tracker.mode)
+    }
+
+    @Test fun thirtySecondsAtAStopDoesNotExitHighSpeed() {
+        activate()
+        repeat(13) { index ->
+            feed(115_000L + index * 2_500L, 125.0, 0.5f)
+        }
+
+        assertEquals(HighSpeedMode.Active, tracker.mode)
+    }
+
+    @Test fun sustainedLowSpeedExitsAfterSixtySeconds() {
+        activate()
+        repeat(24) { index ->
+            feed(115_000L + index * 2_500L, 125.0 + index * 2.5, 0.5f)
+            assertEquals(HighSpeedMode.Active, tracker.mode)
+        }
+        feed(175_000L, 185.0, 0.5f)
+
+        assertEquals(HighSpeedMode.Inactive, tracker.mode)
+    }
+
+    @Test fun coherentPositionsDoNotRenewEvidenceWhenReportedSpeedIsLow() {
+        activate()
+        // 位置一致度足以证明 36 km/h 的位移，但系统速度只报 5 km/h：以速度为准进入低速宽限。
+        var at = 115_000L
+        var east = 150.0
+        repeat(12) {
+            at += 2_500L
+            east += 25.0
+            feed(at, east, 5f / 3.6f)
+            assertEquals(
+                "系统速度 <7km/h 时位置一致度既不能续期也不能提前退出",
+                HighSpeedMode.Active,
+                tracker.mode
+            )
+        }
+        repeat(13) {
+            at += 2_500L
+            east += 25.0
+            feed(at, east, 5f / 3.6f)
+        }
+
         assertEquals(HighSpeedMode.Inactive, tracker.mode)
     }
 

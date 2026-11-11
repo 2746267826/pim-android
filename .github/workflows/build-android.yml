@@ -123,6 +123,9 @@ jobs:
           chmod +x "$OLDPWD/gradlew"
           rm -rf "$TMPDIR"
 
+      - name: Assemble Android instrumentation APK
+        run: ./gradlew :app:assembleDebugAndroidTest --no-daemon
+
       - name: Unit tests & build release (parallel)
         env:
           ANDROID_KEYSTORE_PASSWORD: ${{ secrets.ANDROID_KEYSTORE_PASSWORD }}

@@ -29,7 +29,12 @@ class HighSpeedTracker(
     private var lastFastEvidenceAtMillis: Long? = null
     private var lastMovementEvidenceAtMillis: Long? = null
     private var slowSinceMillis: Long? = null
+    private var candidateLowSpeedSinceMillis: Long? = null
     private var candidateRetryAtMillis: Long = 0L
+    private var warmRecoveryUntilMillis: Long = 0L
+
+    fun isInWarmRecoveryWindow(): Boolean =
+        mode == HighSpeedMode.Inactive && nowElapsedRealtimeMillis() < warmRecoveryUntilMillis
 
     fun observeLocation(location: LocationSnapshot) {
         val eventNanos = location.elapsedRealtimeNanos ?: return
@@ -45,9 +50,9 @@ class HighSpeedTracker(
             resetCandidate()
             slowSinceMillis = null
         }
-        if (mode == HighSpeedMode.Active &&
+        if (mode == HighSpeedMode.Active && slowSinceMillis == null &&
             lastMovementEvidenceAtMillis?.let { now - it >= ACTIVE_EVIDENCE_TIMEOUT_MILLIS } == true) {
-            exitActive()
+            exitActive(now)
         }
         lastFixAtMillis = eventAt
         fixes.addLast(TimedFix(location, eventAt))
@@ -58,31 +63,26 @@ class HighSpeedTracker(
         val positionOnlyFast = location.speedMetersPerSecond == null && movement.isHighSpeedCoherent
 
         if (mode == HighSpeedMode.Active) {
-            if (movement.isStationary) {
-                exitActive()
-                return
-            }
             if (movement.isHighSpeedCoherent &&
                 (location.speedMetersPerSecond == null || speed?.let { it >= FALLBACK_SPEED_METERS_PER_SECOND } == true)) {
                 lastMovementEvidenceAtMillis = eventAt
             }
             val lowSpeed = if (speed != null) {
-                speed < FALLBACK_SPEED_METERS_PER_SECOND && !movement.isHighSpeedCoherent
+                speed < FALLBACK_SPEED_METERS_PER_SECOND
             } else {
                 movement.derivedSpeedMetersPerSecond?.let { it < FALLBACK_SPEED_METERS_PER_SECOND } == true
             }
-            if (lowSpeed) {
+            if (movement.isStationary || lowSpeed) {
                 val start = slowSinceMillis ?: now
                 slowSinceMillis = start
                 if (now - start >= LOW_SPEED_EXIT_MILLIS) {
-                    exitActive()
-                    return
+                    exitActive(now)
                 }
-            } else {
-                slowSinceMillis = null
+                return
             }
+            slowSinceMillis = null
             if (lastMovementEvidenceAtMillis?.let { now - it >= ACTIVE_EVIDENCE_TIMEOUT_MILLIS } == true) {
-                exitActive()
+                exitActive(now)
             }
             return
         }
@@ -93,10 +93,22 @@ class HighSpeedTracker(
             return
         }
         if (!fastSpeed && !positionOnlyFast) {
-            resetCandidate()
-            mode = HighSpeedMode.Inactive
+            if (candidateSinceMillis == null) {
+                resetCandidate()
+                mode = HighSpeedMode.Inactive
+                return
+            }
+            val slowSince = candidateLowSpeedSinceMillis ?: now
+            candidateLowSpeedSinceMillis = slowSince
+            if (now - slowSince >= LOW_SPEED_TOLERANCE_MILLIS) {
+                resetCandidate()
+                mode = HighSpeedMode.Inactive
+            } else {
+                mode = HighSpeedMode.Accumulating
+            }
             return
         }
+        candidateLowSpeedSinceMillis = null
         if (now < candidateRetryAtMillis && !movement.isHighSpeedCoherent) {
             mode = HighSpeedMode.Inactive
             return
@@ -115,6 +127,7 @@ class HighSpeedTracker(
             activeSinceElapsedRealtimeMillis = eventAt
             lastMovementEvidenceAtMillis = eventAt
             slowSinceMillis = null
+            warmRecoveryUntilMillis = 0L
             candidateRetryAtMillis = 0L
         } else if (eventAt - started >= CANDIDATE_MAX_DURATION_MILLIS && !movement.isHighSpeedCoherent) {
             resetCandidate()
@@ -144,8 +157,11 @@ class HighSpeedTracker(
                 }
             }
             HighSpeedMode.Active -> {
-                if (lastMovementEvidenceAtMillis?.let { now - it >= ACTIVE_EVIDENCE_TIMEOUT_MILLIS } == true) {
-                    exitActive()
+                if (slowSinceMillis?.let { now - it >= LOW_SPEED_EXIT_MILLIS } == true) {
+                    exitActive(now)
+                } else if (slowSinceMillis == null &&
+                    lastMovementEvidenceAtMillis?.let { now - it >= ACTIVE_EVIDENCE_TIMEOUT_MILLIS } == true) {
+                    exitActive(now)
                 }
             }
         }
@@ -160,6 +176,7 @@ class HighSpeedTracker(
         lastMovementEvidenceAtMillis = null
         slowSinceMillis = null
         candidateRetryAtMillis = 0L
+        warmRecoveryUntilMillis = 0L
     }
 
     private fun movementEvidence(now: Long): MovementEvidence {
@@ -212,14 +229,16 @@ class HighSpeedTracker(
     private fun resetCandidate() {
         candidateSinceMillis = null
         lastFastEvidenceAtMillis = null
+        candidateLowSpeedSinceMillis = null
     }
 
-    private fun exitActive() {
+    private fun exitActive(now: Long) {
         mode = HighSpeedMode.Inactive
         activeSinceElapsedRealtimeMillis = null
         resetCandidate()
         lastMovementEvidenceAtMillis = null
         slowSinceMillis = null
+        warmRecoveryUntilMillis = now + WARM_RECOVERY_WINDOW_MILLIS
     }
 
     private fun Float?.isValidAccuracy() = this != null && isFinite() && this >= 0f && this < MAX_HORIZONTAL_ACCURACY_METERS
@@ -255,7 +274,9 @@ class HighSpeedTracker(
         const val ENTRY_CONFIRMATION_MILLIS = 10_000L
         const val CANDIDATE_MAX_DURATION_MILLIS = 30_000L
         const val CANDIDATE_RETRY_DELAY_MILLIS = 30_000L
-        const val LOW_SPEED_EXIT_MILLIS = 10_000L
+        const val LOW_SPEED_TOLERANCE_MILLIS = 3_000L
+        const val LOW_SPEED_EXIT_MILLIS = 60_000L
+        const val WARM_RECOVERY_WINDOW_MILLIS = 90_000L
         const val POSITION_WINDOW_MILLIS = 30_000L
         const val STATIONARY_WINDOW_MILLIS = 20_000L
         const val STATIONARY_MIN_SPAN_MILLIS = 15_000L

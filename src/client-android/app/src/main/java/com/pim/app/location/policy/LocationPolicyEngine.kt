@@ -34,6 +34,16 @@ class LocationPolicyEngine(
             return highSpeedDecision(input.nowMillis)
         }
 
+        if (highSpeedTracker.isInWarmRecoveryWindow()) {
+            return decision(
+                mode = LocationPolicyMode.MovementRecovery,
+                intervalMillis = TrackingIntervalBounds.MOVEMENT_MIN_MILLIS,
+                nowMillis = input.nowMillis,
+                reason = "高速档退出后的恢复观察",
+                scheduleLowFrequency = false
+            )
+        }
+
         val activeSchedule = input.currentScheduleWindow?.takeIf {
             it.isActiveAt(input.nowMillis) && it.locationText.isNotBlank()
         }

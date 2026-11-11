@@ -96,10 +96,12 @@ class HighSpeedReleaseTest {
         assertEquals(HighSpeedMode.Inactive, tracker.mode)
     }
 
-    @Test fun stationaryClusterExitsEvenIfReportedSpeedKeepsSpiking() {
+    @Test fun stationaryClusterKeepsThirtySecondGraceAndExitsAfterSixtySecondsOfEvidence() {
         repeat(12) { feed(it) }
         assertEquals(HighSpeedMode.Active, tracker.mode)
-        repeat(12) { index -> feed(12 + index, meters = 275.0, speed = 20f) }
+        repeat(13) { index -> feed(12 + index, meters = 275.0, speed = 20f) }
+        assertEquals(HighSpeedMode.Active, tracker.mode)
+        repeat(24) { index -> feed(25 + index, meters = 275.0, speed = 20f) }
         assertEquals(HighSpeedMode.Inactive, tracker.mode)
     }
 

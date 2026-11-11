@@ -419,7 +419,8 @@ class LocationPolicyEngineTest {
         reduce(engine, speed = 0.1f)
         fakeElapsed = 140_500L
         val fallenBack = reduce(engine, speed = 0.1f)
-        assertEquals(LocationPolicyMode.PowerSavingNormal, fallenBack.mode)
+        assertEquals(LocationPolicyMode.MovementRecovery, fallenBack.mode)
+        assertEquals(30_000L, fallenBack.requestIntervalMillis)
     }
 
     @Test
@@ -431,7 +432,8 @@ class LocationPolicyEngineTest {
             fakeElapsed = 112_500L + index * 2_500L
             decision = reduce(engine, speed = 1.2f, motion = MotionSignal.Walking)
         }
-        assertEquals(LocationPolicyMode.MotionObservation, decision?.mode)
+        assertEquals(LocationPolicyMode.MovementRecovery, decision?.mode)
+        assertEquals(30_000L, decision?.requestIntervalMillis)
     }
 
     @Test
@@ -455,6 +457,49 @@ class LocationPolicyEngineTest {
         fakeElapsed += 25_000
         val decision = reduce(engine)
         assertEquals(HighSpeedMode.Inactive, engine.highSpeedTracker.mode)
+        assertEquals(LocationPolicyMode.MovementRecovery, decision.mode)
+        assertEquals(30_000L, decision.requestIntervalMillis)
+    }
+
+    @Test
+    fun `high speed fallback keeps a ninety second thirty second recovery window`() {
+        val engine = makeEngine()
+        activateHighSpeed(engine)
+        repeat(25) { index ->
+            fakeElapsed = 112_500L + index * 2_500L
+            reduce(engine, speed = 1f)
+        }
+        assertEquals(HighSpeedMode.Inactive, engine.highSpeedTracker.mode)
+
+        val recovery = reduce(engine)
+        assertEquals(LocationPolicyMode.MovementRecovery, recovery.mode)
+        assertEquals(30_000L, recovery.requestIntervalMillis)
+
+        fakeElapsed += 30_000L
+        reduce(engine, speed = fastSpeed())
+        repeat(4) {
+            fakeElapsed += 2_500L
+            reduce(engine, speed = fastSpeed())
+        }
+
+        assertEquals(HighSpeedMode.Active, engine.highSpeedTracker.mode)
+        assertTrue(fakeElapsed - 172_500L <= 90_000L)
+    }
+
+    @Test
+    fun `high speed recovery window expires after ninety seconds`() {
+        val engine = makeEngine()
+        activateHighSpeed(engine)
+        repeat(25) { index ->
+            fakeElapsed = 112_500L + index * 2_500L
+            reduce(engine, speed = 1f)
+        }
+        assertEquals(HighSpeedMode.Inactive, engine.highSpeedTracker.mode)
+
+        fakeElapsed = 262_500L
+        val decision = reduce(engine)
+
         assertEquals(LocationPolicyMode.PowerSavingNormal, decision.mode)
+        assertEquals(policy.normalIntervalMillis, decision.requestIntervalMillis)
     }
 }

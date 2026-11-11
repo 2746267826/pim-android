@@ -1,6 +1,7 @@
 package com.pim.app.location.policy
 
 import android.os.SystemClock
+import com.pim.app.location.LocationSnapshot
 import com.pim.app.location.highspeed.HighSpeedMode
 import com.pim.app.location.highspeed.HighSpeedTracker
 
@@ -110,7 +111,7 @@ class LocationPolicyEngine(
     }
 
     /** Feed each new location callback before the policy loop can coalesce wakeups. */
-    fun observeHighSpeedLocation(location: com.pim.app.location.LocationSnapshot) {
+    fun observeHighSpeedLocation(location: LocationSnapshot) {
         highSpeedTracker.observeLocation(location)
     }
 

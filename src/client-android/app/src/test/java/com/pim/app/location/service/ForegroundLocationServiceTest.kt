@@ -145,6 +145,7 @@ class ForegroundLocationServiceTest {
             service.trackingSettingsStore = trackingStore("fg_default_", enabled = false)
         }
         service.attachSprintAndPassiveDependencies(harness, context, service.trackingSettingsStore)
+        service.structuredLogRepository = StructuredLogRepository(context, service.trackingSettingsStore)
         attachPolicyTransitionDependencies(service)
         return service
     }
@@ -3138,6 +3139,45 @@ class ForegroundLocationServiceTest {
         service.onDestroy()
     }
 
+    @Test
+    @LooperMode(LooperMode.Mode.PAUSED)
+    fun missingElapsedRealtimeLocationWritesStructuredHighSpeedDiagnostic() = runBlocking {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val harness = newHarness()
+        val service = buildService(
+            harness = harness,
+            trackingStore = trackingStore("hs_missing_elapsed_", enabled = false)
+        )
+        val logs = StructuredLogRepository(context, service.trackingSettingsStore)
+        service.structuredLogRepository = logs
+        invokeInitializeAutomaticRuntime(service)
+
+        val engine = ForegroundLocationService::class.java.getDeclaredField("policyEngine")
+            .apply { isAccessible = true }
+            .get(service) as com.pim.app.location.policy.LocationPolicyEngine
+        engine.observeHighSpeedLocation(
+            acceptedSnapshot(System.currentTimeMillis()).copy(elapsedRealtimeNanos = null)
+        )
+
+        idleUntil {
+            runBlocking {
+                logs.recent(limit = 200).any {
+                    it.tag == "high-speed-tracker" &&
+                        it.message == "Location fix missing monotonic timestamp"
+                }
+            }
+        }
+        assertTrue(
+            runBlocking {
+                logs.recent(limit = 200).any {
+                    it.tag == "high-speed-tracker" &&
+                        it.message == "Location fix missing monotonic timestamp"
+                }
+            }
+        )
+        service.onDestroy()
+    }
+
     private fun invokeInitializeAutomaticRuntime(service: ForegroundLocationService) {
         ForegroundLocationService::class.java
             .getDeclaredMethod("initializeAutomaticRuntime", TrackingSettings::class.java)
@@ -3385,6 +3425,7 @@ class ForegroundLocationServiceTest {
             service.trackingSettingsStore = store
             service.scheduleWindowRepository = repository
             service.attachSprintAndPassiveDependencies(harness, context, store)
+            service.structuredLogRepository = StructuredLogRepository(context, store)
             attachPolicyTransitionDependencies(service)
             return service
         }

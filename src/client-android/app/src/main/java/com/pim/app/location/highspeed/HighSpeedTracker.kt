@@ -33,7 +33,7 @@ class HighSpeedTracker(
 
     fun observeLocation(location: LocationSnapshot) {
         val eventNanos = location.elapsedRealtimeNanos ?: return
-        if (eventNanos < 0L || !location.horizontalAccuracyMeters.isValidAccuracy() ||
+        if (eventNanos <= 0L || !location.horizontalAccuracyMeters.isValidAccuracy() ||
             !location.latitude.isFinite() || !location.longitude.isFinite() ||
             location.latitude !in -90.0..90.0 || location.longitude !in -180.0..180.0) return
         val eventAt = eventNanos / NANOS_PER_MILLI

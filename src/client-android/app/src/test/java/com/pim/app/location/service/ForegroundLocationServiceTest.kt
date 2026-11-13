@@ -96,6 +96,23 @@ import okhttp3.RequestBody
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [34], application = TestPimApp::class)
 class ForegroundLocationServiceTest {
+    @Test
+    fun localExperimentOwnsItsLifecycleWithoutStartingAutomaticCollection() {
+        val harness = newHarness()
+        val service = buildService(harness)
+        var destroyed = false
+        service.localExperiments = setOf(object : LocalCollectionExperiment {
+            override fun onStartCommand(service: android.app.Service, intent: Intent?, startId: Int): Int? =
+                if (intent?.action == "local-test") android.app.Service.START_STICKY else null
+            override fun onDestroy(service: android.app.Service) { destroyed = true }
+        })
+        assertEquals(android.app.Service.START_STICKY, service.onStartCommand(Intent("local-test"), 0, 1))
+        assertFalse(harness.coordinator.isAutomaticStreamActive())
+        service.onDestroy()
+        assertTrue(destroyed)
+        assertFalse(harness.coordinator.isAutomaticStreamActive())
+    }
+
     private val cacheDirs = mutableListOf<java.io.File>()
     private val databases = mutableListOf<AppDatabase>()
 

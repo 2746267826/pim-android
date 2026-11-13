@@ -18,3 +18,5 @@ rootProject.name = "PimClientAndroid"
 include(":app")
 include(":core")
 include(":features:calendar")
+include(":location-diagnostics")
+project(":location-diagnostics").projectDir = file("../location-test-app/diagnostics")

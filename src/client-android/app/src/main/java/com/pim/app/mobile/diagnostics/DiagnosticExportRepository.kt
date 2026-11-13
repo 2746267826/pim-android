@@ -1083,11 +1083,11 @@ class DiagnosticExportRepository internal constructor(
         )
         status.put(
             "lastSyncAttemptAt",
-            syncPrefs.getString("last_attempted_upload_at", null) ?: JSONObject.NULL
+            syncPrefs.getString(MobileSyncCoordinator.LAST_ATTEMPTED_UPLOAD_AT_KEY, null) ?: JSONObject.NULL
         )
         status.put(
             "lastSyncSuccessAt",
-            syncPrefs.getString("last_successful_upload_at", null) ?: JSONObject.NULL
+            syncPrefs.getString(MobileSyncCoordinator.LAST_SUCCESSFUL_UPLOAD_AT_KEY, null) ?: JSONObject.NULL
         )
         val syncRunStartedAt = syncPrefs.getLong(MobileSyncCoordinator.SYNC_RUN_STARTED_AT_KEY, 0L)
         status.put(

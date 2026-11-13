@@ -3,11 +3,29 @@ package com.pim.app.mobile.sync
 import android.content.Context
 import androidx.room.Room
 import androidx.test.core.app.ApplicationProvider
+import com.pim.app.TestPimApp
 import com.pim.app.data.AppDatabase
+import com.pim.app.forensics.AndroidHeartbeatSnapshotReader
+import com.pim.app.forensics.ForensicLedger
+import com.pim.app.forensics.ForensicSentinelStore
+import com.pim.app.forensics.ForensicUploadCoordinator
+import com.pim.app.forensics.WakeHeartbeatRecorder
 import com.pim.app.mobile.logs.StructuredLogRepository
+import com.pim.app.mobile.usage.AppMetadataCollector
+import com.pim.app.mobile.usage.UsageAccessChecker
+import com.pim.app.mobile.usage.UsageEventCollector
 import com.pim.app.settings.TrackingSettingsStore
+import com.pim.core.auth.TokenManager
+import com.pim.core.network.ApiClientProvider
+import com.pim.core.settings.ServerSettingsStore
+import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.flow.first
+import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.test.runTest
+import kotlinx.serialization.json.Json
+import okhttp3.OkHttpClient
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
@@ -16,6 +34,7 @@ import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
+import org.robolectric.annotation.Config
 
 /**
  * #568 客户端回归：
@@ -24,6 +43,7 @@ import org.robolectric.RobolectricTestRunner
  *    而不是像事故里那样 596 次唤醒一条痕迹都没有。
  */
 @RunWith(RobolectricTestRunner::class)
+@Config(sdk = [34], application = TestPimApp::class)
 class MobileSyncIssue568AndroidTests {
     private lateinit var context: Context
     private lateinit var db: AppDatabase
@@ -156,5 +176,103 @@ class MobileSyncIssue568AndroidTests {
         val row = dao.getSyncBatchesBySyncStatus(MobileSyncHistory.SKIPPED_BUSY_STATUS, limit = 10).single()
         assertEquals("sync-busy-skip", row.lastError)
         assertEquals(2_000L, row.finishedAtUtc)
+    }
+
+    // ---------- 根因回归：锁区间内的取消必须解锁 ----------
+
+    @Test
+    fun cancellationInsideTheCriticalSectionReleasesTheSyncLock() = runTest {
+        val coordinator = buildCoordinator()
+        val mutex = syncMutexOf(coordinator)
+
+        // 模拟"加锁成功后、第一个业务挂起点被取消"（WorkManager 停止 worker 等）：
+        // 修复前这个位置就是 MobileSyncHistory.failInterrupted，取消会跳过 finally，
+        // 单例 Mutex 永久泄漏，之后每次唤醒都在 tryLock 处静默返回。
+        coordinator.firstCriticalSectionHook = { throw CancellationException("simulated worker stop") }
+        var cancelled = false
+        try {
+            coordinator.syncOnOpen()
+        } catch (expected: CancellationException) {
+            cancelled = true
+        }
+        assertTrue("取消必须原样向上传播", cancelled)
+        assertFalse("锁区间内的取消不能泄漏 syncMutex", mutex.isLocked)
+
+        // 下一次唤醒必须能重新加锁并真正进入同步，而不是返回"同步正在进行中"。
+        coordinator.firstCriticalSectionHook = null
+        val next = coordinator.syncOnOpen()
+        assertFalse(next.progressText == "同步正在进行中。")
+    }
+
+    private fun buildCoordinator(): MobileSyncCoordinator {
+        val trackPrefs = context.getSharedPreferences("issue-568-sync-test", Context.MODE_PRIVATE)
+        trackPrefs.edit().clear().commit()
+        val trackSettings = TrackingSettingsStore(trackPrefs)
+        val tokenManager = TokenManager(Issue568SecurePreferencesFactory(trackPrefs))
+        val serverSettingsStore = ServerSettingsStore(context, tokenManager)
+        val api = fakeApiService()
+        return MobileSyncCoordinator(
+            context = context,
+            api = api,
+            apiClientProvider = ApiClientProvider(
+                OkHttpClient(),
+                Json { ignoreUnknownKeys = true },
+                serverSettingsStore
+            ),
+            tokenManager = tokenManager,
+            usageAccessChecker = UsageAccessChecker(context),
+            usageEventCollector = UsageEventCollector(context, UsageAccessChecker(context)),
+            appMetadataCollector = AppMetadataCollector(context),
+            database = db,
+            logs = logs,
+            heartbeatReporter = MobileHeartbeatReporter(context, api),
+            serverSettingsStore = serverSettingsStore,
+            locationUploadCoordinator = LocationUploadCoordinator(
+                context,
+                db,
+                api,
+                DeviceIdentityProvider(context)
+            ),
+            forensicUploadCoordinator = ForensicUploadCoordinator(
+                context = context,
+                api = api,
+                dao = db.forensicEventDao(),
+                logs = logs,
+                sentinelStore = ForensicSentinelStore(context),
+                deviceIdentityProvider = DeviceIdentityProvider(context)
+            ),
+            wakeHeartbeatRecorder = WakeHeartbeatRecorder(
+                ledger = ForensicLedger(db.forensicEventDao(), logs),
+                contextReader = Issue568ForensicContextSource,
+                snapshotReader = AndroidHeartbeatSnapshotReader(context),
+                logs = logs
+            ),
+            syncScheduler = { MobileSyncScheduler(context, trackSettings) },
+            deviceIdentityProvider = DeviceIdentityProvider(context)
+        )
+    }
+
+    private fun syncMutexOf(coordinator: MobileSyncCoordinator): Mutex {
+        val field = MobileSyncCoordinator::class.java.getDeclaredField("syncMutex")
+        field.isAccessible = true
+        return field.get(coordinator) as Mutex
+    }
+
+    /** 这里只走"服务器地址未配置"的早返回路径，接口不会被真正调用；用动态代理顶住即可。 */
+    private fun fakeApiService(): com.pim.core.network.ApiService =
+        java.lang.reflect.Proxy.newProxyInstance(
+            com.pim.core.network.ApiService::class.java.classLoader,
+            arrayOf(com.pim.core.network.ApiService::class.java)
+        ) { _, _, _ -> null } as com.pim.core.network.ApiService
+
+    private class Issue568SecurePreferencesFactory(
+        private val preferences: android.content.SharedPreferences
+    ) : com.pim.core.auth.SecurePreferencesFactory {
+        override fun open(): android.content.SharedPreferences = preferences
+    }
+
+    private object Issue568ForensicContextSource : com.pim.app.forensics.ForensicContextSource {
+        override fun read(): com.pim.app.forensics.ForensicContext =
+            com.pim.app.forensics.ForensicContext()
     }
 }

@@ -132,6 +132,16 @@ class MobileSyncIssue568AndroidTests {
     }
 
     @Test
+    fun skippedBusyRecordingIsThrottledToFiveMinutes() {
+        // 首次必记。
+        assertTrue(shouldRecordSkippedBusy(nowUtcMillis = 1_000L, lastRecordedAtUtcMillis = 0L))
+        // 同一段卡住里紧跟着的唤醒不再落行（否则 596 次唤醒会把有用的历史挤掉）。
+        assertFalse(shouldRecordSkippedBusy(nowUtcMillis = 30_000L, lastRecordedAtUtcMillis = 1_000L))
+        // 超过 5 分钟再记一次，卡住期间仍然可追踪。
+        assertTrue(shouldRecordSkippedBusy(nowUtcMillis = 301_000L, lastRecordedAtUtcMillis = 1_000L))
+    }
+
+    @Test
     fun skippedBusyWakeWithoutBusySinceStillRecordsARow() = runTest {
         val dao = db.mobileDataDao()
 

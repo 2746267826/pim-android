@@ -98,8 +98,11 @@ internal const val MAX_USAGE_CONTINUATIONS_PER_CHAIN = 2
 internal const val USAGE_CONTINUATION_DELAY_SECONDS = 30L
 internal const val SERVER_USAGE_MAX_ATTEMPTS = 5
 
-/** 服务端 409（重试耗尽/租约丢失）时最多自动换几次批次标识（#568）。 */
+/** 服务端 409 重试耗尽时最多自动换几次批次标识（#568）。 */
 internal const val MAX_USAGE_AUTO_ROTATIONS = 3
+
+/** 同一段"卡住"里最多每 5 分钟留一条"被跳过的唤醒"记录（#568）。 */
+internal const val SKIPPED_BUSY_RECORD_INTERVAL_MS = 5L * 60L * 1000L
 internal const val SERVER_CODE_RETRY_EXHAUSTED = 40903
 internal const val SERVER_CODE_PAYLOAD_CONFLICT = 40902
 internal const val SERVER_CODE_LEASE_LOST = 40904
@@ -182,23 +185,27 @@ class MobileSyncCoordinator @Inject constructor(
             persistState(running)
             // 静默跳过是 #568 里最难查的一段：5 小时 31 分内 596 次唤醒全部止步于此，
             // 日志与 sync-history 里一条记录都没有，只能从 forensics 的心搏反推。
-            // 从此处起必须留下可 grep 的证据。
-            logs.warn(
-                "mobile-sync",
-                "上一次同步仍未结束，本次唤醒被跳过（未进入同步）。",
-                mapOf(
-                    "busySinceUtcMillis" to (busySince ?: 0L),
-                    "busyForMillis" to (busyForMillis ?: -1L)
+            // 从此处起必须留下可 grep 的证据——但要限流：唤醒间隔可能只有几十秒，
+            // 每次都落一行会把这 2000 行的历史表挤出真正有用的记录。
+            val counter = recordSkippedBusyWake(wakeAtUtc)
+            if (counter.shouldRecord) {
+                logs.warn(
+                    "mobile-sync",
+                    "上一次同步仍未结束，本次唤醒被跳过（未进入同步）。",
+                    mapOf(
+                        "busySinceUtcMillis" to (busySince ?: 0L),
+                        "busyForMillis" to (busyForMillis ?: -1L),
+                        "skippedBusyCount" to counter.total
+                    )
                 )
-            )
-            recordSkippedBusyWake()
-            MobileSyncHistory.recordSkippedBusy(
-                dao = mobileDataDao,
-                logs = logs,
-                nowUtcMillis = wakeAtUtc,
-                pendingCount = pendingQueueCount(),
-                busyForMillis = busyForMillis
-            )
+                MobileSyncHistory.recordSkippedBusy(
+                    dao = mobileDataDao,
+                    logs = logs,
+                    nowUtcMillis = wakeAtUtc,
+                    pendingCount = pendingQueueCount(),
+                    busyForMillis = busyForMillis
+                )
+            }
             // This wake performed no sync work; never use stale success state to schedule continuation.
             return running
         }
@@ -1439,14 +1446,25 @@ class MobileSyncCoordinator @Inject constructor(
         return if (value > 0L) value else null
     }
 
-    private fun recordSkippedBusyWake() {
-        prefs.edit()
-            .putLong(
-                SYNC_SKIPPED_BUSY_COUNT_KEY,
-                prefs.getLong(SYNC_SKIPPED_BUSY_COUNT_KEY, 0L) + 1L
-            )
-            .apply()
+    /**
+     * 累加"被跳过的唤醒"计数，并决定这一次是否需要留一行日志/历史。
+     *
+     * 限流是必要的：唤醒可能每几十秒一次（事故里中位间隔 24.4 秒），每次都落行会很快把
+     * `mobile_sync_batches` 里只保留最近 2000 行的历史挤出真正有用的记录。
+     */
+    private fun recordSkippedBusyWake(nowUtcMillis: Long): SkippedBusyCounter {
+        val total = prefs.getLong(SYNC_SKIPPED_BUSY_COUNT_KEY, 0L) + 1L
+        val lastRecordedAt = prefs.getLong(SYNC_SKIPPED_BUSY_LAST_RECORDED_AT_KEY, 0L)
+        val shouldRecord = shouldRecordSkippedBusy(nowUtcMillis, lastRecordedAt)
+        val editor = prefs.edit().putLong(SYNC_SKIPPED_BUSY_COUNT_KEY, total)
+        if (shouldRecord) {
+            editor.putLong(SYNC_SKIPPED_BUSY_LAST_RECORDED_AT_KEY, nowUtcMillis)
+        }
+        editor.apply()
+        return SkippedBusyCounter(shouldRecord = shouldRecord, total = total)
     }
+
+    private data class SkippedBusyCounter(val shouldRecord: Boolean, val total: Long)
 
     private fun persistState(state: MobileSyncState) {
         prefs.edit()
@@ -1967,6 +1985,10 @@ class MobileSyncCoordinator @Inject constructor(
         /** 因上一次同步未结束而被跳过的唤醒次数（#568 诊断）。 */
         internal const val SYNC_SKIPPED_BUSY_COUNT_KEY = "sync_skipped_busy_count"
 
+        private const val SYNC_SKIPPED_BUSY_LAST_RECORDED_AT_KEY =
+            "sync_skipped_busy_last_recorded_at_utc_millis"
+
+
         internal const val PREFS_NAME_FOR_DIAGNOSTICS = PREFS_NAME
     }
 }
@@ -2287,6 +2309,14 @@ internal fun normalizeUsageBatchRecoveryState(
  *   换标识只会凭空多一条批次行。这条既有语义有专门的用例守着，不在本次改。
  * - 内容冲突（40902）与未知冲突：不自动换标识——换标识会绕过服务端对"同一批次内容不一致"的保护。
  */
+/** 被跳过的唤醒是否需要留一行记录：首次必记，之后同一段卡住里每 [SKIPPED_BUSY_RECORD_INTERVAL_MS] 记一次。 */
+internal fun shouldRecordSkippedBusy(
+    nowUtcMillis: Long,
+    lastRecordedAtUtcMillis: Long,
+    intervalMillis: Long = SKIPPED_BUSY_RECORD_INTERVAL_MS
+): Boolean = lastRecordedAtUtcMillis <= 0L ||
+    nowUtcMillis - lastRecordedAtUtcMillis >= intervalMillis
+
 internal fun decideUsageBatchConflictRecovery(
     state: UsageBatchRecoveryState,
     reason: UsageBatchBlockReason,

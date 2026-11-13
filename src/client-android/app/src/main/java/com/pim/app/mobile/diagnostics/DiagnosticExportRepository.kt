@@ -11,6 +11,7 @@ import com.pim.app.location.PolicyTransitionWriteFailureSource
 import com.pim.app.location.service.ForegroundLocationRuntimeState
 import com.pim.app.mobile.logs.StructuredLogFileRef
 import com.pim.app.mobile.logs.StructuredLogRepository
+import com.pim.app.mobile.sync.MobileSyncCoordinator
 import com.pim.app.permissions.PermissionStatusRepository
 import com.pim.app.schedule.ScheduleCacheFreshness
 import com.pim.app.schedule.ScheduleCacheSnapshot
@@ -1073,6 +1074,30 @@ class DiagnosticExportRepository internal constructor(
         status.put("syncBatchesPendingCount", dao.pendingSyncBatchCount().first())
         status.put("deviceProfilePendingCount", dao.pendingDeviceProfileCount().first())
         status.put("aggregateRejectedCount", dao.aggregateRejectedCount().first())
+
+        // 同步存活度（#568）：事故里"有心搏、但一次同步都没真正开始"无法从包里一眼看出，
+        // 这里把"最近一次尝试/成功/当前是否有 run 在跑/被跳过多少次"直接摊平。
+        val syncPrefs = context.getSharedPreferences(
+            MobileSyncCoordinator.PREFS_NAME_FOR_DIAGNOSTICS,
+            Context.MODE_PRIVATE
+        )
+        status.put(
+            "lastSyncAttemptAt",
+            syncPrefs.getString("last_attempted_upload_at", null) ?: JSONObject.NULL
+        )
+        status.put(
+            "lastSyncSuccessAt",
+            syncPrefs.getString("last_successful_upload_at", null) ?: JSONObject.NULL
+        )
+        val syncRunStartedAt = syncPrefs.getLong(MobileSyncCoordinator.SYNC_RUN_STARTED_AT_KEY, 0L)
+        status.put(
+            "syncRunStartedAtUtcMillis",
+            if (syncRunStartedAt > 0L) syncRunStartedAt else JSONObject.NULL
+        )
+        status.put(
+            "syncSkippedBusyCount",
+            syncPrefs.getLong(MobileSyncCoordinator.SYNC_SKIPPED_BUSY_COUNT_KEY, 0L)
+        )
         val terminalUsage = usageTerminalLifecycleRepository?.refresh()
         if (terminalUsage != null) {
             status.put("rejectedUsageSummaryCount", terminalUsage.rejectedCount)

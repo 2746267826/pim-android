@@ -1089,10 +1089,15 @@ class DiagnosticExportRepository internal constructor(
             "lastSyncSuccessAt",
             syncPrefs.getString(MobileSyncCoordinator.LAST_SUCCESSFUL_UPLOAD_AT_KEY, null) ?: JSONObject.NULL
         )
+        // 与 Coordinator 同一口径：超过失效上限的标记说明上一进程被强杀残留，不能报"正在同步"（#568）。
         val syncRunStartedAt = syncPrefs.getLong(MobileSyncCoordinator.SYNC_RUN_STARTED_AT_KEY, 0L)
+        val syncRunAge = nowMillis() - syncRunStartedAt
+        val syncRunActive = syncRunStartedAt > 0L &&
+            syncRunAge >= 0L &&
+            syncRunAge <= MobileSyncCoordinator.SYNC_RUN_MARKER_STALE_AFTER_MS
         status.put(
             "syncRunStartedAtUtcMillis",
-            if (syncRunStartedAt > 0L) syncRunStartedAt else JSONObject.NULL
+            if (syncRunActive) syncRunStartedAt else JSONObject.NULL
         )
         status.put(
             "syncSkippedBusyCount",

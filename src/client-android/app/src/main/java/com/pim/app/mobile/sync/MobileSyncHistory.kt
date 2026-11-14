@@ -20,6 +20,45 @@ internal object MobileSyncHistory {
     private const val MAX_ERROR_CHARS = 240
     private val redactor = DiagnosticRedactor()
 
+    /** 因上一次同步未结束而被跳过的唤醒（#568）：只占一行，不进入任何成功率分母。 */
+    const val SKIPPED_BUSY_STATUS = "skipped-busy"
+
+    /**
+     * 记录一次"被跳过的唤醒"。
+     *
+     * 事故（#568）里这一段是纯黑：5 小时 31 分内 596 次唤醒全部在 `tryLock` 处静默返回，
+     * 日志与 sync-history 都没有痕迹，只能靠 forensics 心搏反推。这里把它变成可读的一行。
+     */
+    suspend fun recordSkippedBusy(
+        dao: MobileDataDao,
+        logs: StructuredLogRepository,
+        nowUtcMillis: Long,
+        pendingCount: Int,
+        busyForMillis: Long?
+    ) {
+        val id = begin(dao, logs, nowUtcMillis, pendingCount) ?: return
+        try {
+            dao.finishSyncHistory(
+                id = id,
+                rowCount = 0,
+                finishedAtUtc = nowUtcMillis,
+                syncStatus = SKIPPED_BUSY_STATUS,
+                lastError = if (busyForMillis == null) {
+                    "sync-busy-skip"
+                } else {
+                    "sync-busy-skip busyForMillis=$busyForMillis"
+                }
+            )
+        } catch (ex: CancellationException) {
+            throw ex
+        } catch (ex: Exception) {
+            logs.warn(
+                "diagnostics-history",
+                "收口被跳过的同步历史失败：${ex.message ?: ex::class.java.simpleName}"
+            )
+        }
+    }
+
     suspend fun begin(
         dao: MobileDataDao,
         logs: StructuredLogRepository,

@@ -97,6 +97,12 @@ internal const val USAGE_BATCH_MAX_WINDOW_MS = 25L * 60L * 60L * 1000L
 internal const val MAX_USAGE_CONTINUATIONS_PER_CHAIN = 2
 internal const val USAGE_CONTINUATION_DELAY_SECONDS = 30L
 internal const val SERVER_USAGE_MAX_ATTEMPTS = 5
+
+/** 服务端 409 重试耗尽时最多自动换几次批次标识（#568）。 */
+internal const val MAX_USAGE_AUTO_ROTATIONS = 3
+
+/** 同一段"卡住"里最多每 5 分钟留一条"被跳过的唤醒"记录（#568）。 */
+internal const val SKIPPED_BUSY_RECORD_INTERVAL_MS = 5L * 60L * 1000L
 internal const val SERVER_CODE_RETRY_EXHAUSTED = 40903
 internal const val SERVER_CODE_PAYLOAD_CONFLICT = 40902
 internal const val SERVER_CODE_LEASE_LOST = 40904
@@ -128,11 +134,22 @@ class MobileSyncCoordinator @Inject constructor(
 ) {
     // Injectable for tests only; Hilt never sees the lambda as a dependency.
     internal var nowUtcMillis: () -> Long = { System.currentTimeMillis() }
+
+    /**
+     * Test seam only（生产路径永远为 null）：在"已持有 syncMutex、进入锁区间之后"注入一次可取消挂起点，
+     * 用于守住「锁区间内任何取消/异常都必须解锁」这条契约（#568 根因的回归防线）。
+     */
+    internal var firstCriticalSectionHook: (suspend () -> Unit)? = null
     private val mobileDataDao = database.mobileDataDao()
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val usageNotBeforeStore = MobileUsageNotBeforeStore(prefs)
     private val syncMutex = Mutex()
     private val _state = MutableStateFlow(readPersistedState())
+
+    init {
+        // 新进程不会继承旧进程的内存锁，因此上一进程残留的"同步进行中"标记必须作废（#568 评审）。
+        clearSyncRunStarted()
+    }
     val currentState: StateFlow<MobileSyncState> = _state.asStateFlow()
 
     suspend fun legacyOutboxRecoveryPreview(): UsageOutboxRecoveryPreview? {
@@ -168,25 +185,56 @@ class MobileSyncCoordinator @Inject constructor(
         // 同一秒内重复唤醒由台账去重（AC-3.3）；写心搏失败只记日志，绝不改变同步结果（AC-3.3）。
         recordWakeHeartbeat()
 
+        val wakeAtUtc = nowUtcMillis()
         if (!syncMutex.tryLock()) {
+            val busySince = readSyncRunStartedAtUtcMillis()
+            val busyForMillis = busySince?.let { (wakeAtUtc - it).coerceAtLeast(0L) }
             val running = _state.value.copy(
                 isInProgress = true,
                 progressText = "同步正在进行中。"
             )
             persistState(running)
+            // 静默跳过是 #568 里最难查的一段：5 小时 31 分内 596 次唤醒全部止步于此，
+            // 日志与 sync-history 里一条记录都没有，只能从 forensics 的心搏反推。
+            // 从此处起必须留下可 grep 的证据——但要限流：唤醒间隔可能只有几十秒，
+            // 每次都落一行会把这 2000 行的历史表挤出真正有用的记录。
+            val counter = recordSkippedBusyWake(wakeAtUtc)
+            if (counter.shouldRecord) {
+                logs.warn(
+                    "mobile-sync",
+                    "上一次同步仍未结束，本次唤醒被跳过（未进入同步）。",
+                    mapOf(
+                        "busySinceUtcMillis" to (busySince ?: 0L),
+                        "busyForMillis" to (busyForMillis ?: -1L),
+                        "skippedBusyCount" to counter.total
+                    )
+                )
+                MobileSyncHistory.recordSkippedBusy(
+                    dao = mobileDataDao,
+                    logs = logs,
+                    nowUtcMillis = wakeAtUtc,
+                    pendingCount = pendingQueueCount(),
+                    busyForMillis = busyForMillis
+                )
+            }
             // This wake performed no sync work; never use stale success state to schedule continuation.
             return running
         }
 
-        val historyStartedAtUtc = nowUtcMillis()
-        MobileSyncHistory.failInterrupted(
-            dao = mobileDataDao,
-            logs = logs,
-            nowUtcMillis = historyStartedAtUtc
-        )
+        markSyncRunStarted(wakeAtUtc)
+        val historyStartedAtUtc = wakeAtUtc
         var historyId: Long? = null
         var resultState: MobileSyncState? = null
         try {
+            firstCriticalSectionHook?.invoke()
+            // **必须留在 try 内**（#568 根因）：它是 tryLock 成功后第一个可取消的挂起调用，
+            // 放在 try 之前一旦被取消（WorkManager 停止 worker 等）就会跳过 finally，
+            // syncMutex 永久泄漏，之后每次唤醒都在 tryLock 处静默短路，只能靠重启进程解除。
+            MobileSyncHistory.failInterrupted(
+                dao = mobileDataDao,
+                logs = logs,
+                nowUtcMillis = historyStartedAtUtc
+            )
             historyId = MobileSyncHistory.begin(
                 dao = mobileDataDao,
                 logs = logs,
@@ -217,6 +265,7 @@ class MobileSyncCoordinator @Inject constructor(
                 }
             } finally {
                 syncMutex.unlock()
+                clearSyncRunStarted()
             }
         }
         val completedState = checkNotNull(resultState)
@@ -828,7 +877,7 @@ class MobileSyncCoordinator @Inject constructor(
                 ?: "服务端以 409 阻止了该批次。"
             val userGuidance = when (recoveryState.blockReason) {
                 UsageBatchBlockReason.RETRY_EXHAUSTED ->
-                    "服务端已耗尽该批次重试次数。本地数据仍保留，可点击“立即同步”生成新的批次重试。"
+                    "服务端已多次拒绝该批次（重试耗尽），自动换过批次标识后仍被拒。本地数据仍保留，可点击“立即同步”再试一次。"
                 UsageBatchBlockReason.PAYLOAD_CONFLICT ->
                     "服务端检测到批次内容冲突。本地数据仍保留，需确认账号/服务器与批次内容后处理，不能自动换批次绕过。"
                 UsageBatchBlockReason.LEASE_LOST ->
@@ -1033,13 +1082,15 @@ class MobileSyncCoordinator @Inject constructor(
             } else {
                 rawMessage
             }
-            if (isConflict && blockReason != null) {
-                recordUsageBatchConflict(
+            val conflictDecision = if (isConflict && blockReason != null) {
+                applyUsageBatchConflict(
                     baseBatchId = baseBatchId,
                     binding = recoveryBinding,
                     reason = blockReason,
                     message = message
                 )
+            } else {
+                null
             }
             markUsageFailed(eventIds, summaryIds, apps, message)
             logs.warn(
@@ -1047,6 +1098,36 @@ class MobileSyncCoordinator @Inject constructor(
                 "使用记录上传异常：$message",
                 mapOf("windowStartUtc" to windowStartUtc, "windowEndUtc" to windowEndUtc, "message" to message)
             )
+            if (conflictDecision?.batchIdRotated == true) {
+                // 重试耗尽：服务端已经不会再接受这个批次标识，直接换新的 generation 重传，
+                // 不再要求用户手动点"立即同步"（#568 / 维护方决定 Q5）。
+                // 租约丢失不走这里：那是瞬态冲突，同一个标识再试一次就能拿到回放。
+                logs.warn(
+                    "mobile-sync",
+                    "服务端拒绝了该批次标识，已自动换用新的批次标识重试。",
+                    mapOf(
+                        "baseBatchId" to baseBatchId,
+                        "serverCode" to (serverCode ?: 0),
+                        "recoveryEpoch" to conflictDecision.state.recoveryEpoch
+                    )
+                )
+                return state(
+                    phase = "upload-retry-new-generation",
+                    progressText = "服务端已拒绝该批次标识，正在用新批次标识重试。",
+                    outcome = MobileSyncOutcome.RETRY,
+                    failedCount = maxOf(1, sentItems.size),
+                    lastError = message,
+                    lastErrorDetail = message,
+                    currentWindowStartUtc = windowStartUtc,
+                    currentWindowEndUtc = windowEndUtc,
+                    currentEventCount = events.size,
+                    currentSummaryCount = summaries.size,
+                    currentAppMetadataCount = apps.size,
+                    lastBatchId = batchId,
+                    lastBatchStatus = "auto-new-generation",
+                    pendingQueueCount = pendingQueueCount()
+                )
+            }
             return state(
                 phase = "upload-failed",
                 progressText = "使用记录上传失败：$message",
@@ -1364,6 +1445,57 @@ class MobileSyncCoordinator @Inject constructor(
             .toString()
     }
 
+    /** 记录当前同步轮次的开始时刻，供"被跳过的唤醒"解释持锁时长（#568）。 */
+    private fun markSyncRunStarted(nowUtcMillis: Long) {
+        prefs.edit().putLong(SYNC_RUN_STARTED_AT_KEY, nowUtcMillis).apply()
+    }
+
+    private fun clearSyncRunStarted() {
+        // 同时清掉限流窗口：一段卡住结束之后，下一次卡住的首条记录必须重新算"首次"（#568 评审）。
+        prefs.edit()
+            .remove(SYNC_RUN_STARTED_AT_KEY)
+            .remove(SYNC_SKIPPED_BUSY_LAST_RECORDED_AT_KEY)
+            .apply()
+    }
+
+    /**
+     * 读取当前同步轮次的开始时刻。
+     *
+     * `syncMutex` 是进程内存锁，这个标记却是持久化的：进程被系统强杀（LMK/崩溃/换包重启）时
+     * `finally` 不会执行，标记会残留。因此超过 [SYNC_RUN_MARKER_STALE_AFTER_MS] 的标记一律视为失效
+     * 并清掉，避免诊断包报出"同步已运行几十小时"这种假象（#568 评审）。
+     */
+    private fun readSyncRunStartedAtUtcMillis(): Long? {
+        val value = prefs.getLong(SYNC_RUN_STARTED_AT_KEY, 0L)
+        if (value <= 0L) return null
+        val age = nowUtcMillis() - value
+        if (age < 0L || age > SYNC_RUN_MARKER_STALE_AFTER_MS) {
+            clearSyncRunStarted()
+            return null
+        }
+        return value
+    }
+
+    /**
+     * 累加"被跳过的唤醒"计数，并决定这一次是否需要留一行日志/历史。
+     *
+     * 限流是必要的：唤醒可能每几十秒一次（事故里中位间隔 24.4 秒），每次都落行会很快把
+     * `mobile_sync_batches` 里只保留最近 2000 行的历史挤出真正有用的记录。
+     */
+    private fun recordSkippedBusyWake(nowUtcMillis: Long): SkippedBusyCounter {
+        val total = prefs.getLong(SYNC_SKIPPED_BUSY_COUNT_KEY, 0L) + 1L
+        val lastRecordedAt = prefs.getLong(SYNC_SKIPPED_BUSY_LAST_RECORDED_AT_KEY, 0L)
+        val shouldRecord = shouldRecordSkippedBusy(nowUtcMillis, lastRecordedAt)
+        val editor = prefs.edit().putLong(SYNC_SKIPPED_BUSY_COUNT_KEY, total)
+        if (shouldRecord) {
+            editor.putLong(SYNC_SKIPPED_BUSY_LAST_RECORDED_AT_KEY, nowUtcMillis)
+        }
+        editor.apply()
+        return SkippedBusyCounter(shouldRecord = shouldRecord, total = total)
+    }
+
+    private data class SkippedBusyCounter(val shouldRecord: Boolean, val total: Long)
+
     private fun persistState(state: MobileSyncState) {
         prefs.edit()
             .putString("phase", state.phase)
@@ -1387,8 +1519,8 @@ class MobileSyncCoordinator @Inject constructor(
             .putString("last_batch_id", state.lastBatchId)
             .putString("last_batch_status", state.lastBatchStatus)
             .putString("heartbeat_status", state.heartbeatStatus)
-            .putString("last_attempted_upload_at", state.lastAttemptedUploadAt)
-            .putString("last_successful_upload_at", state.lastSuccessfulUploadAt)
+            .putString(LAST_ATTEMPTED_UPLOAD_AT_KEY, state.lastAttemptedUploadAt)
+            .putString(LAST_SUCCESSFUL_UPLOAD_AT_KEY, state.lastSuccessfulUploadAt)
             .commit()
         _state.value = state
     }
@@ -1745,6 +1877,7 @@ class MobileSyncCoordinator @Inject constructor(
                     UsageBatchBlockReason.values().firstOrNull { it.name == stored }
                 },
             lastTerminalError = prefs.getString("${storage}_error", null),
+            autoRotations = prefs.getInt("${storage}_auto_rotations", 0),
             binding = binding
         ))
     }
@@ -1765,17 +1898,16 @@ class MobileSyncCoordinator @Inject constructor(
         )
     }
 
-    private fun recordUsageBatchConflict(
+    private fun applyUsageBatchConflict(
         baseBatchId: String,
         binding: UsageBatchRecoveryBinding,
         reason: UsageBatchBlockReason,
         message: String
-    ) {
+    ): UsageBatchRecoveryDecision {
         val current = readUsageBatchRecoveryState(baseBatchId, binding)
-        writeUsageBatchRecoveryState(
-            baseBatchId,
-            usageBatchRecoveryStateAfterConflict(current, reason, message)
-        )
+        val decision = decideUsageBatchConflictRecovery(current, reason, message)
+        writeUsageBatchRecoveryState(baseBatchId, decision.state)
+        return decision
     }
 
     private fun prepareManualUsageBatchRecovery(
@@ -1805,6 +1937,7 @@ class MobileSyncCoordinator @Inject constructor(
             .putBoolean("${storage}_blocked", state.blockedBy409)
             .putString("${storage}_reason", state.blockReason?.name)
             .putString("${storage}_error", state.lastTerminalError)
+            .putInt("${storage}_auto_rotations", state.autoRotations)
             .apply()
     }
 
@@ -1822,6 +1955,7 @@ class MobileSyncCoordinator @Inject constructor(
             .remove("${storage}_blocked")
             .remove("${storage}_reason")
             .remove("${storage}_error")
+            .remove("${storage}_auto_rotations")
             .apply()
     }
 
@@ -1875,6 +2009,26 @@ class MobileSyncCoordinator @Inject constructor(
         private const val PREFS_NAME = "pim_mobile_sync_state"
         private const val USAGE_OUTBOX_SERVER_KEY = "usage_outbox_server_identity"
         private const val USAGE_OUTBOX_OWNER_KEY = "usage_outbox_owner_id"
+
+        /** 当前同步轮次开始时刻；存在即说明有同步在跑，供"被跳过的唤醒"与诊断解释持锁时长（#568）。 */
+        internal const val SYNC_RUN_STARTED_AT_KEY = "sync_run_started_at_utc_millis"
+
+        /** 因上一次同步未结束而被跳过的唤醒次数（#568 诊断）。 */
+        internal const val SYNC_SKIPPED_BUSY_COUNT_KEY = "sync_skipped_busy_count"
+
+        /** 诊断包读取"最近一次同步尝试 / 最近一次成功"用的持久化键（#568）。 */
+        internal const val LAST_ATTEMPTED_UPLOAD_AT_KEY = "last_attempted_upload_at"
+
+        internal const val LAST_SUCCESSFUL_UPLOAD_AT_KEY = "last_successful_upload_at"
+
+        /** 久到不可能是"当前正在跑"的同步标记（#568 评审：进程被杀后残留）。 */
+        internal const val SYNC_RUN_MARKER_STALE_AFTER_MS = 60L * 60L * 1000L
+
+        private const val SYNC_SKIPPED_BUSY_LAST_RECORDED_AT_KEY =
+            "sync_skipped_busy_last_recorded_at_utc_millis"
+
+
+        internal const val PREFS_NAME_FOR_DIAGNOSTICS = PREFS_NAME
     }
 }
 
@@ -2161,6 +2315,8 @@ internal data class UsageBatchRecoveryState(
     val blockedBy409: Boolean = false,
     val blockReason: UsageBatchBlockReason? = null,
     val lastTerminalError: String? = null,
+    /** 已经自动换过多少次批次标识（#568）。超过上限才升级成需要人工处理的阻塞。 */
+    val autoRotations: Int = 0,
     val binding: UsageBatchRecoveryBinding? = null
 )
 
@@ -2182,6 +2338,49 @@ internal fun normalizeUsageBatchRecoveryState(
     } else {
         state
     }
+}
+
+/**
+ * 服务端 409 的恢复决策（#568）：
+ * - 重试耗尽（40903）：服务端不会再接受这个批次标识，自动换新的 generation 重传；
+ *   最多自动换 [maxAutoRotations] 次，之后才退回"需要用户手动重试"，避免无界循环。
+ * - 租约丢失（40904）：**保持既有行为**——同一个批次标识再试一次即可（服务端会回放终态或继续处理），
+ *   换标识只会凭空多一条批次行。这条既有语义有专门的用例守着，不在本次改。
+ * - 内容冲突（40902）与未知冲突：不自动换标识——换标识会绕过服务端对"同一批次内容不一致"的保护。
+ */
+/** 被跳过的唤醒是否需要留一行记录：首次必记，之后同一段卡住里每 [SKIPPED_BUSY_RECORD_INTERVAL_MS] 记一次。 */
+internal fun shouldRecordSkippedBusy(
+    nowUtcMillis: Long,
+    lastRecordedAtUtcMillis: Long,
+    intervalMillis: Long = SKIPPED_BUSY_RECORD_INTERVAL_MS
+): Boolean = lastRecordedAtUtcMillis <= 0L ||
+    nowUtcMillis - lastRecordedAtUtcMillis >= intervalMillis
+
+internal fun decideUsageBatchConflictRecovery(
+    state: UsageBatchRecoveryState,
+    reason: UsageBatchBlockReason,
+    message: String,
+    maxAutoRotations: Int = MAX_USAGE_AUTO_ROTATIONS
+): UsageBatchRecoveryDecision {
+    val autoRotatable = reason == UsageBatchBlockReason.RETRY_EXHAUSTED
+    if (!autoRotatable || state.autoRotations >= maxAutoRotations) {
+        return UsageBatchRecoveryDecision(
+            state = usageBatchRecoveryStateAfterConflict(state, reason, message),
+            batchIdRotated = false
+        )
+    }
+
+    return UsageBatchRecoveryDecision(
+        state = state.copy(
+            recoveryEpoch = state.recoveryEpoch + 1,
+            noProgressAttempts = 0,
+            blockedBy409 = false,
+            blockReason = null,
+            lastTerminalError = message.take(500),
+            autoRotations = state.autoRotations + 1
+        ),
+        batchIdRotated = true
+    )
 }
 
 internal fun usageBatchRecoveryStateAfterConflict(

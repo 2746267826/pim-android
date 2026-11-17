@@ -19,6 +19,9 @@ import com.pim.core.auth.TokenManager
 import com.pim.core.network.ApiClientProvider
 import com.pim.core.settings.ServerSettingsStore
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.async
+import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.test.runTest
@@ -183,17 +186,109 @@ class MobileSyncIssue568AndroidTests {
 
     @Test
     fun runLongerThanTheCapEndsAsRetryInsteadOfKillingTheWorker() = runTest {
+        // 先造一条真实积压：超时收尾必须如实上报它，而不是写死 0（评审 Important 3）。
+        db.mobileDataDao().insertUsageEvents(listOf(pendingUsageEvent()))
+
         val coordinator = buildCoordinator()
-        // 上限按真实时间计时。把它压到 1ms：这一轮的锁区间里有真实的数据库/网络挂起点，
-        // 必然超过上限，于是收尾必须是 RETRY 而不是让 Worker 进 CANCELLED。
-        coordinator.maxSyncRunDurationMs = 1
+        coordinator.maxSyncRunDurationMs = 200
+        // 上限之内挂起且永不返回：这一轮只可能以"超时"结束，不依赖毫秒竞速（评审 Important 5）。
+        coordinator.beforeRunHook = { awaitCancellation() }
 
         val state = coordinator.syncOnOpen()
 
         assertEquals(MobileSyncOutcome.RETRY, state.outcome)
         assertEquals("sync-timeout", state.phase)
+        assertTrue("超时收尾必须保留真实积压数量", state.pendingQueueCount > 0)
         // 超时不是成功，也不该让 Worker 进 CANCELLED；心跳原因按"上传失败"上报。
         assertEquals("upload-failed", coordinator.lastWakeBlockReason())
+        coordinator.beforeRunHook = null
+    }
+
+    @Test
+    fun twoWakesThatBothSawTheSameStaleLockDoNotRunConcurrently() = runTest {
+        // 复现评审 Critical 1：两个唤醒都读到同一条"已持锁 16 分钟"的标记，
+        // 绝不能各自换一把锁同时进入同步。
+        val coordinator = buildCoordinator()
+        val firstEntered = CompletableDeferred<Unit>()
+        val releaseFirst = CompletableDeferred<Unit>()
+        val entries = java.util.concurrent.atomic.AtomicInteger(0)
+        coordinator.beforeRunHook = {
+            entries.incrementAndGet()
+            firstEntered.complete(Unit)
+            releaseFirst.await()
+        }
+
+        val now = 1_750_000_000_000L
+        coordinator.nowUtcMillis = { now }
+        syncMutexOf(coordinator).lock()
+        val prefs = context.getSharedPreferences("pim_mobile_sync_state", Context.MODE_PRIVATE)
+        prefs.edit()
+            .putLong(MobileSyncCoordinator.SYNC_RUN_STARTED_AT_KEY, now - 16 * 60_000L)
+            .commit()
+
+        val first = async { coordinator.syncOnOpen() }
+        firstEntered.await()
+        // 第二个唤醒在第一个仍在跑时到达：必须被挡住（拿不到锁就跳过），不能另起一轮。
+        val second = coordinator.syncOnOpen()
+        releaseFirst.complete(Unit)
+        first.await()
+
+        assertEquals("同一时刻只允许一轮同步进入", 1, entries.get())
+        assertEquals("同步正在进行中。", second.progressText)
+        coordinator.beforeRunHook = null
+    }
+
+    @Test
+    fun theDeadLockSwapGuardRejectsBothRaces() {
+        val observed = kotlinx.coroutines.sync.Mutex()
+        val stale = 1_000L
+
+        // 正常情况：同一把锁 + 同一条卡死标记 → 允许换。
+        assertTrue(shouldReplaceSyncLock(observed, observed, storedMarker = stale, observedMarker = stale))
+
+        // 反例 1（评审 Critical 1）：另一个唤醒已经换过锁 → 当前锁已不是我们观察到的那个，禁止再换。
+        val alreadyReplaced = kotlinx.coroutines.sync.Mutex()
+        assertFalse(
+            shouldReplaceSyncLock(alreadyReplaced, observed, storedMarker = stale, observedMarker = stale)
+        )
+
+        // 反例 2：锁还是那把，但标记已被别人认领（更新过）→ 说明自愈已经在进行，禁止再换。
+        assertFalse(
+            shouldReplaceSyncLock(observed, observed, storedMarker = stale + 60_000L, observedMarker = stale)
+        )
+
+        // 没有观察到标记（不该走到判死）→ 禁止换。
+        assertFalse(shouldReplaceSyncLock(observed, observed, storedMarker = stale, observedMarker = null))
+    }
+
+    @Test
+    fun wakeReasonCoversEveryDocumentedValue() {
+        // #569 的 8 个取值都要能从某个真实收尾状态映射出来，避免"文档里有、代码里到不了"。
+        val cases = mapOf(
+            "uploaded" to Triple("catching-up", MobileSyncOutcome.SUCCESS, false),
+            "deferred-not-before" to Triple("waiting-not-before", MobileSyncOutcome.DEFERRED, false),
+            "lock-dead-reset" to Triple("upload-failed", MobileSyncOutcome.RETRY, true),
+            "auth-required" to Triple("auth-missing", MobileSyncOutcome.BLOCKED, false),
+            "permission-required" to Triple("usage-permission-missing", MobileSyncOutcome.BLOCKED, false),
+            "server-not-configured" to Triple("server-missing", MobileSyncOutcome.BLOCKED, false),
+            "upload-failed" to Triple("upload-failed", MobileSyncOutcome.RETRY, false)
+        )
+        // `skipped-busy` 不走这个映射：它在"锁被占"分支里直接记录，由
+        // threeConsecutiveSkippedWakesRaiseALoudLog / skippedBusyWakeIsRecordedAsItsOwnHistoryRow 覆盖。
+        assertEquals(7, cases.size)
+        cases.forEach { (expected, input) ->
+            val (phase, outcome, dead) = input
+            assertEquals(
+                "phase=$phase outcome=$outcome deadLockReset=$dead",
+                expected,
+                wakeBlockReasonFor(phase, outcome, dead)
+            )
+        }
+        // 自愈发生但本轮成功：语义是"为什么没上传"，必须报 uploaded（评审 Minor 6）。
+        assertEquals(
+            "uploaded",
+            wakeBlockReasonFor("upload-blocked", MobileSyncOutcome.SUCCESS, deadLockReset = true)
+        )
     }
 
     @Test
@@ -283,6 +378,19 @@ class MobileSyncIssue568AndroidTests {
         val next = coordinator.syncOnOpen()
         assertFalse(next.progressText == "同步正在进行中。")
     }
+
+    private fun pendingUsageEvent(): com.pim.app.data.MobileUsageEventEntity =
+        com.pim.app.data.MobileUsageEventEntity(
+            packageName = "com.example.pending",
+            eventType = 1,
+            eventName = "MOVE_TO_FOREGROUND",
+            eventTimeUtc = 1_750_000_000_000L,
+            source = "usage-stats",
+            sourceWindowStartUtc = 1_750_000_000_000L,
+            sourceWindowEndUtc = 1_750_000_060_000L,
+            collectedAtUtc = 1_750_000_000_000L,
+            rawJson = "{}"
+        )
 
     private fun buildCoordinator(): MobileSyncCoordinator {
         val trackPrefs = context.getSharedPreferences("issue-568-sync-test", Context.MODE_PRIVATE)

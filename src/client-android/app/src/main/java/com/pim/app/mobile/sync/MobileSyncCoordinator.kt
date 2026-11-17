@@ -167,6 +167,12 @@ class MobileSyncCoordinator @Inject constructor(
      * 用于守住「锁区间内任何取消/异常都必须解锁」这条契约（#568 根因的回归防线）。
      */
     internal var firstCriticalSectionHook: (suspend () -> Unit)? = null
+
+    /**
+     * Test seam only（生产永远为 null）：在**单轮上限之内**、`runSyncOnOpen` 之前注入一次挂起，
+     * 让"这轮超时"可以确定性地发生，而不是靠真实毫秒竞速（评审 Important 5）。
+     */
+    internal var beforeRunHook: (suspend () -> Unit)? = null
     private val mobileDataDao = database.mobileDataDao()
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val usageNotBeforeStore = MobileUsageNotBeforeStore(prefs)
@@ -228,16 +234,27 @@ class MobileSyncCoordinator @Inject constructor(
             busyForMillis != null &&
             busyForMillis >= SYNC_LOCK_DEAD_AFTER_MS
         ) {
-            val freshMutex = synchronized(syncLockGuard) {
-                syncMutex.let { current ->
-                    if (current.tryLock()) current else {
-                        syncMutex = Mutex()
-                        syncMutex.tryLock().let { if (it) syncMutex else null }
-                    }
+            // 关键：只有在「锁还是我们观察到的那把」且「卡死标记还是我们读到的那一个」时才替换，
+            // 并且在同一个临界区里立刻把标记改成自己的时刻完成认领。否则两个同时到达的唤醒会各自换一把锁、
+            // 同时进入同步（评审 Critical 1）。
+            val observedDeadMutex = syncMutex
+            val observedMarker = busySince
+            val replacement = synchronized(syncLockGuard) {
+                val markerUnchanged = shouldReplaceSyncLock(
+                    currentMutex = syncMutex,
+                    observedMutex = observedDeadMutex,
+                    storedMarker = prefs.getLong(SYNC_RUN_STARTED_AT_KEY, 0L),
+                    observedMarker = observedMarker
+                )
+                if (markerUnchanged) {
+                    syncMutex = Mutex()
+                    // 先认领：后续唤醒会看到"刚开始跑"，不会再判一次死锁。
+                    markSyncRunStarted(wakeAtUtc)
                 }
+                syncMutex
             }
-            if (freshMutex != null) {
-                acquiredMutex = freshMutex
+            if (replacement !== observedDeadMutex && replacement.tryLock()) {
+                acquiredMutex = replacement
                 deadLockReset = true
                 logs.error(
                     "mobile-sync",
@@ -328,6 +345,7 @@ class MobileSyncCoordinator @Inject constructor(
             // 放在 `runTest` 的虚拟时间里会被瞬间推进成超时（既有用例就因此误判）。
             resultState = withContext(Dispatchers.Default) {
                 withTimeoutOrNull(maxSyncRunDurationMs) {
+                    beforeRunHook?.invoke()
                     runSyncOnOpen(manualRecoveryRetry, legacyOutboxClaim)
                 }
             } ?: syncRunTimedOutState()
@@ -354,7 +372,8 @@ class MobileSyncCoordinator @Inject constructor(
                 }
             } finally {
                 heldMutex.unlock()
-                clearSyncRunStarted()
+                // 带上本轮的起始时刻：被弃用的旧协程退出时不得擦掉新轮次的标记（评审 Important 4）。
+                clearSyncRunStarted(wakeAtUtc)
             }
         }
         val completedState = checkNotNull(resultState)
@@ -1542,7 +1561,17 @@ class MobileSyncCoordinator @Inject constructor(
         prefs.edit().putLong(SYNC_RUN_STARTED_AT_KEY, nowUtcMillis).apply()
     }
 
-    private fun clearSyncRunStarted() {
+    /**
+     * 清理"当前同步轮次"标记。
+     *
+     * [runStartedAt] 是调用方自己写进去的起始时刻：只有它仍然等于存储里的值时才清理。
+     * 否则（例如一个被判死但最终又返回的旧轮次）会把新轮次的标记擦掉，让后续唤醒读不到持锁时长
+     * （评审 Important 4）。不传参数表示强制清理（进程启动、标记失效时使用）。
+     */
+    private fun clearSyncRunStarted(runStartedAt: Long? = null) {
+        if (runStartedAt != null && prefs.getLong(SYNC_RUN_STARTED_AT_KEY, 0L) != runStartedAt) {
+            return
+        }
         // 同时清掉限流窗口与连击计数：一段卡住结束之后，下一次卡住的首条记录必须重新算"首次"，
         // 连续跳过告警也要重新从 0 数（#568 评审 / D2）。
         prefs.edit()
@@ -1552,15 +1581,18 @@ class MobileSyncCoordinator @Inject constructor(
             .apply()
     }
 
-    /** 单轮超时的收尾状态：按 RETRY 退避，而不是让 Worker 进 CANCELLED（#568 D2）。 */
-    private fun syncRunTimedOutState(): MobileSyncState = state(
+    /**
+     * 单轮超时的收尾状态：按 RETRY 退避，而不是让 Worker 进 CANCELLED（#568 D2）。
+     * 积压数量必须读真实值——写死 0 会让 UI/心跳误报"已经传完"（评审 Important 3）。
+     */
+    private suspend fun syncRunTimedOutState(): MobileSyncState = state(
         phase = "sync-timeout",
         progressText = "本次同步超过 " + (maxSyncRunDurationMs / 60_000L) +
             " 分钟上限，已中止本轮并等待下次唤醒。",
         outcome = MobileSyncOutcome.RETRY,
         lastError = "sync-run-timeout",
         lastErrorDetail = "sync-run-timeout",
-        pendingQueueCount = 0
+        pendingQueueCount = pendingQueueCount()
     )
 
     /**
@@ -1575,24 +1607,8 @@ class MobileSyncCoordinator @Inject constructor(
     /** 心跳上报读这里：最近一次唤醒未上传的原因（#569）。 */
     fun lastWakeBlockReason(): String? = prefs.getString(WAKE_BLOCK_REASON_KEY, null)
 
-    private fun wakeReasonFor(state: MobileSyncState, deadLockReset: Boolean): String {
-        if (deadLockReset) return WAKE_REASON_LOCK_DEAD_RESET
-        return when (state.phase) {
-            "server-missing" -> WAKE_REASON_SERVER_NOT_CONFIGURED
-            "auth-missing" -> WAKE_REASON_AUTH_REQUIRED
-            "usage-permission-missing" -> WAKE_REASON_PERMISSION_REQUIRED
-            "waiting-not-before" -> WAKE_REASON_DEFERRED_NOT_BEFORE
-            "upload-failed",
-            "upload-blocked",
-            "upload-retry-new-generation",
-            "sync-timeout" -> WAKE_REASON_UPLOAD_FAILED
-            else -> if (state.outcome == MobileSyncOutcome.SUCCESS) {
-                WAKE_REASON_UPLOADED
-            } else {
-                WAKE_REASON_UPLOAD_FAILED
-            }
-        }
-    }
+    private fun wakeReasonFor(state: MobileSyncState, deadLockReset: Boolean): String =
+        wakeBlockReasonFor(state.phase, state.outcome, deadLockReset)
 
     /**
      * 读取当前同步轮次的开始时刻。
@@ -2497,6 +2513,43 @@ internal fun normalizeUsageBatchRecoveryState(
  *   换标识只会凭空多一条批次行。这条既有语义有专门的用例守着，不在本次改。
  * - 内容冲突（40902）与未知冲突：不自动换标识——换标识会绕过服务端对"同一批次内容不一致"的保护。
  */
+/**
+ * 判死换锁的唯一守卫（#568 D2 / 评审 Critical 1）。
+ *
+ * 必须同时满足：锁还是我们观察到的那把**且**卡死标记还是我们读到的那个。只查其中一条都不够：
+ * - 只查锁身份：另一个已经换过锁、但标记还没更新的唤醒会再换一把，两轮各持一把锁同时进入；
+ * - 只查标记：标记未变时同样可能并发换锁。
+ * 抽成纯函数是为了能在单测里直接覆盖这两个反例（真正的交错窗口无法在单测里确定性复现）。
+ */
+internal fun shouldReplaceSyncLock(
+    currentMutex: Mutex,
+    observedMutex: Mutex,
+    storedMarker: Long,
+    observedMarker: Long?
+): Boolean = currentMutex === observedMutex &&
+    observedMarker != null &&
+    storedMarker == observedMarker
+
+/**
+ * 收尾状态 → 「最近一次唤醒未上传原因」（#569）。取值与 pim-api 契约 description 同口径。
+ *
+ * 优先级：**真的上传成功就是 `uploaded`**——心跳字段的语义是"为什么没上传"，
+ * 自愈发生过但本轮成功时不应把它报成失败（评审 Minor 6）；自愈本身的证据在 error 日志里。
+ */
+internal fun wakeBlockReasonFor(
+    phase: String,
+    outcome: MobileSyncOutcome,
+    deadLockReset: Boolean
+): String = when {
+    outcome == MobileSyncOutcome.SUCCESS -> WAKE_REASON_UPLOADED
+    deadLockReset -> WAKE_REASON_LOCK_DEAD_RESET
+    phase == "server-missing" -> WAKE_REASON_SERVER_NOT_CONFIGURED
+    phase == "auth-missing" -> WAKE_REASON_AUTH_REQUIRED
+    phase == "usage-permission-missing" -> WAKE_REASON_PERMISSION_REQUIRED
+    phase == "waiting-not-before" -> WAKE_REASON_DEFERRED_NOT_BEFORE
+    else -> WAKE_REASON_UPLOAD_FAILED
+}
+
 /** 被跳过的唤醒是否需要留一行记录：首次必记，之后同一段卡住里每 [SKIPPED_BUSY_RECORD_INTERVAL_MS] 记一次。 */
 internal fun shouldRecordSkippedBusy(
     nowUtcMillis: Long,

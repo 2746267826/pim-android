@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 a96614e9e190c83279045c91b0956190e80074199a54b250ceb8c6d16840972a)
+//   契约快照 : contract/openapi.json (sha256 cbfdfb2904fff81145376ff27971a033f2d0c0b33c488c10024a72810e8c1c15)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -506,6 +506,7 @@ data class DismissNoteTaskSuggestionRequest(
 data class EndpointHeartbeatRequest(
     val appVersion: String? = null,
     val collectionCacheCount: Int? = null,
+    val lastWakeBlockReason: String? = null,
     val platform: String,
     val uploadStatus: String? = null,
 )
@@ -544,6 +545,7 @@ data class EndpointStatusDto(
     val collectionCacheCount: Int,
     val deviceId: String,
     val lastHeartbeatAt: String? = null,
+    val lastWakeBlockReason: String? = null,
     val onlineOnlyBlockedCount: Int,
     val platform: String,
     val uploadStatus: String,

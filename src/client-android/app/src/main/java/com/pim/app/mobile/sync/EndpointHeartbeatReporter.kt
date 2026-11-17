@@ -52,7 +52,15 @@ data class EndpointHeartbeatStatus(
 )
 
 /** 采集上传的结果（`uploadStatus` 口径的来源）。 */
-data class UploadOutcome(val lastError: String?, val hasCompletedUpload: Boolean)
+data class UploadOutcome(
+    val lastError: String?,
+    val hasCompletedUpload: Boolean,
+    /**
+     * 最近一次同步唤醒为什么没有完成上传（#569）。取值口径见 pim-api 契约
+     * `EndpointHeartbeatRequest.lastWakeBlockReason`；null 表示客户端没有可上报的原因。
+     */
+    val lastWakeBlockReason: String? = null
+)
 
 /**
  * 端点心跳的上报入口（端口）：服务的采集循环只依赖这个接口，
@@ -222,7 +230,8 @@ class EndpointHeartbeatReporter internal constructor(
                 platform = PLATFORM,
                 appVersion = appVersionName(),
                 uploadStatus = uploadStatus,
-                collectionCacheCount = collectionCacheCount
+                collectionCacheCount = collectionCacheCount,
+                lastWakeBlockReason = outcome.lastWakeBlockReason
             )
             api.sendEndpointHeartbeat(identity.deviceId, request)
             recordSuccess(now, uploadStatus)

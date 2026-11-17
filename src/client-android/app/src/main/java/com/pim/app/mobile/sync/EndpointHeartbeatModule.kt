@@ -16,7 +16,9 @@ class SyncStateUploadOutcomeSource @Inject constructor(
         val state = coordinator.currentState.value
         return UploadOutcome(
             lastError = state.lastError,
-            hasCompletedUpload = state.lastSuccessfulUploadAt != null
+            hasCompletedUpload = state.lastSuccessfulUploadAt != null,
+            // 原因由 Coordinator 在每一轮唤醒结束时记账（#569），心跳只负责如实上报。
+            lastWakeBlockReason = coordinator.lastWakeBlockReason()
         )
     }
 }

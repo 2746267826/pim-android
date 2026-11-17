@@ -28,6 +28,7 @@ import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.After
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Before
@@ -176,6 +177,85 @@ class MobileSyncIssue568AndroidTests {
         val row = dao.getSyncBatchesBySyncStatus(MobileSyncHistory.SKIPPED_BUSY_STATUS, limit = 10).single()
         assertEquals("sync-busy-skip", row.lastError)
         assertEquals(2_000L, row.finishedAtUtc)
+    }
+
+    // ---------- D2：单轮上限 / 持锁判死 / 连续跳过告警 ----------
+
+    @Test
+    fun runLongerThanTheCapEndsAsRetryInsteadOfKillingTheWorker() = runTest {
+        val coordinator = buildCoordinator()
+        // 上限按真实时间计时。把它压到 1ms：这一轮的锁区间里有真实的数据库/网络挂起点，
+        // 必然超过上限，于是收尾必须是 RETRY 而不是让 Worker 进 CANCELLED。
+        coordinator.maxSyncRunDurationMs = 1
+
+        val state = coordinator.syncOnOpen()
+
+        assertEquals(MobileSyncOutcome.RETRY, state.outcome)
+        assertEquals("sync-timeout", state.phase)
+        // 超时不是成功，也不该让 Worker 进 CANCELLED；心跳原因按"上传失败"上报。
+        assertEquals("upload-failed", coordinator.lastWakeBlockReason())
+    }
+
+    @Test
+    fun aLockHeldForLongerThanTheDeadThresholdIsReplaced() = runTest {
+        val coordinator = buildCoordinator()
+        val mutex = syncMutexOf(coordinator)
+        mutex.lock()
+        try {
+            // 标记"这一轮从 16 分钟前就在跑"：超过 15 分钟判死、但短于 60 分钟失效上限。
+            val startedAt = 1_750_000_000_000L
+            coordinator.nowUtcMillis = { startedAt }
+            coordinator.syncOnOpen() // 第一跳：把 busy 标记写成 startedAt（这一跳会被跳过）
+            val prefs = context.getSharedPreferences("pim_mobile_sync_state", Context.MODE_PRIVATE)
+            prefs.edit()
+                .putLong(MobileSyncCoordinator.SYNC_RUN_STARTED_AT_KEY, startedAt - 16 * 60_000L)
+                .commit()
+            coordinator.nowUtcMillis = { startedAt }
+
+            val healed = coordinator.syncOnOpen()
+
+            // 没有继续白醒：换锁后真的进入同步（本轮以 server-not-configured 收尾）。
+            assertFalse(healed.progressText == "同步正在进行中。")
+            assertEquals("lock-dead-reset", coordinator.lastWakeBlockReason())
+        } finally {
+            if (mutex.isLocked) mutex.unlock()
+        }
+    }
+
+    @Test
+    fun threeConsecutiveSkippedWakesRaiseALoudLog() = runTest {
+        val coordinator = buildCoordinator()
+        val mutex = syncMutexOf(coordinator)
+        mutex.lock()
+        try {
+            repeat(SKIPPED_BUSY_ALERT_STREAK) { coordinator.syncOnOpen() }
+        } finally {
+            mutex.unlock()
+        }
+
+        val loud = logs.recent(limit = 50).filter {
+            it.tag == "mobile-sync" && it.message.contains("连续", ignoreCase = false) &&
+                it.message.contains("被跳过")
+        }
+        assertTrue("连续跳过必须留下一条告警日志", loud.isNotEmpty())
+        assertEquals("skipped-busy", coordinator.lastWakeBlockReason())
+    }
+
+    @Test
+    fun theWakeBlockReasonIsWhatTheHeartbeatReports() = runTest {
+        val coordinator = buildCoordinator()
+        coordinator.syncOnOpen()
+
+        // 心跳读到的必须就是 Coordinator 记下的那个原因（取值本身由各自的路径用例覆盖）。
+        val reason = SyncStateUploadOutcomeSource(coordinator).current().lastWakeBlockReason
+        assertNotNull("同步跑过一轮之后必须有一个可上报的原因", reason)
+        assertEquals(coordinator.lastWakeBlockReason(), reason)
+        assertTrue(
+            reason in setOf(
+                "uploaded", "deferred-not-before", "skipped-busy", "lock-dead-reset",
+                "auth-required", "permission-required", "server-not-configured", "upload-failed"
+            )
+        )
     }
 
     // ---------- 根因回归：锁区间内的取消必须解锁 ----------

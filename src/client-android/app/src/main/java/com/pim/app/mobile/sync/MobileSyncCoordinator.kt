@@ -39,6 +39,7 @@ import com.pim.core.settings.ServerSettingsStore
 import com.pim.core.util.toCauseChainMessage
 import dagger.hilt.android.qualifiers.ApplicationContext
 import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.NonCancellable
 import kotlinx.coroutines.currentCoroutineContext
 import kotlinx.coroutines.ensureActive
@@ -48,6 +49,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.flow.first
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.withContext
+import kotlinx.coroutines.withTimeoutOrNull
 import org.json.JSONObject
 import retrofit2.HttpException
 import java.net.URI
@@ -103,6 +105,25 @@ internal const val MAX_USAGE_AUTO_ROTATIONS = 3
 
 /** 同一段"卡住"里最多每 5 分钟留一条"被跳过的唤醒"记录（#568）。 */
 internal const val SKIPPED_BUSY_RECORD_INTERVAL_MS = 5L * 60L * 1000L
+
+/** 单次同步 run 的上限（#568 D2）：超过就中止本轮并按 RETRY 退避，不让一轮把链路挂住。 */
+internal const val MAX_SYNC_RUN_DURATION_MS = 10L * 60L * 1000L
+
+/** 持锁超过这么久判定为卡死（#568 D2）：换一把新锁继续，而不是继续白醒到重启。 */
+internal const val SYNC_LOCK_DEAD_AFTER_MS = 15L * 60L * 1000L
+
+/** 连续这么多次唤醒被跳过就升级成一条告警（#568 D2）。 */
+internal const val SKIPPED_BUSY_ALERT_STREAK = 3
+
+/** 「最近一次唤醒未上传原因」的取值（#569，与 pim-api 契约 description 同口径）。 */
+internal const val WAKE_REASON_UPLOADED = "uploaded"
+internal const val WAKE_REASON_DEFERRED_NOT_BEFORE = "deferred-not-before"
+internal const val WAKE_REASON_SKIPPED_BUSY = "skipped-busy"
+internal const val WAKE_REASON_LOCK_DEAD_RESET = "lock-dead-reset"
+internal const val WAKE_REASON_AUTH_REQUIRED = "auth-required"
+internal const val WAKE_REASON_PERMISSION_REQUIRED = "permission-required"
+internal const val WAKE_REASON_SERVER_NOT_CONFIGURED = "server-not-configured"
+internal const val WAKE_REASON_UPLOAD_FAILED = "upload-failed"
 internal const val SERVER_CODE_RETRY_EXHAUSTED = 40903
 internal const val SERVER_CODE_PAYLOAD_CONFLICT = 40902
 internal const val SERVER_CODE_LEASE_LOST = 40904
@@ -136,6 +157,12 @@ class MobileSyncCoordinator @Inject constructor(
     internal var nowUtcMillis: () -> Long = { System.currentTimeMillis() }
 
     /**
+     * 单轮上限（#568 D2）。测试可以调小；生产保持 [MAX_SYNC_RUN_DURATION_MS]。
+     * 注意它按**真实时间**计时：`runTest` 会推进虚拟时间，用虚拟时间的 `withTimeout` 会瞬间触发。
+     */
+    internal var maxSyncRunDurationMs: Long = MAX_SYNC_RUN_DURATION_MS
+
+    /**
      * Test seam only（生产路径永远为 null）：在"已持有 syncMutex、进入锁区间之后"注入一次可取消挂起点，
      * 用于守住「锁区间内任何取消/异常都必须解锁」这条契约（#568 根因的回归防线）。
      */
@@ -143,7 +170,10 @@ class MobileSyncCoordinator @Inject constructor(
     private val mobileDataDao = database.mobileDataDao()
     private val prefs = context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
     private val usageNotBeforeStore = MobileUsageNotBeforeStore(prefs)
-    private val syncMutex = Mutex()
+    // 换锁需要重新赋值：挂死的那一轮永远不会返回，只能弃用它持有的那把锁（#568 D2）。
+    @Volatile
+    private var syncMutex = Mutex()
+    private val syncLockGuard = Any()
     private val _state = MutableStateFlow(readPersistedState())
 
     init {
@@ -186,9 +216,44 @@ class MobileSyncCoordinator @Inject constructor(
         recordWakeHeartbeat()
 
         val wakeAtUtc = nowUtcMillis()
-        if (!syncMutex.tryLock()) {
-            val busySince = readSyncRunStartedAtUtcMillis()
-            val busyForMillis = busySince?.let { (wakeAtUtc - it).coerceAtLeast(0L) }
+        val busySince = readSyncRunStartedAtUtcMillis()
+        val busyForMillis = busySince?.let { (wakeAtUtc - it).coerceAtLeast(0L) }
+
+        var acquiredMutex: Mutex? = syncMutex.let { if (it.tryLock()) it else null }
+        var deadLockReset = false
+
+        // 持锁超过上限 = 持有者挂死（不是被取消，取消会走 finally 解锁）。
+        // 这种锁不会自己松开，只能弃用并换一把新的，否则之后每次唤醒都白醒到进程重启（#568 D2）。
+        if (acquiredMutex == null &&
+            busyForMillis != null &&
+            busyForMillis >= SYNC_LOCK_DEAD_AFTER_MS
+        ) {
+            val freshMutex = synchronized(syncLockGuard) {
+                syncMutex.let { current ->
+                    if (current.tryLock()) current else {
+                        syncMutex = Mutex()
+                        syncMutex.tryLock().let { if (it) syncMutex else null }
+                    }
+                }
+            }
+            if (freshMutex != null) {
+                acquiredMutex = freshMutex
+                deadLockReset = true
+                logs.error(
+                    "mobile-sync",
+                    "同步持锁超过 " + (SYNC_LOCK_DEAD_AFTER_MS / 60_000L) +
+                        " 分钟，判定卡死并换锁继续本轮。",
+                    throwable = null,
+                    details = mapOf(
+                        "busySinceUtcMillis" to (busySince ?: 0L),
+                        "busyForMillis" to (busyForMillis ?: -1L)
+                    )
+                )
+                recordWakeBlockReason(WAKE_REASON_LOCK_DEAD_RESET)
+            }
+        }
+
+        if (acquiredMutex == null) {
             val running = _state.value.copy(
                 isInProgress = true,
                 progressText = "同步正在进行中。"
@@ -206,7 +271,8 @@ class MobileSyncCoordinator @Inject constructor(
                     mapOf(
                         "busySinceUtcMillis" to (busySince ?: 0L),
                         "busyForMillis" to (busyForMillis ?: -1L),
-                        "skippedBusyCount" to counter.total
+                        "skippedBusyCount" to counter.total,
+                        "skippedBusyStreak" to counter.streak
                     )
                 )
                 MobileSyncHistory.recordSkippedBusy(
@@ -217,10 +283,25 @@ class MobileSyncCoordinator @Inject constructor(
                     busyForMillis = busyForMillis
                 )
             }
+            if (counter.streak == SKIPPED_BUSY_ALERT_STREAK.toLong()) {
+                // 连续被跳过说明"卡住"已经不是偶发。这条**不受 5 分钟留痕限流影响**：
+                // 连击在几十秒内就能凑满，被限流挡住就永远不会响（#568 D2）。只在正好到阈值时打一次。
+                logs.error(
+                    "mobile-sync",
+                    "连续 " + counter.streak + " 次唤醒都因上一次同步未结束而被跳过，请检查同步是否卡死。",
+                    throwable = null,
+                    details = mapOf(
+                        "busyForMillis" to (busyForMillis ?: -1L),
+                        "skippedBusyStreak" to counter.streak
+                    )
+                )
+            }
+            recordWakeBlockReason(WAKE_REASON_SKIPPED_BUSY)
             // This wake performed no sync work; never use stale success state to schedule continuation.
             return running
         }
 
+        val heldMutex: Mutex = acquiredMutex
         markSyncRunStarted(wakeAtUtc)
         val historyStartedAtUtc = wakeAtUtc
         var historyId: Long? = null
@@ -241,7 +322,15 @@ class MobileSyncCoordinator @Inject constructor(
                 nowUtcMillis = historyStartedAtUtc,
                 pendingCount = pendingQueueCount()
             )
-            resultState = runSyncOnOpen(manualRecoveryRetry, legacyOutboxClaim)
+            // 单轮上限：超时就按 RETRY 收尾，绝不让一轮把整条链路挂住（#568 D2）。
+            // withTimeoutOrNull 会取消内层协程，内层的 finally 仍然是 NonCancellable，锁照常释放。
+            // 在 Dispatchers.Default 上计时：`withTimeout` 用的是所在上下文的调度器，
+            // 放在 `runTest` 的虚拟时间里会被瞬间推进成超时（既有用例就因此误判）。
+            resultState = withContext(Dispatchers.Default) {
+                withTimeoutOrNull(maxSyncRunDurationMs) {
+                    runSyncOnOpen(manualRecoveryRetry, legacyOutboxClaim)
+                }
+            } ?: syncRunTimedOutState()
         } finally {
             try {
                 withContext(NonCancellable) {
@@ -264,11 +353,14 @@ class MobileSyncCoordinator @Inject constructor(
                     }
                 }
             } finally {
-                syncMutex.unlock()
+                heldMutex.unlock()
                 clearSyncRunStarted()
             }
         }
         val completedState = checkNotNull(resultState)
+        // 记录这一轮"有没有上传成功、没成功是因为什么"，心跳上报时直接读（#569）。
+        recordWakeBlockReason(wakeReasonFor(completedState, deadLockReset))
+        persistState(completedState)
         val safeContinuationDepth = continuationDepth.coerceAtLeast(0)
         if (shouldEnqueueUsageContinuation(completedState, safeContinuationDepth, didWork = true)) {
             syncScheduler.get().enqueueContinuation(safeContinuationDepth + 1)
@@ -1451,11 +1543,55 @@ class MobileSyncCoordinator @Inject constructor(
     }
 
     private fun clearSyncRunStarted() {
-        // 同时清掉限流窗口：一段卡住结束之后，下一次卡住的首条记录必须重新算"首次"（#568 评审）。
+        // 同时清掉限流窗口与连击计数：一段卡住结束之后，下一次卡住的首条记录必须重新算"首次"，
+        // 连续跳过告警也要重新从 0 数（#568 评审 / D2）。
         prefs.edit()
             .remove(SYNC_RUN_STARTED_AT_KEY)
             .remove(SYNC_SKIPPED_BUSY_LAST_RECORDED_AT_KEY)
+            .remove(SYNC_SKIPPED_BUSY_STREAK_KEY)
             .apply()
+    }
+
+    /** 单轮超时的收尾状态：按 RETRY 退避，而不是让 Worker 进 CANCELLED（#568 D2）。 */
+    private fun syncRunTimedOutState(): MobileSyncState = state(
+        phase = "sync-timeout",
+        progressText = "本次同步超过 " + (maxSyncRunDurationMs / 60_000L) +
+            " 分钟上限，已中止本轮并等待下次唤醒。",
+        outcome = MobileSyncOutcome.RETRY,
+        lastError = "sync-run-timeout",
+        lastErrorDetail = "sync-run-timeout",
+        pendingQueueCount = 0
+    )
+
+    /**
+     * 记录"最近一次唤醒为什么没有完成上传"（#569），供端点心跳上报。
+     * 取值与 pim-api 契约 `EndpointHeartbeatRequest.lastWakeBlockReason` 的 description 同口径。
+     */
+    private fun recordWakeBlockReason(reason: String?) {
+        if (reason.isNullOrBlank()) return
+        prefs.edit().putString(WAKE_BLOCK_REASON_KEY, reason).apply()
+    }
+
+    /** 心跳上报读这里：最近一次唤醒未上传的原因（#569）。 */
+    fun lastWakeBlockReason(): String? = prefs.getString(WAKE_BLOCK_REASON_KEY, null)
+
+    private fun wakeReasonFor(state: MobileSyncState, deadLockReset: Boolean): String {
+        if (deadLockReset) return WAKE_REASON_LOCK_DEAD_RESET
+        return when (state.phase) {
+            "server-missing" -> WAKE_REASON_SERVER_NOT_CONFIGURED
+            "auth-missing" -> WAKE_REASON_AUTH_REQUIRED
+            "usage-permission-missing" -> WAKE_REASON_PERMISSION_REQUIRED
+            "waiting-not-before" -> WAKE_REASON_DEFERRED_NOT_BEFORE
+            "upload-failed",
+            "upload-blocked",
+            "upload-retry-new-generation",
+            "sync-timeout" -> WAKE_REASON_UPLOAD_FAILED
+            else -> if (state.outcome == MobileSyncOutcome.SUCCESS) {
+                WAKE_REASON_UPLOADED
+            } else {
+                WAKE_REASON_UPLOAD_FAILED
+            }
+        }
     }
 
     /**
@@ -1484,17 +1620,24 @@ class MobileSyncCoordinator @Inject constructor(
      */
     private fun recordSkippedBusyWake(nowUtcMillis: Long): SkippedBusyCounter {
         val total = prefs.getLong(SYNC_SKIPPED_BUSY_COUNT_KEY, 0L) + 1L
+        val streak = prefs.getLong(SYNC_SKIPPED_BUSY_STREAK_KEY, 0L) + 1L
         val lastRecordedAt = prefs.getLong(SYNC_SKIPPED_BUSY_LAST_RECORDED_AT_KEY, 0L)
         val shouldRecord = shouldRecordSkippedBusy(nowUtcMillis, lastRecordedAt)
-        val editor = prefs.edit().putLong(SYNC_SKIPPED_BUSY_COUNT_KEY, total)
+        val editor = prefs.edit()
+            .putLong(SYNC_SKIPPED_BUSY_COUNT_KEY, total)
+            .putLong(SYNC_SKIPPED_BUSY_STREAK_KEY, streak)
         if (shouldRecord) {
             editor.putLong(SYNC_SKIPPED_BUSY_LAST_RECORDED_AT_KEY, nowUtcMillis)
         }
         editor.apply()
-        return SkippedBusyCounter(shouldRecord = shouldRecord, total = total)
+        return SkippedBusyCounter(shouldRecord = shouldRecord, total = total, streak = streak)
     }
 
-    private data class SkippedBusyCounter(val shouldRecord: Boolean, val total: Long)
+    private data class SkippedBusyCounter(
+        val shouldRecord: Boolean,
+        val total: Long,
+        val streak: Long
+    )
 
     private fun persistState(state: MobileSyncState) {
         prefs.edit()
@@ -2015,6 +2158,12 @@ class MobileSyncCoordinator @Inject constructor(
 
         /** 因上一次同步未结束而被跳过的唤醒次数（#568 诊断）。 */
         internal const val SYNC_SKIPPED_BUSY_COUNT_KEY = "sync_skipped_busy_count"
+
+        /** 连续被跳过的次数（#568 D2 告警用）。 */
+        internal const val SYNC_SKIPPED_BUSY_STREAK_KEY = "sync_skipped_busy_streak"
+
+        /** 最近一次唤醒未上传原因（#569），心跳上报读它。 */
+        internal const val WAKE_BLOCK_REASON_KEY = "last_wake_block_reason"
 
         /** 诊断包读取"最近一次同步尝试 / 最近一次成功"用的持久化键（#568）。 */
         internal const val LAST_ATTEMPTED_UPLOAD_AT_KEY = "last_attempted_upload_at"

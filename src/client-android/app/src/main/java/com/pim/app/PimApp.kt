@@ -56,6 +56,9 @@ class PimApp : Application(), Configuration.Provider {
                 ex
             )
         }
+        // The isolated dev lab has no account or business workers. Its foreground
+        // session is explicitly started by the lab screen and stores only local diagnostics.
+        if (BuildConfig.LOCAL_LOCATION_LAB) return
         liveUpdatePublisher.cancelStaleNotification()
         liveUpdatePublisher.start(scope)
         // 启动取证（REQ-1 ~ REQ-4）：读退出原因、判强停/重启、写存活心跳。

@@ -74,6 +74,7 @@ android {
         versionCode = System.getenv("CI_VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = System.getenv("CI_APP_VERSION") ?: "0.0.0(local)"
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
+        buildConfigField("boolean", "LOCAL_LOCATION_LAB", "false")
         javaCompileOptions {
             annotationProcessorOptions {
                 arguments["room.schemaLocation"] = "$projectDir/schemas"
@@ -84,12 +85,13 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.15" }
     kotlinOptions {
         jvmTarget = "17"
     }
     sourceSets.getByName("debug").assets.srcDir("$projectDir/schemas")
+    sourceSets.maybeCreate("dev").assets.srcDir("$projectDir/schemas")
     sourceSets.getByName("main").assets.srcDir(noteEditorAssets)
     sourceSets.getByName("androidTest").assets.srcDir("$projectDir/schemas")
     testOptions {
@@ -116,6 +118,13 @@ android {
                 signingConfig = signingConfigs.getByName("ci")
             }
         }
+        create("dev") {
+            initWith(getByName("debug"))
+            applicationIdSuffix = ".dev"
+            versionNameSuffix = "-dev-location-lab"
+            matchingFallbacks += listOf("debug")
+            buildConfigField("boolean", "LOCAL_LOCATION_LAB", "true")
+        }
     }
 }
 
@@ -140,6 +149,7 @@ kapt {
 }
 
 dependencies {
+    "devImplementation"(project(":location-diagnostics"))
     implementation(project(":core"))
     implementation(project(":features:calendar"))
 

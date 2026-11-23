@@ -769,13 +769,19 @@ step_run "$WORK/c1" master "http://127.0.0.1:1"
 record "ci_step_red_on_fetch_failure" $([ "$STEP_RC" -ne 0 ] && echo 0 || echo 1) "rc=$STEP_RC when the source is unreachable"
 
 # gate：逐个把必需 job 置为 failure / skipped，gate 必须非 0（失败传播到 required check）
-gate_run() { # gate_run <R_RESOLVE> <R_APK> <R_SHELL> <R_FRESH> <R_CODEGEN>
-  ( env R_RESOLVE="$1" R_APK="$2" R_SHELL="$3" R_FRESHNESS="$4" R_CODEGEN="$5" \
+gate_run() { # gate_run <R_RESOLVE> <R_APK> <R_SHELL> <R_FRESH> <R_CODEGEN> [R_CONNECTED]
+  # R_CONNECTED 默认 success：stable connected 通道是后加的必需项，只有显式
+  # 传第 6 个参数时才置为非 success，用于验证「它失败会拦住合并」。
+  ( env R_RESOLVE="$1" R_APK="$2" R_SHELL="$3" R_FRESHNESS="$4" R_CODEGEN="$5" R_CONNECTED="${6:-success}" \
       bash -e -o pipefail "$GATE" ) > "$WORK/gate.log" 2>&1
   GATE_RC=$?
 }
 gate_run success success success success success
 record "gate_green_when_jobs_success" $([ "$GATE_RC" -eq 0 ] && echo 0 || echo 1) "rc=$GATE_RC with all required jobs=success"
+gate_run success success success success success failure
+record "gate_red_when_connected_failed" $([ "$GATE_RC" -ne 0 ] && echo 0 || echo 1) "rc=$GATE_RC with R_CONNECTED=failure (stable connected channel gates)"
+gate_run success success success success success skipped
+record "gate_red_when_connected_skipped" $([ "$GATE_RC" -ne 0 ] && echo 0 || echo 1) "rc=$GATE_RC with R_CONNECTED=skipped (no silent bypass)"
 gate_run success success success failure success
 record "gate_red_when_freshness_failed" $([ "$GATE_RC" -ne 0 ] && echo 0 || echo 1) "rc=$GATE_RC with R_FRESHNESS=failure (freshness failure propagates)"
 gate_run success success success skipped success

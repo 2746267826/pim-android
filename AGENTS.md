@@ -55,8 +55,13 @@ This repository keeps `master` at the latest runnable version of the Android col
 ## Verification Commands
 
 - The commands below are optional local verification help, not a required pre-PR procedure. Existing CI owns the required checks. Base verification claims on actual output and identify the tested revision and environment; do not present stale or assumed results as current evidence.
-- App unit tests: `src/client-android/gradlew :app:testDebugUnitTest` (Windows: `src/client-android\gradlew.bat :app:testDebugUnitTest`).
-- Connected status UI verification uses a started emulator or physical device: `src/client-android/gradlew :app:connectedDebugAndroidTest --no-daemon`. CI provides no emulator, so connected behavior cannot be verified in CI — if you cannot run it, record it as `NOT-VERIFIED` instead of guessing.
+- App unit tests: `src/client-android/gradlew :app:testDebugUnitTest` (Windows: `src/client-android\gradlew.bat :app:testDebugUnitTest`). This already runs as a required job (`build-android`); locally run only the module you changed.
+- Connected (instrumented) tests run in CI (`.github/workflows/android-instrumented.yml`) in two modes:
+  - **stable** — every PR via the `connected-android` job, and it is part of `CI Gate`. Runs `connectedDebugAndroidTest` with `notAnnotation=com.pim.app.RequiresDevice`. **These must pass**; a red run blocks the merge.
+  - **full** — only with the `run-instrumented` PR label or a manual dispatch. Runs every connected case (including the device-dependent ones) in report mode.
+- Do not boot a local AVD for routine verification: a local emulator is the single largest RAM consumer on the shared host and has repeatedly starved the whole machine.
+- **`@RequiresDevice`** (`com.pim.app.RequiresDevice`) marks a case that needs a real microphone, system camera, Chinese IME or `MOCK_LOCATION`. Only annotate a case when the failure is genuinely environmental, and state the reason in the PR. Fixing the case means removing the annotation — it is not a permanent exemption.
+- **本地测试预算**: 同一时刻只允许一个仓在本机构建/测试；不要为了"验证"跑 `assembleRelease`（CI 已经在跑）。
 - Report failed or missing verification explicitly. Do not claim acceptance from test code that was not executed or from unrelated passing checks.
 
 ## During Work

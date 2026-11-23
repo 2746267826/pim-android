@@ -19,10 +19,12 @@ import com.pim.app.settings.TrackingSettingsStore
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
+import com.pim.app.RequiresDevice
 
 /** Real app/foreground service/Fused/Room chain with synthetic platform positions; no account. */
 @RunWith(AndroidJUnit4::class)
 class HighSpeedProductionPlatformTest {
+    @RequiresDevice
     @Test fun stationarySpikesThenCoherentTravelUpdateRealNotificationAndStopCleanly() {
         val instrumentation = InstrumentationRegistry.getInstrumentation()
         val context = instrumentation.targetContext

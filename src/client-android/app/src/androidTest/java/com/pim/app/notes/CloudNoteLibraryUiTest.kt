@@ -13,10 +13,12 @@ import com.pim.app.ui.theme.PimTheme
 import com.pim.core.contract.NativeNoteSummaryDto
 import org.junit.Rule
 import org.junit.Test
+import com.pim.app.RequiresDevice
 
 class CloudNoteLibraryUiTest {
     @get:Rule val compose = createComposeRule()
 
+    @RequiresDevice
     @Test fun cloudDownloadAndOfflinePackageAreClearlyDifferentFlows() {
         compose.setContent {
             PimTheme {
@@ -41,6 +43,7 @@ class CloudNoteLibraryUiTest {
         compose.onNodeWithText("导入可编辑文档包").assertExists()
     }
 
+    @RequiresDevice
     @Test fun cloudCardUnlocksAfterRestoreFinishesAndMoreActionsStartCollapsed() {
         val noteId = "00000000-0000-0000-0000-000000000001"
         var busy by mutableStateOf(false)

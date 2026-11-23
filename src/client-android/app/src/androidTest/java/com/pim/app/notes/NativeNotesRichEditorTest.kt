@@ -24,6 +24,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
+import com.pim.app.RequiresDevice
 
 class NativeNotesRichEditorTest {
     private val compose = createAndroidComposeRule<NativeNotesActivity>()
@@ -41,6 +42,7 @@ class NativeNotesRichEditorTest {
         }
     }
 
+    @RequiresDevice
     @Test fun defaultRichEditorCommitsChineseCompositionAndRapidInputBeforeFinishingWithRealRecording() {
         create(); ready(); saved()
         compose.onNodeWithTag("note-start-recording").performClick()
@@ -135,6 +137,7 @@ class NativeNotesRichEditorTest {
         compose.waitUntil(10_000) { note().blocks.single().string("text") == beforeUndo }
     }
 
+    @RequiresDevice
     @Test fun richCaretRemainsInsideTheNativeViewportAboveTheKeyboardAndToolsInAMixedRecording() {
         create()
         compose.runOnUiThread { model.notes.update(note().id) { it.withTitle("研究方法 · 第四讲").withBlocks(listOf(

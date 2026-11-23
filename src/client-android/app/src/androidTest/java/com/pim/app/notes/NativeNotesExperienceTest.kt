@@ -22,6 +22,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
+import com.pim.app.RequiresDevice
 
 class NativeNotesExperienceTest {
     private val compose = createAndroidComposeRule<NativeNotesActivity>()
@@ -73,6 +74,7 @@ class NativeNotesExperienceTest {
         evidence("library")
     }
 
+    @RequiresDevice
     @Test fun realRecordingPillStaysUsableWithKeyboardAndPreviewDoesNotRewriteTheSource() {
         create()
         startRecording()
@@ -98,6 +100,7 @@ class NativeNotesExperienceTest {
         assertTrue(model.recordings.state.value.active)
     }
 
+    @RequiresDevice
     @Test fun endingRequiresConfirmationAndTheResultDoesNotPretendToBeCloudProcessing() {
         create(); startRecording()
         compose.onNodeWithTag("note-finish").performClick()
@@ -119,6 +122,7 @@ class NativeNotesExperienceTest {
         assertEquals("结束后仍可编辑", note().title)
     }
 
+    @RequiresDevice
     @Test fun stopOnlyAudioThenSupplementaryRecordingKeepBothSessionsInTheSameNote() {
         create(); startRecording()
         val first = model.recordings.state.value.session!!.id

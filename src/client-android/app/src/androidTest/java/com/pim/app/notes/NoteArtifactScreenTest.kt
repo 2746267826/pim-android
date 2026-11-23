@@ -27,6 +27,7 @@ import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import com.pim.app.RequiresDevice
 
 @RunWith(AndroidJUnit4::class)
 class NoteArtifactScreenTest {
@@ -34,6 +35,7 @@ class NoteArtifactScreenTest {
     val compose = createComposeRule()
 
     @Test
+    @RequiresDevice
     fun fixedSourceCoverageAndIndependentKindsAreExposed() {
         var selectedKind: NoteArtifactKind? = null
         compose.setContent {
@@ -59,6 +61,7 @@ class NoteArtifactScreenTest {
     }
 
     @Test
+    @RequiresDevice
     fun dirtyTextAndBaseSurviveCandidateViewSelectionAndRefresh() {
         var state by mutableStateOf(sampleState())
         compose.setContent {
@@ -115,6 +118,7 @@ class NoteArtifactScreenTest {
     }
 
     @Test
+    @RequiresDevice
     fun explicitSaveRegenerateStopAndRecoveryCallbacksAreSeparate() {
         var state by mutableStateOf(
             sampleState().let { root ->
@@ -168,6 +172,7 @@ class NoteArtifactScreenTest {
     }
 
     @Test
+    @RequiresDevice
     fun narrowLargeTextLayoutKeepsPrimaryActionsScrollable() {
         compose.setContent {
             PimTheme {

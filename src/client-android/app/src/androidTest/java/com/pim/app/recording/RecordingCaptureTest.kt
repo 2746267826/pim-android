@@ -20,6 +20,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
+import com.pim.app.RequiresDevice
 
 class RecordingCaptureTest {
     private val compose = createAndroidComposeRule<RecordingProbeActivity>()
@@ -73,6 +74,7 @@ class RecordingCaptureTest {
         } finally { player.release() }
     }
 
+    @RequiresDevice
     @Test fun pauseStopsSampleClockAndNotificationResumeRestartsActualInput() {
         start()
         val id = repository.state.value.session!!.id

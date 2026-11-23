@@ -62,7 +62,14 @@ class NoteAutoSubmitSchedulingTest {
         assertEquals(WorkInfo.State.BLOCKED, submit.state)
         cancelNoteAutoSubmit(workManager, versionId)
         assertEquals(WorkInfo.State.CANCELLED, workManager.getWorkInfosByTag(NoteAutoSubmitWorker.TAG).get().single().state)
-        assertTrue(workManager.getWorkInfosForUniqueWork("note-material-$versionId").get().any { it.id == preparation.id && !it.state.isFinished })
+        // 断言「撤销 submit 不会连带取消 preparation」这件事本身，而不是「preparation 还没跑完」：
+        // 后者与 worker 的实际执行赛跑 —— 在 Robolectric 的测试 WorkManager 下 NoteMaterialWorker
+        // 可能瞬间完成（CI 已两次在同一行变红）。preparation 变成 SUCCEEDED 同样是「intact」，
+        // 真正要抓的是它被 CANCELLED。
+        assertTrue(
+            workManager.getWorkInfosForUniqueWork("note-material-$versionId").get()
+                .any { it.id == preparation.id && it.state != WorkInfo.State.CANCELLED }
+        )
     }
 
     @Test fun revokingPreparingVersionCancelsOnlyItsQueuedSubmitWorker() {

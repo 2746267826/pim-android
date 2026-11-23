@@ -6,6 +6,7 @@ import com.pim.core.contract.NativeNotePageDtoApiResponse
 import com.pim.core.contract.NoteAsrDestinationsDtoApiResponse
 import com.pim.core.contract.NoteMaterialUploadDtoApiResponse
 import com.pim.core.contract.NoteMaterialVersionDtoApiResponse
+import com.pim.core.contract.NoteProcessingStatusDtoApiResponse
 import com.pim.core.contract.PromoteNoteMaterialVersionRequest
 import com.pim.core.contract.NoteAsrSegmentsDtoApiResponse
 import com.pim.core.contract.NoteAsrSourcesDtoApiResponse
@@ -179,6 +180,12 @@ interface ApiService {
 
     @POST("native-notes/versions/{versionId}/complete")
     suspend fun completeNoteMaterialUpload(@Path("versionId") versionId: String): NoteMaterialUploadDtoApiResponse
+
+    @GET("native-notes/processing")
+    suspend fun getNoteProcessingStatus(
+        @Query("noteId") noteId: String,
+        @Query("versionId") versionId: String
+    ): NoteProcessingStatusDtoApiResponse
 
     // Fixed native-note segmented ASR. The bound client checks owner/server for every physical attempt.
     @GET("native-notes/asr-tasks/sources")

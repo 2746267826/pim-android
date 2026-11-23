@@ -67,10 +67,12 @@ internal fun NoteUploadJobs(
     onPause: (String) -> Unit,
     asr: NoteAsrRepositoryState = NoteAsrRepositoryState(),
     artifacts: NoteArtifactRepositoryState = NoteArtifactRepositoryState(),
+    processing: NoteProcessingRepositoryState = NoteProcessingRepositoryState(),
     localMaterial: NoteMaterialEntry? = null,
     showProcessingStatuses: Boolean = true,
     showConflictActions: Boolean = false,
     onRefreshReceipt: (String) -> Unit = {},
+    onRefreshProcessing: (String, String, BoundUploadSession) -> Unit = { _, _, _ -> },
     onPromoteConflict: (String, String) -> Unit = { _, _ -> },
 ) {
     val d = PimTheme.dimensions
@@ -143,7 +145,16 @@ internal fun NoteUploadJobs(
                             Text(if (busy) "正在核对服务器回执" else "从服务器恢复回执")
                         }
                     }
-                    if (visibility.sameTarget && showProcessingStatuses) NoteProcessingStatuses(job, target, asr, artifacts)
+                    if (visibility.sameTarget && showProcessingStatuses) {
+                        NoteProcessingStatuses(
+                            job,
+                            target,
+                            asr,
+                            artifacts,
+                            processing,
+                            onRefreshProcessing,
+                        )
+                    }
                     if (visibility.sameTarget) job.problem?.let {
                         Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     }
@@ -172,6 +183,8 @@ private fun NoteProcessingStatuses(
     target: NoteUploadTarget?,
     asr: NoteAsrRepositoryState,
     artifacts: NoteArtifactRepositoryState,
+    processing: NoteProcessingRepositoryState,
+    onRefreshProcessing: (String, String, BoundUploadSession) -> Unit,
 ) {
     val binding = target?.binding
     val asrTask = binding?.let { current ->
@@ -183,12 +196,19 @@ private fun NoteProcessingStatuses(
             it.materialVersionId == job.versionId && it.noteId == job.noteId && it.binding == current
         }.maxByOrNull { it.updatedAtMillis }
     }
-    Text("处理状态（独立于上传）", style = MaterialTheme.typography.bodySmall,
-        color = MaterialTheme.colorScheme.onSurfaceVariant)
-    Text(processingStatusLabel("转写", asrTask, null, target), style = MaterialTheme.typography.bodySmall,
-        modifier = Modifier.testTag("note-upload-asr-status-${job.id}"))
-    Text(processingStatusLabel("整理", null, artifactTask, target), style = MaterialTheme.typography.bodySmall,
-        modifier = Modifier.testTag("note-upload-artifact-status-${job.id}"))
+    val entry = binding?.let { processing.entry(it, job.noteId, job.versionId) }
+    NoteProcessingStatusDetails(
+        tag = job.id,
+        materialReceipt = uploadReceiptPhaseText(job),
+        localAsr = "本机任务 · ${processingStatusLabel("转写", asrTask, null, target)}",
+        localDerived = "本机任务 · ${processingStatusLabel("整理", null, artifactTask, target)}",
+        server = entry?.status,
+        problem = entry?.problem,
+        syncing = entry?.syncing == true,
+        onRefresh = {
+            if (binding != null) onRefreshProcessing(job.noteId, job.versionId, binding)
+        },
+    )
 }
 
 @Composable

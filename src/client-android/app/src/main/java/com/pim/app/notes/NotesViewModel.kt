@@ -5,6 +5,7 @@ import androidx.lifecycle.ViewModel
 import androidx.lifecycle.viewModelScope
 import com.pim.app.recording.RecordingRepository
 import com.pim.core.contract.NoteAsrDestinationDto
+import com.pim.core.network.BoundUploadSession
 import dagger.hilt.android.lifecycle.HiltViewModel
 import javax.inject.Inject
 import kotlinx.coroutines.CancellationException
@@ -27,6 +28,7 @@ class NotesViewModel @Inject constructor(
     val uploads: NoteUploadRepository,
     val asr: NoteAsrRepository,
     val artifacts: NoteArtifactRepository,
+    val processing: NoteProcessingRepository,
     val taskSuggestions: NoteTaskSuggestionRepository,
     val legacyQuickNoteMigration: LegacyQuickNoteMigrationRepository,
     val cloudNotes: CloudNoteRepository,
@@ -208,6 +210,16 @@ class NotesViewModel @Inject constructor(
         catch (error: CancellationException) { throw error }
         catch (_: Exception) { tell("未能确认保留版本；双方材料与本机回执仍保留") }
     } }
+
+    fun refreshProcessing(noteId: String, versionId: String, binding: BoundUploadSession) {
+        viewModelScope.launch {
+            try { processing.refresh(noteId, versionId, binding) }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) {
+                tell("未能读取服务器处理状态；材料回执与本机任务保留")
+            }
+        }
+    }
 
     fun refreshAsr() { viewModelScope.launch { asr.refresh() } }
     fun refreshAsrTask(id: String) { viewModelScope.launch { asr.refreshTask(id) } }

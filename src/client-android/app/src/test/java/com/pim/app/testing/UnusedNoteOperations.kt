@@ -89,6 +89,7 @@ internal interface UnusedNoteOperations : ApiService {
     override suspend fun downloadNoteMaterialFile(versionId: String, fileIndex: Int): retrofit2.Response<okhttp3.ResponseBody> = error("Unexpected note download")
     override suspend fun uploadNoteMaterialPart(versionId: String, fileIndex: Int, partIndex: Int, sha256: String, body: RequestBody): StringApiResponse = error("Unexpected note bytes")
     override suspend fun completeNoteMaterialUpload(versionId: String): NoteMaterialUploadDtoApiResponse = error("Unexpected note completion")
+    override suspend fun getNoteProcessingStatus(noteId: String, versionId: String): NoteProcessingStatusDtoApiResponse = error("Unexpected note processing status")
     override suspend fun getNoteAsrSources(offset: Int, limit: Int): NoteAsrSourcesDtoApiResponse = error("Unexpected ASR sources")
     override suspend fun getNoteAsrDestinations(): NoteAsrDestinationsDtoApiResponse = error("Unexpected ASR destinations")
     override suspend fun getNoteAsrTasks(): NoteAsrTaskDtoIReadOnlyListApiResponse = error("Unexpected ASR list")

@@ -23,6 +23,7 @@ import com.pim.app.recording.*
 import com.pim.app.ui.components.PimStatusBanner
 import com.pim.app.ui.components.PimStatusTone
 import com.pim.app.ui.theme.PimTheme
+import com.pim.core.network.BoundUploadSession
 import java.io.File
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -53,6 +54,8 @@ fun NativeNotesScreen(
     onRefreshUploadReceipt: (String) -> Unit = {}, onPromoteUploadConflict: (String, String) -> Unit = { _, _ -> },
     asr: NoteAsrRepositoryState = NoteAsrRepositoryState(), asrActions: NoteAsrActions = NoteAsrActions(),
     artifacts: NoteArtifactRepositoryState = NoteArtifactRepositoryState(),
+    processing: NoteProcessingRepositoryState = NoteProcessingRepositoryState(),
+    onRefreshProcessing: (String, String, BoundUploadSession) -> Unit = { _, _, _ -> },
     legacyMigration: LegacyQuickNoteMigrationState = LegacyQuickNoteMigrationState(),
     legacyMigrationActions: LegacyQuickNoteMigrationActions = LegacyQuickNoteMigrationActions(),
     initialAsr: Boolean = false,
@@ -249,7 +252,9 @@ fun NativeNotesScreen(
                     onUpload = { uploadVersionId = it; showMaterials = false }, uploads = uploads, target = uploadTarget,
                     onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
                     asr = asr, artifacts = artifacts,
+                    processing = processing,
                     onRefreshUploadReceipt = onRefreshUploadReceipt,
+                    onRefreshProcessing = onRefreshProcessing,
                     onPromoteConflict = onPromoteUploadConflict,
                     onAsr = { asrVersionId = it; showAsr = true })
                 if (showRecordings) NoteRecordingsSheet(sessions, recording, playing, { showRecordings = false }, onPlay, onPauseResume, onStopRecording)

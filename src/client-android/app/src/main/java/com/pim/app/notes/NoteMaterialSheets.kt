@@ -24,7 +24,9 @@ internal fun NoteMaterialsSheet(
     onDismiss: () -> Unit, onRetry: (String) -> Unit, onExport: (String) -> Unit,
     onUpload: (String) -> Unit = {}, uploads: NoteUploadsState = NoteUploadsState(), target: NoteUploadTarget? = null,
     onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
-    onAsr: (String) -> Unit = {},
+    onAsr: (String) -> Unit = {}, asr: NoteAsrRepositoryState = NoteAsrRepositoryState(),
+    artifacts: NoteArtifactRepositoryState = NoteArtifactRepositoryState(),
+    onRefreshUploadReceipt: (String) -> Unit = {}, onPromoteConflict: (String, String) -> Unit = { _, _ -> },
 ) {
     val d = PimTheme.dimensions
     val versions = materials.entries.filter { it.noteId == note.id }
@@ -79,7 +81,18 @@ internal fun NoteMaterialsSheet(
                                 style = MaterialTheme.typography.bodySmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant,
                             )
-                            if (jobs.isNotEmpty()) NoteUploadJobs(uploads.copy(jobs = jobs), target, onResumeUpload, onPauseUpload)
+                            if (jobs.isNotEmpty()) NoteUploadJobs(
+                                uploads.copy(jobs = jobs),
+                                target,
+                                onResumeUpload,
+                                onPauseUpload,
+                                asr = asr,
+                                artifacts = artifacts,
+                                localMaterial = version,
+                                showConflictActions = true,
+                                onRefreshReceipt = onRefreshUploadReceipt,
+                                onPromoteConflict = onPromoteConflict,
+                            )
                         }
                         if (version.phase == NoteMaterialPhase.Preparing)
                             Text("可继续编辑。系统中断后续作同一版本，不会自动开麦。", style = MaterialTheme.typography.bodySmall)

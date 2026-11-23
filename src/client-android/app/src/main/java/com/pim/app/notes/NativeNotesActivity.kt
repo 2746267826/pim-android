@@ -191,7 +191,9 @@ class NativeNotesActivity : ComponentActivity() {
                     onAuthorizeAutoSubmit = model::enableAutoSubmit, onRevokeAutoSubmit = model::revokeAutoSubmit,
                     onEnableAutoSubmit = model::enableAutoSubmit, onUpload = model::submitUpload,
                     onResumeUpload = model::resumeUpload, onPauseUpload = model::pauseUpload,
-                    asr = asr, asrActions = asrActions,
+                    onRefreshUploadReceipt = model::refreshUploadReceipt,
+                    onPromoteUploadConflict = model::promoteUploadConflict,
+                    asr = asr, asrActions = asrActions, artifacts = artifacts,
                     legacyMigration = legacyMigration,
                     legacyMigrationActions = legacyMigrationActions,
                     artifactOverlay = {

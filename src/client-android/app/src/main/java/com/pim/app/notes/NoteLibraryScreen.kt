@@ -90,7 +90,7 @@ internal fun NoteLibraryScreen(
                     leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth().testTag("notes-search"))
             }
             if (uploads.jobs.isNotEmpty() || uploads.loadFailed) item {
-                NoteUploadJobs(uploads, currentTarget, onResumeUpload, onPauseUpload)
+                NoteUploadJobs(uploads, currentTarget, onResumeUpload, onPauseUpload, showProcessingStatuses = false)
             }
             if (state.loadFailed) item { PimStatusBanner("本地记录读取失败，原文件保留。请重新打开页面。", PimStatusTone.Error) }
             if (selectedId != null) item { PimStatusBanner("该记录仍在加载或无法读取，不会用空白文档覆盖它。", PimStatusTone.Warning) }

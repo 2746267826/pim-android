@@ -11,7 +11,9 @@ import okhttp3.RequestBody.Companion.toRequestBody
 class NoteUploadEngine(private val jobs: NoteUploadStore, private val materials: NoteMaterialStore,
     private val api: ApiService, private val maxParts: Int = 32, private val shouldYield: () -> Boolean = { false },
     private val checkActive: () -> Unit = {}) {
-    suspend fun run(id: String): NoteUploadJob {
+    suspend fun run(id: String): NoteUploadJob = NoteUploadJobLocks.withLock(id) { runLocked(id) }
+
+    private suspend fun runLocked(id: String): NoteUploadJob {
         val job = jobs.read(id)
         if (job.phase in setOf(NoteUploadPhase.Paused, NoteUploadPhase.Uploaded, NoteUploadPhase.Conflict)) return job
         fun check() {

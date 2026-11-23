@@ -113,6 +113,7 @@ internal fun NoteUploadJob.withServerReceipt(
             NoteUploadPhase.Paused -> NoteUploadPhase.Paused
             NoteUploadPhase.WaitingForNetwork -> NoteUploadPhase.WaitingForNetwork
             NoteUploadPhase.NeedsLogin -> NoteUploadPhase.NeedsLogin
+            NoteUploadPhase.Failed -> NoteUploadPhase.Failed
             else -> NoteUploadPhase.Uploading
         }
         else -> phase
@@ -129,17 +130,28 @@ internal fun NoteUploadJob.withServerReceipt(
         serverUpload = upload,
         conflictRemoteVersion = remote,
         resolutionVersionId = resolved,
-        problem = problem,
+        problem = if (nextPhase == NoteUploadPhase.Failed && upload.phase == "Uploading") {
+            problem ?: this.problem
+        } else {
+            problem
+        },
     )
 }
 
-internal fun uploadReceiptPhaseText(job: NoteUploadJob): String = when (val phase = job.serverUpload?.phase) {
-    null -> "尚无服务器逐块回执；本地累计字节不视为完整确认"
-    "Uploading" -> "分块已确认；整版尚未确认"
-    "Uploaded" -> "整版已确认"
-    "Conflict" -> if (job.resolutionVersionId != null) "整版已确认；冲突已解决，当前保留另一版本"
-    else "整版已确认；存在版本冲突"
-    else -> "服务器 phase=$phase；整版未确认"
+internal fun uploadReceiptPhaseText(job: NoteUploadJob): String {
+    val upload = job.serverUpload ?: return "尚无服务器分块回执；本地累计字节不视为完整确认"
+    val confirmed = if (upload.files.any { it.uploadedParts.isNotEmpty() }) "分块已确认" else "尚无服务器分块回执"
+    return when (val phase = upload.phase) {
+        "Uploading" -> "$confirmed；整版尚未确认"
+        "Uploaded" -> if (upload.files.any { it.uploadedParts.isNotEmpty() }) "整版已确认"
+        else "整版已确认；尚无服务器分块回执"
+        "Conflict" -> {
+            val whole = if (upload.files.isNotEmpty() && upload.files.all { it.isComplete() }) "整版已确认" else confirmed
+            if (job.resolutionVersionId != null) "$whole；冲突已解决，当前保留另一版本"
+            else "$whole；存在版本冲突"
+        }
+        else -> "$confirmed；服务器 phase=$phase；整版未确认"
+    }
 }
 
 internal fun formatUploadedPartIndexes(parts: List<Int>): String {

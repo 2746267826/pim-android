@@ -15,11 +15,16 @@ class NoteUploadReconciler(
     private val jobs: NoteUploadStore,
     private val api: ApiService,
 ) {
-    suspend fun refresh(jobId: String): NoteUploadJob {
+    suspend fun refresh(jobId: String): NoteUploadJob = NoteUploadJobLocks.withLock(jobId) {
+        refreshLocked(jobId)
+    }
+
+    private suspend fun refreshLocked(jobId: String, failOnRemoteSummary: Boolean = false): NoteUploadJob {
         val job = jobs.read(jobId)
         val response = api.getNoteMaterialVersion(job.versionId)
         val version = requireData(response.code, response.data, response.message)
         validateIdentity(job, version)
+        val localSummary = job.localVersion ?: noteMaterialVersionSummary(version.inputJson, version.manifestJson, version.upload)
         val current = version.upload.currentVersionId
         var remote: NoteMaterialVersionSummary? = null
         var problem: String? = null
@@ -28,27 +33,46 @@ class NoteUploadReconciler(
                 readRemoteSummary(job, current)
             } catch (error: CancellationException) {
                 throw error
-            } catch (_: Exception) {
+            } catch (error: Exception) {
+                if (failOnRemoteSummary) throw IOException("服务器当前版本摘要尚未确认", error)
                 problem = "服务器当前版本摘要暂时无法读取；本机回执与双方原文件仍保留"
                 job.conflictRemoteVersion?.takeIf { it.versionId == current }
             }
         }
         return jobs.update(job.id) {
             it.withServerReceipt(version.upload, remoteVersion = remote, problem = problem)
+                .copy(localVersion = it.localVersion ?: localSummary)
         }
     }
 
-    suspend fun promote(jobId: String, selectedVersionId: String): NoteUploadJob {
+    suspend fun promote(jobId: String, selectedVersionId: String): NoteUploadJob = NoteUploadJobLocks.withLock(jobId) {
+        promoteLocked(jobId, selectedVersionId)
+    }
+
+    private suspend fun promoteLocked(jobId: String, selectedVersionId: String): NoteUploadJob {
         var job = jobs.read(jobId)
         require(job.phase == NoteUploadPhase.Conflict || job.serverUpload?.hasConflict == true) {
             "Only a confirmed conflict can be resolved by explicit promotion"
         }
-        if (job.serverUpload == null) job = refresh(jobId)
+        if (needsConflictSummaryRefresh(job)) job = refreshLocked(jobId, failOnRemoteSummary = true)
         val receipt = requireNotNull(job.serverUpload) { "Refresh the server receipt before choosing a version" }
         require(selectedVersionId == job.versionId ||
             selectedVersionId == receipt.currentVersionId ||
             selectedVersionId == job.conflictRemoteVersion?.versionId) {
             "The selected version is not one of the two conflict summaries"
+        }
+        val remoteSummary = if (selectedVersionId == job.versionId) {
+            requireNotNull(job.localVersion?.takeIf { it.versionId == job.versionId && it.noteId == job.noteId }) {
+                "Both conflict summaries must be confirmed before keeping the local version"
+            }
+            require(receipt.hasConflict && receipt.currentVersionId != null) {
+                "The server no longer reports an open conflict"
+            }
+            requireNotNull(job.conflictRemoteVersion?.takeIf { it.versionId == receipt.currentVersionId }) {
+                "Both conflict summaries must be confirmed before keeping the local version"
+            }
+        } else {
+            null
         }
         val response = api.promoteNoteMaterialVersion(
             selectedVersionId,
@@ -69,7 +93,7 @@ class NoteUploadReconciler(
                 )
             }
         }
-        val remote = job.conflictRemoteVersion?.takeIf { it.versionId == selectedVersionId }
+        val remote = remoteSummary ?: job.conflictRemoteVersion?.takeIf { it.versionId == selectedVersionId }
             ?: readRemoteSummary(job, selectedVersionId)
         val chosen = remote.copy(
             serverPhase = promoted.phase,
@@ -85,6 +109,14 @@ class NoteUploadReconciler(
                 problem = null,
             )
         }
+    }
+
+    private fun needsConflictSummaryRefresh(job: NoteUploadJob): Boolean {
+        if (job.localVersion?.versionId != job.versionId) return true
+        val receipt = job.serverUpload ?: return true
+        if (!receipt.hasConflict) return false
+        val current = receipt.currentVersionId ?: return true
+        return current != job.versionId && job.conflictRemoteVersion?.versionId != current
     }
 
     private suspend fun readRemoteSummary(job: NoteUploadJob, versionId: String): NoteMaterialVersionSummary {

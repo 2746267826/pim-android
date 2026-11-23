@@ -25,6 +25,40 @@ internal fun uploadPhaseText(phase: NoteUploadPhase): String = when (phase) {
     NoteUploadPhase.Conflict -> "材料已保存，存在版本冲突"
 }
 
+internal data class NoteUploadCardVisibility(
+    val sameTarget: Boolean,
+    val showProgress: Boolean,
+    val showReceipt: Boolean,
+    val showConflict: Boolean,
+    val allowPause: Boolean,
+    val allowResume: Boolean,
+    val allowRefreshReceipt: Boolean,
+    val allowPromotion: Boolean,
+)
+
+private val activeUploadPhases = setOf(NoteUploadPhase.Queued, NoteUploadPhase.Uploading, NoteUploadPhase.WaitingForNetwork)
+private val resumableUploadPhases = setOf(NoteUploadPhase.Paused, NoteUploadPhase.NeedsLogin, NoteUploadPhase.Failed)
+
+internal fun NoteUploadJob.cardVisibility(
+    target: NoteUploadTarget?,
+    busy: Boolean,
+    showConflictActions: Boolean,
+): NoteUploadCardVisibility {
+    val sameTarget = target?.binding == BoundUploadSession(serverIdentity, ownerId)
+    val active = phase in activeUploadPhases
+    val conflict = phase == NoteUploadPhase.Conflict
+    return NoteUploadCardVisibility(
+        sameTarget = sameTarget,
+        showProgress = sameTarget && active,
+        showReceipt = sameTarget,
+        showConflict = sameTarget && conflict,
+        allowPause = sameTarget && active,
+        allowResume = sameTarget && phase in resumableUploadPhases,
+        allowRefreshReceipt = sameTarget && !busy,
+        allowPromotion = sameTarget && !busy && showConflictActions && conflict,
+    )
+}
+
 @Composable
 internal fun NoteUploadJobs(
     state: NoteUploadsState,
@@ -45,31 +79,38 @@ internal fun NoteUploadJobs(
         Text("材料上传", style = MaterialTheme.typography.titleSmall)
         if (state.loadFailed) Text("部分上传任务无法读取，原文件保留；其余任务继续处理。", color = MaterialTheme.colorScheme.error)
         (if (expanded) state.jobs else state.jobs.take(3)).forEach { job ->
-            val same = target?.binding == BoundUploadSession(job.serverIdentity, job.ownerId)
             val busy = job.id in state.busyJobIds
+            val visibility = job.cardVisibility(target, busy, showConflictActions)
             val receipt = job.serverUpload
             var showReceipt by rememberSaveable(job.id) { mutableStateOf(false) }
             OutlinedCard(Modifier.fillMaxWidth().testTag("note-upload-${job.id}")) {
                 Column(Modifier.padding(d.spaceMedium), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
-                    Text("r${job.revision} · ${uploadPhaseText(job.phase)}", style = MaterialTheme.typography.titleSmall)
-                    Text(if (same) "${job.ownerName.ifBlank { "当前账号" }} · ${job.serverIdentity}" else "任务绑定原账号和服务器，请切回原目标查看或继续。",
+                    Text("r${job.revision} · ${if (visibility.sameTarget) uploadPhaseText(job.phase) else "任务绑定原账号和服务器"}",
+                        style = MaterialTheme.typography.titleSmall)
+                    Text(if (visibility.sameTarget) "${job.ownerName.ifBlank { "当前账号" }} · ${job.serverIdentity}" else "任务绑定原账号和服务器，请切回原目标查看或继续。",
                         style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                    if (job.phase in setOf(NoteUploadPhase.Queued, NoteUploadPhase.Uploading, NoteUploadPhase.WaitingForNetwork)) {
-                        val confirmed = receipt?.confirmedBytes() ?: 0
-                        LinearProgressIndicator(if (job.totalBytes == 0L) 0f else (confirmed.toDouble() / job.totalBytes).toFloat(), Modifier.fillMaxWidth())
-                        Text(
-                            if (receipt == null) "本地累计 ${job.uploadedBytes / 1024} / ${job.totalBytes / 1024} KiB；尚无逐块回执，不能视为服务器完整确认"
-                            else "服务器已确认 ${confirmed / 1024} / ${job.totalBytes / 1024} KiB",
-                            style = MaterialTheme.typography.bodySmall,
-                        )
-                        TextButton(onClick = { onPause(job.id) }, modifier = Modifier.testTag("note-upload-pause-${job.id}")) { Text("暂停后续上传") }
+                    if (job.phase in activeUploadPhases) {
+                        if (visibility.showProgress) {
+                            val confirmed = receipt?.confirmedBytes() ?: 0
+                            LinearProgressIndicator(if (job.totalBytes == 0L) 0f else (confirmed.toDouble() / job.totalBytes).toFloat(), Modifier.fillMaxWidth())
+                            Text(
+                                if (receipt == null) "本地累计 ${job.uploadedBytes / 1024} / ${job.totalBytes / 1024} KiB；尚无服务器分块回执，不能视为服务器完整确认"
+                                else "服务器已确认 ${confirmed / 1024} / ${job.totalBytes / 1024} KiB",
+                                style = MaterialTheme.typography.bodySmall,
+                            )
+                        }
+                        TextButton(onClick = { onPause(job.id) }, enabled = visibility.allowPause,
+                            modifier = Modifier.testTag("note-upload-pause-${job.id}")) { Text("暂停后续上传") }
                     }
-                    if (job.phase in setOf(NoteUploadPhase.Paused, NoteUploadPhase.NeedsLogin, NoteUploadPhase.Failed))
-                        TextButton(onClick = { onResume(job.id) }, enabled = same, modifier = Modifier.testTag("note-upload-resume-${job.id}")) { Text("核对此版本并继续") }
-                    Text(uploadReceiptPhaseText(job), style = MaterialTheme.typography.bodySmall,
-                        color = if (job.phase == NoteUploadPhase.Conflict) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
-                        modifier = Modifier.testTag("note-upload-receipt-status-${job.id}"))
-                    if (!same) {
+                    if (job.phase in resumableUploadPhases)
+                        TextButton(onClick = { onResume(job.id) }, enabled = visibility.allowResume,
+                            modifier = Modifier.testTag("note-upload-resume-${job.id}")) { Text("核对此版本并继续") }
+                    if (visibility.showReceipt) {
+                        Text(uploadReceiptPhaseText(job), style = MaterialTheme.typography.bodySmall,
+                            color = if (job.phase == NoteUploadPhase.Conflict) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant,
+                            modifier = Modifier.testTag("note-upload-receipt-status-${job.id}"))
+                    }
+                    if (!visibility.sameTarget) {
                         Text("服务器逐文件回执、处理状态与冲突摘要仅原账号和服务器可查看；本机固定材料仍保留。",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                     } else if (receipt != null) {
@@ -92,24 +133,29 @@ internal fun NoteUploadJobs(
                                 )
                             }
                         }
-                        TextButton(onClick = { onRefreshReceipt(job.id) }, enabled = same && !busy,
+                        TextButton(onClick = { onRefreshReceipt(job.id) }, enabled = visibility.allowRefreshReceipt,
                             modifier = Modifier.testTag("note-upload-receipt-refresh-${job.id}")) { Text("重新核对服务器回执") }
                     } else {
-                        Text("没有服务器逐文件回执；本地累计字节不会被当作完整确认。",
+                        Text("尚无服务器分块回执；本地累计字节不会被当作完整确认。",
                             style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                        TextButton(onClick = { onRefreshReceipt(job.id) }, enabled = same && !busy,
+                        TextButton(onClick = { onRefreshReceipt(job.id) }, enabled = visibility.allowRefreshReceipt,
                             modifier = Modifier.testTag("note-upload-receipt-refresh-${job.id}")) {
                             Text(if (busy) "正在核对服务器回执" else "从服务器恢复回执")
                         }
                     }
-                    if (same && showProcessingStatuses) NoteProcessingStatuses(job, target, asr, artifacts)
-                    job.problem?.let { Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant) }
-                    if (job.phase == NoteUploadPhase.Conflict && showConflictActions && same)
-                        NoteUploadConflictPanel(job, localMaterial, busy, onRefreshReceipt, onPromoteConflict)
-                    else if (job.phase == NoteUploadPhase.Conflict)
-                        Text("服务器保留了双方完整材料；请在材料版本中查看双方摘要并显式选择保留版本。", style = MaterialTheme.typography.bodySmall)
-                    if (job.phase == NoteUploadPhase.Uploaded) Text("仅确认原始材料保存成功；不代表转写或分析已完成。", style = MaterialTheme.typography.bodySmall)
-                    if (same) state.jobMessages[job.id]?.let { message ->
+                    if (visibility.sameTarget && showProcessingStatuses) NoteProcessingStatuses(job, target, asr, artifacts)
+                    if (visibility.sameTarget) job.problem?.let {
+                        Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    }
+                    if (visibility.showConflict) {
+                        if (showConflictActions) NoteUploadConflictPanel(job, localMaterial, busy,
+                            visibility.allowPromotion, visibility.allowRefreshReceipt, onRefreshReceipt, onPromoteConflict)
+                        else Text("服务器保留了双方完整材料；请在材料版本中查看双方摘要并显式选择保留版本。",
+                            style = MaterialTheme.typography.bodySmall)
+                    }
+                    if (visibility.sameTarget && job.phase == NoteUploadPhase.Uploaded)
+                        Text("仅确认原始材料保存成功；不代表转写或分析已完成。", style = MaterialTheme.typography.bodySmall)
+                    if (visibility.sameTarget) state.jobMessages[job.id]?.let { message ->
                         Text(message, style = MaterialTheme.typography.bodySmall,
                             color = MaterialTheme.colorScheme.primary, modifier = Modifier.testTag("note-upload-message-${job.id}"))
                     }
@@ -150,6 +196,8 @@ private fun NoteUploadConflictPanel(
     job: NoteUploadJob,
     localMaterial: NoteMaterialEntry?,
     busy: Boolean,
+    promotionEnabled: Boolean,
+    refreshEnabled: Boolean,
     onRefreshReceipt: (String) -> Unit,
     onPromoteConflict: (String, String) -> Unit,
 ) {
@@ -174,7 +222,7 @@ private fun NoteUploadConflictPanel(
             } ?: "摘要暂时不可用，但本机材料未删除",
                 style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
             Text("Version ${job.versionId}", style = MaterialTheme.typography.bodySmall)
-            Button(onClick = { onPromoteConflict(job.id, job.versionId) }, enabled = !busy,
+            Button(onClick = { onPromoteConflict(job.id, job.versionId) }, enabled = promotionEnabled,
                 modifier = Modifier.fillMaxWidth().testTag("note-conflict-keep-local-${job.id}")) {
                 Text(if (busy) "正在提交 CAS" else "保留本机版本")
             }
@@ -193,12 +241,12 @@ private fun NoteUploadConflictPanel(
                     "${remote.recordingCount} 次录音 · ${remote.segmentCount} 段",
                     style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 Text("Version ${remote.versionId}", style = MaterialTheme.typography.bodySmall)
-                Button(onClick = { onPromoteConflict(job.id, remote.versionId) }, enabled = !busy,
+                Button(onClick = { onPromoteConflict(job.id, remote.versionId) }, enabled = promotionEnabled,
                     modifier = Modifier.fillMaxWidth().testTag("note-conflict-keep-server-${job.id}")) {
                     Text(if (busy) "正在提交 CAS" else "保留服务器版本")
                 }
             }
-            TextButton(onClick = { onRefreshReceipt(job.id) }, enabled = !busy,
+            TextButton(onClick = { onRefreshReceipt(job.id) }, enabled = refreshEnabled,
                 modifier = Modifier.testTag("note-conflict-refresh-${job.id}")) {
                 Text(if (busy) "正在核对双方摘要" else "重新核对双方摘要")
             }

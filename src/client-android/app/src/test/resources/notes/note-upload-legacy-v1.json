@@ -1,0 +1,21 @@
+{
+  "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "versionId": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+  "noteId": "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+  "revision": 1,
+  "serverIdentity": "https://synthetic.invalid",
+  "ownerId": "11111111-1111-4111-8111-111111111111",
+  "ownerName": "alice",
+  "inputSha256": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+  "manifestSha256": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+  "baseVersionId": null,
+  "createdAtMillis": 1700000000000,
+  "phase": "WaitingForNetwork",
+  "uploadedBytes": 0,
+  "totalBytes": 4096,
+  "currentVersionId": null,
+  "problem": null,
+  "storageConsent": true,
+  "retryNotBeforeMillis": 0,
+  "consecutiveFailures": 0
+}

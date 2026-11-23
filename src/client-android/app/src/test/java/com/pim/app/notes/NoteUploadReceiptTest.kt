@@ -3,10 +3,19 @@ package com.pim.app.notes
 import com.pim.app.TestPimApp
 import com.pim.core.contract.*
 import com.pim.core.network.ApiService
+import com.pim.core.network.BoundUploadSession
 import java.io.File
+import java.io.IOException
 import java.lang.reflect.Proxy
+import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.async
 import kotlinx.coroutines.runBlocking
+import kotlinx.coroutines.withTimeout
+import kotlinx.coroutines.withTimeoutOrNull
+import okhttp3.RequestBody
 import okhttp3.ResponseBody.Companion.toResponseBody
+import okio.Buffer
 import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
@@ -144,20 +153,158 @@ class NoteUploadReceiptTest {
         val pending = playbackJob()
             .withReceipt(phase = "Uploading", hasConflict = false)
             .copy(phase = NoteUploadPhase.Uploading)
-        assertEquals("分块已确认；整版尚未确认", uploadReceiptPhaseText(pending))
+        assertEquals("尚无服务器分块回执；整版尚未确认", uploadReceiptPhaseText(pending))
+
+        val withPart = pending.copy(serverUpload = pending.serverUpload!!.copy(files = listOf(
+            NoteMaterialUploadFileDto(0, "input", 1, "input.json", "a".repeat(64), 1, listOf(0)),
+        )))
+        assertEquals("分块已确认；整版尚未确认", uploadReceiptPhaseText(withPart))
 
         val uploaded = pending.withReceipt(phase = "Uploaded", hasConflict = false)
             .copy(phase = NoteUploadPhase.Uploaded)
-        assertEquals("整版已确认", uploadReceiptPhaseText(uploaded))
+        assertEquals("整版已确认；尚无服务器分块回执", uploadReceiptPhaseText(uploaded))
 
         val conflict = pending.withReceipt(phase = "Conflict", hasConflict = true)
             .copy(phase = NoteUploadPhase.Conflict)
-        assertEquals("整版已确认；存在版本冲突", uploadReceiptPhaseText(conflict))
-        assertEquals("整版已确认；冲突已解决，当前保留另一版本",
+        assertEquals("尚无服务器分块回执；存在版本冲突", uploadReceiptPhaseText(conflict))
+        assertEquals("尚无服务器分块回执；冲突已解决，当前保留另一版本",
             uploadReceiptPhaseText(conflict.copy(resolutionVersionId = conflict.serverUpload!!.currentVersionId)))
+        assertEquals("尚无服务器分块回执；本地累计字节不视为完整确认",
+            uploadReceiptPhaseText(pending.copy(serverUpload = null)))
 
         assertEquals("转写：未发起", processingStatusLabel("转写", asr = null, artifact = null))
         assertEquals("整理：未发起", processingStatusLabel("整理", asr = null, artifact = null))
+    }
+
+    @Test fun mismatchOfOwnerOrServerHidesServerReceiptAndDisablesEveryJobAction() {
+        val loading = playbackJob().copy(phase = NoteUploadPhase.Uploading)
+            .withReceipt(phase = "Uploading", hasConflict = false)
+        val same = NoteUploadTarget(BoundUploadSession(loading.serverIdentity, loading.ownerId), "alice")
+        val normal = loading.cardVisibility(same, busy = false, showConflictActions = true)
+        assertTrue(normal.sameTarget)
+        assertTrue(normal.showProgress)
+        assertTrue(normal.showReceipt)
+        assertTrue(normal.allowPause)
+        assertTrue(normal.allowRefreshReceipt)
+
+        val otherOwner = NoteUploadTarget(BoundUploadSession(loading.serverIdentity, "22222222-2222-4222-8222-222222222222"), "bob")
+        val otherServer = NoteUploadTarget(BoundUploadSession("https://another.invalid", loading.ownerId), "alice")
+        listOf(otherOwner, otherServer).forEach { target ->
+            val hidden = loading.cardVisibility(target, busy = false, showConflictActions = true)
+            assertFalse(hidden.sameTarget)
+            assertFalse(hidden.showProgress)
+            assertFalse(hidden.showReceipt)
+            assertFalse(hidden.showConflict)
+            assertFalse(hidden.allowPause)
+            assertFalse(hidden.allowResume)
+            assertFalse(hidden.allowRefreshReceipt)
+            assertFalse(hidden.allowPromotion)
+        }
+
+        val conflict = playbackJob().copy(phase = NoteUploadPhase.Conflict)
+            .withReceipt(phase = "Conflict", hasConflict = true)
+        val conflictNormal = conflict.cardVisibility(same, busy = false, showConflictActions = true)
+        assertTrue(conflictNormal.showConflict)
+        assertTrue(conflictNormal.allowPromotion)
+        assertFalse(conflictNormal.allowPause)
+        val conflictHidden = conflict.cardVisibility(otherOwner, busy = false, showConflictActions = true)
+        assertFalse(conflictHidden.showConflict)
+        assertFalse(conflictHidden.allowPromotion)
+
+        val failed = playbackJob().copy(phase = NoteUploadPhase.Failed)
+        assertTrue(failed.cardVisibility(same, busy = false, showConflictActions = false).allowResume)
+        assertFalse(failed.cardVisibility(otherServer, busy = false, showConflictActions = false).allowResume)
+    }
+
+    @Test fun startupReconcileAndPartPutOnSameJobAreSerializedAgainstAStaleReceipt() = runBlocking {
+        val local = snapshot("Local A")
+        val job = jobs.create(local, server, owner, "alice")
+        val empty = upload(local, phase = "Uploading", current = null, conflict = false, isCurrent = false,
+            uploaded = local.files.map { emptyList() })
+        jobs.update(job.id) {
+            it.copy(phase = NoteUploadPhase.WaitingForNetwork, uploadedBytes = 0, serverUpload = empty)
+        }
+        val remote = SerializedServer(local, empty)
+
+        val reconcile = async(Dispatchers.IO) { NoteUploadReconciler(jobs, remote.api).refresh(job.id) }
+        withTimeout(5_000) { remote.getStarted.await() }
+        val upload = async(Dispatchers.IO) { NoteUploadEngine(jobs, materials, remote.api).run(job.id) }
+        try {
+            assertNull("A newer part PUT must wait for the in-flight reconcile",
+                withTimeoutOrNull(500) { remote.beginCalled.await() })
+        } finally {
+            remote.releaseGet.complete(Unit)
+        }
+        reconcile.await()
+        upload.await()
+
+        val persisted = jobs.read(job.id)
+        assertEquals(NoteUploadPhase.Uploaded, persisted.phase)
+        assertEquals(local.files.map { file -> (0 until partCount(file.sizeBytes)).toList() },
+            persisted.serverUpload?.files?.map { it.uploadedParts })
+        assertEquals(local.files.sumOf { partCount(it.sizeBytes) }, remote.parts.size)
+    }
+
+    @Test fun promoteLocalIsBlockedWhenTheRemoteConflictSummaryWasNeverRead() = runBlocking {
+        val (job, local, remoteVersion) = conflictFixture()
+        jobs.update(job.id) { it.copy(conflictRemoteVersion = null) }
+        val conflictReceipt = jobs.read(job.id).serverUpload!!
+        val remote = FakeServer(local).apply {
+            receipt = conflictReceipt
+            remoteVersionId = remoteVersion.versionId
+            failRemoteSummary = true
+        }
+
+        try {
+            NoteUploadReconciler(jobs, remote.api).promote(job.id, local.versionId)
+            fail("Promotion must not run without both summaries")
+        } catch (error: IOException) {
+            assertTrue(error.message.orEmpty().contains("摘要"))
+        }
+
+        assertNull(remote.promoteVersionId)
+        val preserved = jobs.read(job.id)
+        assertEquals(NoteUploadPhase.Conflict, preserved.phase)
+        assertNull(preserved.conflictRemoteVersion)
+        assertTrue(preserved.serverUpload!!.hasConflict)
+    }
+
+    @Test fun reconcileUploadingReceiptKeepsFailedJobResumableAndItsProblem() = runBlocking {
+        val local = snapshot("Local A")
+        val job = jobs.create(local, server, owner, "alice")
+        jobs.update(job.id) {
+            it.copy(phase = NoteUploadPhase.Failed, problem = "previous failure", uploadedBytes = 0, serverUpload = null)
+        }
+        val remote = FakeServer(local).apply {
+            receipt = upload(local, phase = "Uploading", current = null, conflict = false, isCurrent = false,
+                uploaded = local.files.map { emptyList() })
+        }
+
+        val reconciled = NoteUploadReconciler(jobs, remote.api).refresh(job.id)
+
+        assertEquals(NoteUploadPhase.Failed, reconciled.phase)
+        assertEquals("previous failure", reconciled.problem)
+        assertEquals("Uploading", reconciled.serverUpload?.phase)
+    }
+
+    @Test fun legacyJobJsonWithoutReceiptFieldsStillLoadsWithSafeDefaults() {
+        val id = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        val fixture = checkNotNull(javaClass.classLoader!!.getResourceAsStream("notes/note-upload-legacy-v1.json"))
+            .use { it.readBytes() }
+        val directory = File(temp.root, "note-uploads").apply { check(mkdirs()) }
+        File(directory, "$id.json").writeBytes(fixture)
+
+        val loaded = NoteUploadStore.at(temp.root).load()
+
+        assertFalse(loaded.loadFailed)
+        val job = loaded.jobs.single()
+        assertEquals(id, job.id)
+        assertEquals(NoteUploadPhase.WaitingForNetwork, job.phase)
+        assertEquals(0, job.uploadedBytes)
+        assertNull(job.serverUpload)
+        assertNull(job.localVersion)
+        assertNull(job.conflictRemoteVersion)
+        assertNull(job.resolutionVersionId)
     }
 
     private fun conflictFixture(): Triple<NoteUploadJob, NoteUploadSnapshot, NoteUploadSnapshot> {
@@ -229,18 +376,23 @@ class NoteUploadReceiptTest {
         var promoteRequest: PromoteNoteMaterialVersionRequest? = null
         var promoteResult = receipt
         var stale = false
+        var failRemoteSummary = false
         val api: ApiService = Proxy.newProxyInstance(ApiService::class.java.classLoader,
             arrayOf(ApiService::class.java)) { _, method, args ->
             when (method.name) {
                 "getNoteMaterialVersion" -> {
                     val id = args!![0] as String
-                    val version = if (id == local.versionId) {
-                        NoteMaterialVersionDto(local.inputJson, local.manifestJson, receipt)
+                    if (id == local.versionId) {
+                        NoteMaterialVersionDtoApiResponse(0,
+                            NoteMaterialVersionDto(local.inputJson, local.manifestJson, receipt), "ok", "2026-11-23T00:00:00Z")
                     } else {
                         require(id == remoteVersionId) { "Unexpected version read $id" }
-                        checkNotNull(remoteVersionDto)
+                        if (failRemoteSummary) {
+                            failCall(args, IOException("synthetic remote summary unavailable"))
+                        } else {
+                            NoteMaterialVersionDtoApiResponse(0, checkNotNull(remoteVersionDto), "ok", "2026-11-23T00:00:00Z")
+                        }
                     }
-                    NoteMaterialVersionDtoApiResponse(0, version, "ok", "2026-11-23T00:00:00Z")
                 }
                 "promoteNoteMaterialVersion" -> {
                     promoteVersionId = args!![0] as String
@@ -264,6 +416,44 @@ class NoteUploadReceiptTest {
             (args.last() as kotlin.coroutines.Continuation<Any?>).resumeWith(Result.failure(error))
             return kotlin.coroutines.intrinsics.COROUTINE_SUSPENDED
         }
+    }
+
+    private inner class SerializedServer(val source: NoteUploadSnapshot, val stale: NoteMaterialUploadDto) {
+        val parts = linkedMapOf<Pair<Int, Int>, ByteArray>()
+        val getStarted = CompletableDeferred<Unit>()
+        val releaseGet = CompletableDeferred<Unit>()
+        val beginCalled = CompletableDeferred<Unit>()
+        val api: ApiService = Proxy.newProxyInstance(ApiService::class.java.classLoader,
+            arrayOf(ApiService::class.java)) { _, method, args ->
+            when (method.name) {
+                "getNoteMaterialVersion" -> {
+                    require(args!![0] as String == source.versionId)
+                    getStarted.complete(Unit)
+                    runBlocking { releaseGet.await() }
+                    NoteMaterialVersionDtoApiResponse(0,
+                        NoteMaterialVersionDto(source.inputJson, source.manifestJson, stale), "ok", "2026-11-23T00:00:00Z")
+                }
+                "beginNoteMaterialUpload" -> {
+                    beginCalled.complete(Unit)
+                    uploadResponse("Uploading", null, false, false)
+                }
+                "uploadNoteMaterialPart" -> {
+                    val key = args!![1] as Int to (args[2] as Int)
+                    val bytes = Buffer().also { (args[4] as RequestBody).writeTo(it) }.readByteArray()
+                    assertEquals(args[3], materialDigest(bytes.inputStream()))
+                    parts[key] = bytes
+                    StringApiResponse(0, "stored", "ok", "2026-11-23T00:00:00Z")
+                }
+                "completeNoteMaterialUpload" -> uploadResponse("Uploaded", source.versionId, false, true)
+                else -> error("Unexpected operation ${method.name}")
+            }
+        } as ApiService
+
+        private fun uploadResponse(phase: String, current: String?, conflict: Boolean, isCurrent: Boolean) =
+            NoteMaterialUploadDtoApiResponse(0, upload(source, phase, current, conflict, isCurrent,
+                source.files.mapIndexed { index, file ->
+                    (0 until partCount(file.sizeBytes)).filter { part -> parts.containsKey(index to part) }
+                }), "ok", "2026-11-23T00:00:00Z")
     }
 
     private fun NoteUploadJob.withReceipt(phase: String, hasConflict: Boolean): NoteUploadJob {

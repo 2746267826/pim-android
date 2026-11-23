@@ -1,0 +1,119 @@
+name: Android Instrumented Tests
+
+# 目的：把 `connectedDebugAndroidTest` 从开发机搬到 GitHub-hosted runner。
+#
+# 为什么需要它：本机（18 GB 共享主机）跑 AVD 是最大的单一内存消耗者，
+# 多次把内存 + swap 一起打满、整机进入 D 状态。而这台机器还要跑生产服务。
+# 公有仓的 Actions 分钟数免费，标准 ubuntu-latest runner 自带 KVM
+# （2024-04 起从 larger runners 下放，需手动启用 udev 规则）。
+#
+# 为什么不进 CI Gate：instrumented 用例 29 个，模拟器启动 + 执行约 20-40 分钟，
+# 每个 PR 都跑代价过高。默认按需触发：给 PR 打 `run-instrumented` 标签，或在
+# Actions 页手动 workflow_dispatch。需要"必须跑过才能合"时，由仓库 ruleset
+# 把本 workflow 加成必需检查即可，不需要改这里。
+
+on:
+  pull_request:
+    branches: [master]
+    types: [opened, synchronize, reopened, labeled]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  instrumented:
+    name: Connected tests (API 34)
+    # 仅当 PR 带 `run-instrumented` 标签，或手动触发时运行。
+    if: |
+      github.event_name == 'workflow_dispatch' ||
+      contains(github.event.pull_request.labels.*.name, 'run-instrumented')
+    runs-on: ubuntu-latest
+    # 首次运行要下载系统镜像 + 冷启动 AVD；缓存命中后通常 15-25 分钟。
+    timeout-minutes: 60
+    defaults:
+      run:
+        working-directory: src/client-android
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: '21'
+
+      # 与 build-android.yml 保持一致：runner 镜像已预置 SDK，
+      # 只导出环境变量，不触发 sdkmanager "tools" 安装（cmdline-tools 16+ 已移除该包）。
+      - uses: android-actions/setup-android@v3
+        with:
+          packages: ''
+          log-accepted-android-sdk-licenses: false
+
+      - name: Install Android SDK packages (if missing)
+        run: |
+          if [ ! -d "$ANDROID_HOME/platforms/android-36.1" ]; then
+            sdkmanager "platforms;android-36.1" "build-tools;36.1.0"
+          fi
+
+      # 标准 runner 上 /dev/kvm 存在，但 runner 用户不在 kvm 组，
+      # 且 job 内 usermod 不生效 —— 必须靠 udev 规则放权限，否则模拟器退化成软件渲染（慢 10-20 倍）。
+      - name: Enable KVM
+        run: |
+          echo 'KERNEL=="kvm", GROUP="kvm", MODE="0666", OPTIONS+="static_node=kvm"' | sudo tee /etc/udev/rules.d/99-kvm4all.rules
+          sudo udevadm control --reload-rules
+          sudo udevadm trigger --name-match=kvm
+          ls -l /dev/kvm
+
+      - uses: gradle/actions/setup-gradle@v3
+
+      # AVD 快照缓存：系统镜像下载 + 冷启动是最贵的两步，缓存命中后可省数分钟。
+      - name: AVD cache
+        uses: actions/cache@v4
+        id: avd-cache
+        with:
+          path: |
+            ~/.android/avd/*
+            ~/.android/adb*
+          key: avd-${{ runner.os }}-api34-x86_64-google_apis
+
+      # 缓存未命中时先冷启动一次并保存快照，后续运行从快照启动。
+      - name: Create AVD snapshot for caching
+        if: steps.avd-cache.outputs.cache-hit != 'true'
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          script: echo "AVD snapshot generated for caching."
+
+      - name: Run connected instrumented tests
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          working-directory: src/client-android
+          # --no-daemon：CI 上常驻 Gradle daemon 只会占内存，run 结束即丢。
+          script: ./gradlew :app:connectedDebugAndroidTest --no-daemon
+
+      - name: Upload instrumented test reports
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: instrumented-test-reports-${{ github.run_id }}
+          path: |
+            src/client-android/app/build/reports/androidTests/
+            src/client-android/app/build/outputs/androidTest-results/
+          retention-days: 14
+          if-no-files-found: warn

@@ -157,10 +157,20 @@ jobs:
           bash scripts/ci/check-contract-kotlin.sh
           echo "✅ 生成物与 contract/openapi.json 逐字节一致"
 
+  # 稳定通道的 connected 测试：排除 `@RequiresDevice` 标注的真机依赖用例，
+  # 其余用例必须全绿 —— 这是 instrumented 门禁真正「有牙」的部分，失败即红。
+  # 全量（含真机依赖）仍走 label `run-instrumented` 的报告模式通道。
+  connected-android:
+    name: Connected tests (stable)
+    needs: [resolve-version]
+    uses: ./.github/workflows/android-instrumented.yml
+    with:
+      mode: stable
+
   # 汇总门禁：任一子任务失败即整体失败，避免"看起来绿了"。
   gate:
     name: CI Gate
-    needs: [resolve-version, build-android, build-shell-android, contract-freshness, contract-codegen]
+    needs: [resolve-version, build-android, build-shell-android, contract-freshness, contract-codegen, connected-android]
     if: always()
     runs-on: ubuntu-latest
     steps:
@@ -171,6 +181,7 @@ jobs:
           R_SHELL: ${{ needs.build-shell-android.result }}
           R_FRESHNESS: ${{ needs.contract-freshness.result }}
           R_CODEGEN: ${{ needs.contract-codegen.result }}
+          R_CONNECTED: ${{ needs.connected-android.result }}
         run: |
           set -uo pipefail
           fail=0
@@ -188,6 +199,7 @@ jobs:
           check "build-shell-android" "$R_SHELL"
           check "contract-freshness" "$R_FRESHNESS"
           check "contract-codegen" "$R_CODEGEN"
+          check "connected-android" "$R_CONNECTED"
 
           if [ "$fail" -ne 0 ]; then
             echo ""

@@ -25,12 +25,14 @@ import org.junit.Assert.assertEquals
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
+import com.pim.app.RequiresDevice
 
 @RunWith(AndroidJUnit4::class)
 class NoteTaskSuggestionsScreenTest {
     @get:Rule val compose = createComposeRule()
 
     @Test
+    @RequiresDevice
     fun boundedListShowsEditableActionsAndRequiresExplicitCreateConfirmation() {
         val suggestion = suggestion()
         val source = NoteTaskSuggestionSource(
@@ -82,6 +84,7 @@ class NoteTaskSuggestionsScreenTest {
     }
 
     @Test
+    @RequiresDevice
     fun priorityReplacementThenTitleAndDescriptionKeepSaveAndConfirmationConsistent() {
         val suggestion = suggestion()
         val renderedState = mutableStateOf(stateFor(suggestion))
@@ -144,6 +147,7 @@ class NoteTaskSuggestionsScreenTest {
     }
 
     @Test
+    @RequiresDevice
     fun restoredAndRebasedDraftsSyncButDiscardResetsFieldsToServerValues() {
         val suggestion = suggestion()
         val renderedState = mutableStateOf(stateFor(suggestion))
@@ -222,6 +226,7 @@ class NoteTaskSuggestionsScreenTest {
     }
 
     @Test
+    @RequiresDevice
     fun confirmationDialogIsDiscardedWhenSourceOrSessionScopeChanges() {
         val suggestion = suggestion()
         val source = NoteTaskSuggestionSource(
@@ -273,6 +278,7 @@ class NoteTaskSuggestionsScreenTest {
     }
 
     @Test
+    @RequiresDevice
     fun destinationSelectionUsesModelRevisionAndEndpointNotOnlyModelId() {
         val suggestion = suggestion()
         val source = NoteTaskSuggestionSource(
@@ -360,6 +366,7 @@ class NoteTaskSuggestionsScreenTest {
     }
 
     @Test
+    @RequiresDevice
     fun terminalSuggestionExposesDirtyDraftUntilUserExplicitlyDeletesIt() {
         val draft = NoteTaskSuggestionDraft(
             suggestionId = SUGGESTION_ID,

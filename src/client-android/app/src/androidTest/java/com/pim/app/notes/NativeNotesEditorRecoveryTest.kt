@@ -25,6 +25,7 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.cancel
 import kotlinx.coroutines.launch
 import java.util.concurrent.atomic.AtomicReference
+import com.pim.app.RequiresDevice
 
 /** Real renderer termination and lazy-view replacement; bridge and retirement delays are injected faults. */
 class NativeNotesEditorRecoveryTest {
@@ -43,6 +44,7 @@ class NativeNotesEditorRecoveryTest {
         }
     }
 
+    @RequiresDevice
     @Test fun terminatedRendererKeepsRecordingAndRequiresExplicitSourceReviewAcrossRecreation() {
         create(listOf(markdownBlock("已收到的原文")))
         val id = note().blocks.single().string("id")
@@ -99,6 +101,7 @@ class NativeNotesEditorRecoveryTest {
         capture("renderer-recovered")
     }
 
+    @RequiresDevice
     @Test fun rapidLazyScrollingAndFirstFinishKeepEveryBlockAndNewInput() {
         create((0 until 24).map { markdownBlock(if (it == 0) "原有正文" else "第${it}段：保留每一段记录的完整内容。\n\n".repeat(3)) })
         val id = note().blocks.first().string("id")

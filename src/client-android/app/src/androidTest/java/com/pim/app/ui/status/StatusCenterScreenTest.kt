@@ -42,6 +42,7 @@ import java.io.File
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import com.pim.app.RequiresDevice
 
 /** 仪表化测试用的冲刺概况（REQ-9：`StatusCenterContent` 的 sprintSummary 无默认值）。 */
 private fun sprintSummaryForTest() = com.pim.app.location.sprint.SprintSummary(
@@ -99,6 +100,7 @@ class StatusCenterScreenTest {
     }
 
     @Test
+    @RequiresDevice
     fun transportFactsShowCountsAndTimes() {
         composeTestRule.setContent {
             PimTheme {

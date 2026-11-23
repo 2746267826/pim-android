@@ -22,6 +22,7 @@ import java.time.Instant
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
+import com.pim.app.RequiresDevice
 
 /**
  * WO-ANDROID-POLICY-TRANSITION-20260928 **REQ-5**：「策略切换历史」板块的界面契约。
@@ -115,6 +116,7 @@ class PolicyTransitionHistorySectionTest {
     }
 
     @Test
+    @RequiresDevice
     fun defaultPageShowsTwentyRowsAndExpandingRevealsAll() {
         renderStateful(transitions(25))
 

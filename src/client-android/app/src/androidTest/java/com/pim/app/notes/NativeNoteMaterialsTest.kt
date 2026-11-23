@@ -17,6 +17,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
+import com.pim.app.RequiresDevice
 
 class NativeNoteMaterialsTest {
     private val compose = createAndroidComposeRule<NativeNotesActivity>()
@@ -35,6 +36,7 @@ class NativeNoteMaterialsTest {
         }
     }
 
+    @RequiresDevice
     @Test fun realMultipleRecordingsFreezeAllAudioThenEditingAndSupplementaryCaptureCreateNewVersion() {
         create()
         val id = note().id

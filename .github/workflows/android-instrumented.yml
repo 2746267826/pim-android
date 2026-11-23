@@ -7,29 +7,52 @@ name: Android Instrumented Tests
 # 公有仓的 Actions 分钟数免费，标准 ubuntu-latest runner 自带 KVM
 # （2024-04 起从 larger runners 下放，需手动启用 udev 规则）。
 #
-# 为什么不进 CI Gate：instrumented 用例 29 个，模拟器启动 + 执行约 20-40 分钟，
-# 每个 PR 都跑代价过高。默认按需触发：给 PR 打 `run-instrumented` 标签，或在
-# Actions 页手动 workflow_dispatch。需要"必须跑过才能合"时，由仓库 ruleset
-# 把本 workflow 加成必需检查即可，不需要改这里。
+# ── 两种模式（2026-11-23 引入）──────────────────────────────────────────
+#
+#  stable（默认，PR 必跑，由 ci.yml 调用并进 CI Gate）：排除 `@RequiresDevice`
+#    标注的用例，剩余用例必须全绿 —— 这是门禁真正「有牙」的部分，失败即红。
+#
+#  full（label `run-instrumented` / 手动触发）：跑全部用例（含真机依赖的），
+#    报告模式不阻塞。用于深度验证与真机能力回归。
+#
+# 为什么按注解切分而不是按包：失败根因不是某个包，而是「用例是否真的需要真实
+# 麦克风/相机/输入法/mock 定位」。注解把这条判断写在用例自己身上，修好后摘掉
+# 即可逐步收紧，不会因为代码移动而失配。
 
 on:
+  workflow_call:
+    inputs:
+      mode:
+        description: 'stable (exclude @RequiresDevice, must pass) | full (all cases, report only)'
+        required: false
+        type: string
+        default: 'stable'
+  workflow_dispatch:
+    inputs:
+      mode:
+        description: '测试模式'
+        required: false
+        type: choice
+        options: [stable, full]
+        default: stable
   pull_request:
     branches: [master]
     types: [opened, synchronize, reopened, labeled]
-  workflow_dispatch:
 
 permissions:
   contents: read
 
 concurrency:
-  group: ${{ github.workflow }}-${{ github.ref }}
+  group: ${{ github.workflow }}-${{ github.ref }}-${{ inputs.mode || 'label' }}
   cancel-in-progress: true
 
 jobs:
-  instrumented:
+  connected:
     name: Connected tests (API 34)
-    # 仅当 PR 带 `run-instrumented` 标签，或手动触发时运行。
+    # 直接 PR 触发时只在带 `run-instrumented` 标签时跑 full；
+    # 被 ci.yml 调用（workflow_call）或手动触发时总是跑。
     if: |
+      github.event_name == 'workflow_call' ||
       github.event_name == 'workflow_dispatch' ||
       contains(github.event.pull_request.labels.*.name, 'run-instrumented')
     runs-on: ubuntu-latest
@@ -94,16 +117,30 @@ jobs:
           disable-animations: true
           script: echo "AVD snapshot generated for caching."
 
-      - name: Run connected instrumented tests
-        id: connected
-        # 已知问题（2026-11-23 首次实跑）：186 个用例中 160 通过 / 14 跳过 / 26 失败，
-        # 失败几乎全部集中在 com.pim.app.notes（realRecording / emulatedSystemCamera /
-        # ChineseComposition / keyboard 等），依赖真实录音、相机、中文输入法与特定屏幕尺寸，
-        # 无头模拟器天然不满足。这批用例此前从未在干净环境执行过（CI 只 assemble 不 run）。
-        #
-        # 因此本 job 目前是「报告模式」：真实执行、产出报告，但不阻塞 PR。
-        # 等 notes 用例按「需要真机」重新分类（或在测试里注入可用的假录音/相机）之后，
-        # 去掉 continue-on-error 并接入 ruleset 作为必需检查即可。
+      # ---------- stable：排除真机依赖用例，必须全绿（门禁有牙的部分）----------
+      - name: Run stable connected tests (must pass)
+        id: stable
+        if: ${{ inputs.mode != 'full' }}
+        uses: reactivecircus/android-emulator-runner@v2
+        with:
+          api-level: 34
+          target: google_apis
+          arch: x86_64
+          force-avd-creation: false
+          emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
+          disable-animations: true
+          working-directory: src/client-android
+          # --no-daemon：CI 上常驻 Gradle daemon 只会占内存。
+          script: >-
+            ./gradlew :app:connectedDebugAndroidTest --no-daemon
+            -Pandroid.testInstrumentationRunnerArguments.notAnnotation=com.pim.app.RequiresDevice
+
+      # ---------- full：跑全部用例，报告模式（不阻塞）----------
+      - name: Run full connected tests (report only)
+        id: full
+        if: ${{ inputs.mode == 'full' }}
+        # 其中约 26 个用例依赖真实录音/相机/输入法/mock 定位，模拟器上必然失败。
+        # 本通道用于真机能力回归，失败不阻塞，报告照常产出。
         continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         with:
@@ -114,23 +151,26 @@ jobs:
           emulator-options: -no-window -gpu swiftshader_indirect -noaudio -no-boot-anim -camera-back none
           disable-animations: true
           working-directory: src/client-android
-          # --no-daemon：CI 上常驻 Gradle daemon 只会占内存，run 结束即丢。
           script: ./gradlew :app:connectedDebugAndroidTest --no-daemon
 
       - name: Summarize instrumented results
         if: always()
-        working-directory: src/client-android
         run: |
           set -uo pipefail
+          MODE="${{ inputs.mode || 'full (label)' }}"
           {
-            echo "### Connected (instrumented) 测试结果"
+            echo "### Connected (instrumented) — 模式：${MODE}"
             echo ""
-            echo "| 项 | 值 |"
+            echo "| 通道 | 结果 |"
             echo "| --- | --- |"
-            echo "| 执行结果 | \`${{ steps.connected.outcome }}\` |"
-            echo "| 说明 | 报告模式：失败不阻塞 PR（见 workflow 内注释） |"
+            echo "| stable（排除 @RequiresDevice，必须绿） | \`${{ steps.stable.outcome }}\` |"
+            echo "| full（全部用例，报告模式） | \`${{ steps.full.outcome }}\` |"
             echo ""
-            echo "完整报告见本次运行的 \`instrumented-test-reports-*\` artifact。"
+            echo "完整报告见 \`instrumented-test-reports-*\` artifact。"
+            if [ "$MODE" = "stable" ] && [ "${{ steps.stable.outcome }}" = "failure" ]; then
+              echo ""
+              echo "> ❌ stable 通道失败：这就是门禁要拦住的信号。修好它，或标注 \`@RequiresDevice\` 并在 PR 里写明理由。"
+            fi
           } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload instrumented test reports

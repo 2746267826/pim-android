@@ -24,6 +24,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
+import com.pim.app.RequiresDevice
 
 class NativeNotesRichEditorTest {
     private val compose = createAndroidComposeRule<NativeNotesActivity>()
@@ -41,6 +42,7 @@ class NativeNotesRichEditorTest {
         }
     }
 
+    @RequiresDevice
     @Test fun defaultRichEditorCommitsChineseCompositionAndRapidInputBeforeFinishingWithRealRecording() {
         create(); ready(); saved()
         compose.onNodeWithTag("note-start-recording").performClick()

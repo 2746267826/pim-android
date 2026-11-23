@@ -21,6 +21,7 @@ import org.junit.Assert.*
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.RuleChain
+import com.pim.app.RequiresDevice
 
 class NativeNotesDocumentTest {
     private val compose = createAndroidComposeRule<NativeNotesActivity>()
@@ -39,6 +40,7 @@ class NativeNotesDocumentTest {
         }
     }
 
+    @RequiresDevice
     @Test fun caretInsertionRealTouchInkResizeAndReopenPreserveEditableSource() {
         create()
         val text = "# Session\n\nbefore\nafter"
@@ -111,6 +113,7 @@ class NativeNotesDocumentTest {
         assertTrue(file.exists())
     }
 
+    @RequiresDevice
     @Test fun realRecordingRemainsOwnedByOriginalNoteDuringEditingNavigationAndRecreation() {
         create(); saved()
         val firstId = note().id
@@ -143,6 +146,7 @@ class NativeNotesDocumentTest {
         assertTrue(model.notes.state.value.documents.containsKey(otherId))
     }
 
+    @RequiresDevice
     @Test fun emulatedSystemCameraCaptureAndCancellationCoexistWithRealRecording() {
         create(); closeSoftKeyboard(); saved()
         val id = note().id

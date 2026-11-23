@@ -50,7 +50,9 @@ fun NativeNotesScreen(
     onAuthorizeAutoSubmit: (NoteUploadTarget) -> Unit = {}, onRevokeAutoSubmit: () -> Unit = {},
     onEnableAutoSubmit: (String, NoteUploadTarget) -> Unit = { _, _ -> },
     onUpload: (String, NoteUploadTarget) -> Unit = { _, _ -> }, onResumeUpload: (String) -> Unit = {}, onPauseUpload: (String) -> Unit = {},
+    onRefreshUploadReceipt: (String) -> Unit = {}, onPromoteUploadConflict: (String, String) -> Unit = { _, _ -> },
     asr: NoteAsrRepositoryState = NoteAsrRepositoryState(), asrActions: NoteAsrActions = NoteAsrActions(),
+    artifacts: NoteArtifactRepositoryState = NoteArtifactRepositoryState(),
     legacyMigration: LegacyQuickNoteMigrationState = LegacyQuickNoteMigrationState(),
     legacyMigrationActions: LegacyQuickNoteMigrationActions = LegacyQuickNoteMigrationActions(),
     initialAsr: Boolean = false,
@@ -246,6 +248,9 @@ fun NativeNotesScreen(
                 if (showMaterials) NoteMaterialsSheet(note, sessions, materials, busy, { showMaterials = false }, onRetryMaterial, onExportMaterial,
                     onUpload = { uploadVersionId = it; showMaterials = false }, uploads = uploads, target = uploadTarget,
                     onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
+                    asr = asr, artifacts = artifacts,
+                    onRefreshUploadReceipt = onRefreshUploadReceipt,
+                    onPromoteConflict = onPromoteUploadConflict,
                     onAsr = { asrVersionId = it; showAsr = true })
                 if (showRecordings) NoteRecordingsSheet(sessions, recording, playing, { showRecordings = false }, onPlay, onPauseResume, onStopRecording)
                 completion?.takeIf { it.noteId == note.id }?.let { finished ->

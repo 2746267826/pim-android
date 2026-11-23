@@ -197,6 +197,18 @@ class NotesViewModel @Inject constructor(
         catch (_: Exception) { tell("未确认暂停成功，请重新核对上传状态") }
     } }
 
+    fun refreshUploadReceipt(id: String) { viewModelScope.launch {
+        try { tell(uploads.refreshReceipt(id)) }
+        catch (error: CancellationException) { throw error }
+        catch (_: Exception) { tell("未能读取服务器回执；本机材料与上次回执保留") }
+    } }
+
+    fun promoteUploadConflict(jobId: String, versionId: String) { viewModelScope.launch {
+        try { tell(uploads.promoteConflict(jobId, versionId)) }
+        catch (error: CancellationException) { throw error }
+        catch (_: Exception) { tell("未能确认保留版本；双方材料与本机回执仍保留") }
+    } }
+
     fun refreshAsr() { viewModelScope.launch { asr.refresh() } }
     fun refreshAsrTask(id: String) { viewModelScope.launch { asr.refreshTask(id) } }
     fun loadAsrSegments(id: String) { viewModelScope.launch { asr.loadSegments(id) } }

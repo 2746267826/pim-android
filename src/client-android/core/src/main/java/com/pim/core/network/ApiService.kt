@@ -6,6 +6,7 @@ import com.pim.core.contract.NativeNotePageDtoApiResponse
 import com.pim.core.contract.NoteAsrDestinationsDtoApiResponse
 import com.pim.core.contract.NoteMaterialUploadDtoApiResponse
 import com.pim.core.contract.NoteMaterialVersionDtoApiResponse
+import com.pim.core.contract.PromoteNoteMaterialVersionRequest
 import com.pim.core.contract.NoteAsrSegmentsDtoApiResponse
 import com.pim.core.contract.NoteAsrSourcesDtoApiResponse
 import com.pim.core.contract.NoteAsrTaskDtoApiResponse
@@ -158,6 +159,12 @@ interface ApiService {
 
     @GET("native-notes/versions/{versionId}")
     suspend fun getNoteMaterialVersion(@Path("versionId") versionId: String): NoteMaterialVersionDtoApiResponse
+
+    @POST("native-notes/versions/{versionId}/promote")
+    suspend fun promoteNoteMaterialVersion(
+        @Path("versionId") versionId: String,
+        @Body request: PromoteNoteMaterialVersionRequest
+    ): NoteMaterialUploadDtoApiResponse
 
     @Streaming
     @GET("native-notes/versions/{versionId}/files/{fileIndex}")

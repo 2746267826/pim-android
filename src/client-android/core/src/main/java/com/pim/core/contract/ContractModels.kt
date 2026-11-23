@@ -2215,6 +2215,12 @@ data class PcDetailRecord(
  */
 typealias PimHealthStatus = Int
 
+/** 契约 `components.schemas.PromoteNoteMaterialVersionRequest`（request）。 */
+@Serializable
+data class PromoteNoteMaterialVersionRequest(
+    val expectedCurrentVersionId: String? = null,
+)
+
 /** 契约 `components.schemas.QuickNoteAttachmentDto`（response）。 */
 @Serializable
 data class QuickNoteAttachmentDto(

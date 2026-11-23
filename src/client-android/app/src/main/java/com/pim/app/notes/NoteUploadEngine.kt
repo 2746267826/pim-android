@@ -18,10 +18,14 @@ class NoteUploadEngine(private val jobs: NoteUploadStore, private val materials:
             checkActive()
             if (jobs.read(id).phase == NoteUploadPhase.Paused) throw UploadPausedException()
         }
-        fun save(phase: NoteUploadPhase, bytes: Long, current: String? = null): NoteUploadJob = jobs.update(id) {
-            it.copy(phase = if (it.phase == NoteUploadPhase.Paused && phase == NoteUploadPhase.Uploading) it.phase else phase,
-                uploadedBytes = bytes, currentVersionId = current, problem = null,
-                consecutiveFailures = if (bytes > it.uploadedBytes || phase in setOf(NoteUploadPhase.Uploaded, NoteUploadPhase.Conflict)) 0 else it.consecutiveFailures)
+        fun save(phase: NoteUploadPhase, upload: NoteMaterialUploadDto): NoteUploadJob = jobs.update(id) {
+            val confirmed = upload.confirmedBytes()
+            val nextPhase = if (it.phase == NoteUploadPhase.Paused && phase == NoteUploadPhase.Uploading) it.phase else phase
+            it.withServerReceipt(upload, problem = null).copy(
+                phase = nextPhase,
+                consecutiveFailures = if (confirmed > it.uploadedBytes ||
+                    nextPhase in setOf(NoteUploadPhase.Uploaded, NoteUploadPhase.Conflict)) 0 else it.consecutiveFailures,
+            )
         }
         check()
         val snapshot = materials.uploadSnapshot(job.versionId)
@@ -32,12 +36,10 @@ class NoteUploadEngine(private val jobs: NoteUploadStore, private val materials:
             snapshot.manifestJson, job.noteId, true, job.versionId)).let { requireData(it.code, it.data) }
         validate(begun, job, snapshot)
         require(begun.phase in setOf("Uploading", "Uploaded", "Conflict")) { "Unknown server phase" }
-        if (begun.phase != "Uploading") return save(if (begun.hasConflict) NoteUploadPhase.Conflict else NoteUploadPhase.Uploaded,
-            job.totalBytes, begun.currentVersionId)
+        if (begun.phase != "Uploading") return save(if (begun.hasConflict) NoteUploadPhase.Conflict else NoteUploadPhase.Uploaded, begun)
         val size = begun.limits.partSizeBytes
         require(size in 1..1_048_576) { "Unsupported server part limit" }
-        var uploaded = begun.files.sumOf { file -> file.uploadedParts.sumOf { part -> minOf(size.toLong(), file.sizeBytes - part.toLong() * size) } }
-        save(NoteUploadPhase.Uploading, uploaded)
+        save(NoteUploadPhase.Uploading, begun)
         var copiedParts = 0
         for (remote in begun.files) {
             for (part in 0 until remote.partCount) {
@@ -47,7 +49,8 @@ class NoteUploadEngine(private val jobs: NoteUploadStore, private val materials:
                 val response = api.uploadNoteMaterialPart(job.versionId, remote.index, part,
                     bytes.inputStream().use { materialDigest(it) }, bytes.toRequestBody("application/octet-stream".toMediaType()))
                 if (response.code != 0) throw IOException("Server did not confirm the stored part")
-                uploaded += bytes.size; save(NoteUploadPhase.Uploading, uploaded)
+                val receipt = (jobs.read(id).serverUpload ?: begun).withConfirmedPart(remote.index, part)
+                save(NoteUploadPhase.Uploading, receipt)
                 copiedParts++
                 if (copiedParts >= maxParts || shouldYield()) return jobs.read(id)
             }
@@ -56,7 +59,7 @@ class NoteUploadEngine(private val jobs: NoteUploadStore, private val materials:
         val completed = api.completeNoteMaterialUpload(job.versionId).let { requireData(it.code, it.data) }
         validate(completed, job, snapshot)
         require(completed.phase in setOf("Uploaded", "Conflict")) { "Server has not confirmed a complete version" }
-        return save(if (completed.hasConflict) NoteUploadPhase.Conflict else NoteUploadPhase.Uploaded, job.totalBytes, completed.currentVersionId)
+        return save(if (completed.hasConflict) NoteUploadPhase.Conflict else NoteUploadPhase.Uploaded, completed)
     }
 
     private fun validate(remote: NoteMaterialUploadDto, job: NoteUploadJob, source: NoteUploadSnapshot) {

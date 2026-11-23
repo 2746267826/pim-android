@@ -4,6 +4,7 @@ import android.content.Context
 import androidx.work.*
 import com.pim.core.auth.TokenManager
 import com.pim.core.network.BoundUploadSession
+import com.pim.core.network.ApiClientProvider
 import com.pim.core.settings.PimServerEndpoints
 import com.pim.core.settings.ServerSettingsStore
 import com.pim.core.settings.ServerSessionCommitResult
@@ -21,7 +22,8 @@ data class NoteAutoSubmitRegistration(val authorized: Boolean, val scheduled: Bo
 
 @Singleton
 class NoteUploadRepository @Inject constructor(@ApplicationContext private val context: Context,
-    private val sessions: TokenManager, private val settings: ServerSettingsStore) {
+    private val sessions: TokenManager, private val settings: ServerSettingsStore,
+    private val clients: ApiClientProvider? = null) {
     private val store = NoteUploadStore.at(context.noBackupFilesDir)
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private val initialization = Mutex()
@@ -32,6 +34,8 @@ class NoteUploadRepository @Inject constructor(@ApplicationContext private val c
     private val mutableAutoSubmitAuthorization = MutableStateFlow(autoSubmitStore.authorization())
     val autoSubmitAuthorization = mutableAutoSubmitAuthorization.asStateFlow()
     private val workManager get() = WorkManager.getInstance(context)
+    private var busyJobIds: Set<String> = emptySet()
+    private var jobMessages: Map<String, String> = emptyMap()
 
     suspend fun authorizeAutoSubmit(target: NoteUploadTarget): Boolean = withContext(Dispatchers.IO) {
         autoSubmitLock.withLock {
@@ -154,6 +158,15 @@ class NoteUploadRepository @Inject constructor(@ApplicationContext private val c
             refresh()
             state.value.jobs.filter { it.phase in resumable }.forEach { enqueue(it.id) }
             resumeAutoSubmits()
+            val target = target()
+            if (clients != null && target != null) {
+                state.value.jobs.filter { job ->
+                    BoundUploadSession(job.serverIdentity, job.ownerId) == target.binding &&
+                        job.phase in setOf(NoteUploadPhase.Uploaded, NoteUploadPhase.Conflict, NoteUploadPhase.WaitingForNetwork) &&
+                        (job.serverUpload == null ||
+                            (job.serverUpload.hasConflict && job.conflictRemoteVersion == null))
+                }.forEach { job -> scope.launch { reconcile(job.id, notify = false) } }
+            }
             scope.launch { workManager.getWorkInfosByTagFlow(NoteUploadWorker.TAG).collect { refresh() } }
         }
     }
@@ -202,13 +215,119 @@ class NoteUploadRepository @Inject constructor(@ApplicationContext private val c
         refresh()
     }
 
+    suspend fun refreshReceipt(id: String): String = withContext(Dispatchers.IO) {
+        reconcile(id, notify = true)
+    }
+
+    suspend fun promoteConflict(jobId: String, selectedVersionId: String): String = withContext(Dispatchers.IO) {
+        setBusy(jobId, true)
+        try {
+            val job = store.read(jobId)
+            val current = target() ?: return@withContext failPromotion(jobId, "请先登录原账号和服务器后再选择保留版本")
+            if (current.binding != BoundUploadSession(job.serverIdentity, job.ownerId)) {
+                return@withContext failPromotion(jobId, "该冲突属于原账号和服务器；请切回原目标后再选择")
+            }
+            val api = clients?.noteUploadApiService(current.binding)
+                ?: return@withContext failPromotion(jobId, "当前页面无法访问服务器；本机材料和双方摘要仍保留")
+            val promoted = NoteUploadReconciler(store, api).promote(jobId, selectedVersionId)
+            val message = if (promoted.resolutionVersionId == promoted.versionId) {
+                "已保留本机固定版本；服务器当前版本已按 CAS 更新，双方原始材料仍保留"
+            } else {
+                "已保留服务器版本；本机固定版本材料仍保留，没有删除任何一方"
+            }
+            setMessage(jobId, message)
+            message
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: retrofit2.HttpException) {
+            if (error.code() == 409) {
+                val job = runCatching { store.read(jobId) }.getOrNull()
+                if (job != null) runCatching { refreshReceiptInternal(job) }
+                failPromotion(jobId,
+                    "服务器当前版本已变化，CAS 拒绝本次选择；双方完整材料和摘要仍保留，请重新核对后再选择")
+            } else {
+                failPromotion(jobId, "服务器未接受保留版本（HTTP ${error.code()}）；双方材料仍保留")
+            }
+        } catch (_: Exception) {
+            failPromotion(jobId, "未能确认保留版本；双方材料与本机回执仍保留，请刷新后重试")
+        } finally {
+            setBusy(jobId, false)
+            refresh()
+        }
+    }
+
     private fun enqueue(id: String, policy: ExistingWorkPolicy = ExistingWorkPolicy.KEEP) {
         workManager.enqueueUniqueWork("note-upload-$id", policy, noteUploadRequest(id, store.read(id).serverIdentity)).result.get()
     }
 
+    private suspend fun reconcile(id: String, notify: Boolean): String {
+        setBusy(id, true)
+        return try {
+            val result = refreshReceiptInternal(store.read(id))
+            val message = when {
+                result.phase == NoteUploadPhase.Conflict -> "已重新核对：服务器仍有版本冲突，双方材料保留"
+                result.serverUpload?.phase == "Uploaded" -> "已重新核对：服务器确认整版材料"
+                else -> "已重新核对服务器逐块回执"
+            }
+            if (notify) setMessage(id, message)
+            message
+        } catch (error: kotlinx.coroutines.CancellationException) {
+            throw error
+        } catch (error: retrofit2.HttpException) {
+            val message = if (error.code() == 404) {
+                "服务器未返回该固定版本；本机材料与上次回执保留"
+            } else {
+                "服务器回执暂时无法读取（HTTP ${error.code()}）；本机材料与上次回执保留"
+            }
+            if (notify) setMessage(id, message)
+            message
+        } catch (_: Exception) {
+            val message = "未能读取服务器回执；本机材料与上次回执保留"
+            if (notify) setMessage(id, message)
+            message
+        } finally {
+            setBusy(id, false)
+            refresh()
+        }
+    }
+
+    private suspend fun refreshReceiptInternal(job: NoteUploadJob): NoteUploadJob {
+        val current = target() ?: throw java.io.IOException("请先登录原账号和服务器")
+        if (current.binding != BoundUploadSession(job.serverIdentity, job.ownerId)) {
+            throw java.io.IOException("该任务属于原账号和服务器")
+        }
+        val api = clients?.noteUploadApiService(current.binding)
+            ?: throw java.io.IOException("当前页面无法访问服务器")
+        return NoteUploadReconciler(store, api).refresh(job.id)
+    }
+
+    private fun failPromotion(jobId: String, message: String): String {
+        setMessage(jobId, message)
+        return message
+    }
+
+    private fun setBusy(id: String, busy: Boolean) {
+        synchronized(this) {
+            busyJobIds = if (busy) busyJobIds + id else busyJobIds - id
+            mutableState.value = state.value.copy(busyJobIds = busyJobIds, jobMessages = jobMessages)
+        }
+    }
+
+    private fun setMessage(id: String, message: String) {
+        synchronized(this) {
+            jobMessages = jobMessages + (id to message)
+            mutableState.value = state.value.copy(busyJobIds = busyJobIds, jobMessages = jobMessages)
+        }
+    }
+
     private fun refresh() {
-        try { mutableState.value = store.load() }
-        catch (_: Exception) { mutableState.value = state.value.copy(loadFailed = true) }
+        synchronized(this) {
+            try {
+                mutableState.value = store.load().copy(busyJobIds = busyJobIds, jobMessages = jobMessages)
+            } catch (_: Exception) {
+                mutableState.value = state.value.copy(loadFailed = true, busyJobIds = busyJobIds, jobMessages = jobMessages)
+            }
+        }
     }
 
     companion object { private val resumable = setOf(NoteUploadPhase.Queued, NoteUploadPhase.Uploading, NoteUploadPhase.WaitingForNetwork) }

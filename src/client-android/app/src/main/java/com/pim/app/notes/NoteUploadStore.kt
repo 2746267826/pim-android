@@ -1,5 +1,6 @@
 package com.pim.app.notes
 
+import com.pim.core.contract.NoteMaterialUploadDto
 import java.io.File
 import kotlinx.serialization.Serializable
 import kotlinx.serialization.encodeToString
@@ -21,12 +22,22 @@ data class NoteUploadJob(
     val createdAtMillis: Long, val phase: NoteUploadPhase = NoteUploadPhase.Queued,
     val uploadedBytes: Long = 0, val totalBytes: Long,
     val currentVersionId: String? = null, val problem: String? = null,
-    val storageConsent: Boolean = true, val retryNotBeforeMillis: Long = 0, val consecutiveFailures: Int = 0
+    val storageConsent: Boolean = true, val retryNotBeforeMillis: Long = 0, val consecutiveFailures: Int = 0,
+    val serverUpload: NoteMaterialUploadDto? = null,
+    val localVersion: NoteMaterialVersionSummary? = null,
+    val conflictRemoteVersion: NoteMaterialVersionSummary? = null,
+    val resolutionVersionId: String? = null,
 ) {
     override fun toString() = "NoteUploadJob(id=$id, phase=$phase, bytes=$uploadedBytes/$totalBytes)"
 }
 
-data class NoteUploadsState(val loaded: Boolean = false, val jobs: List<NoteUploadJob> = emptyList(), val loadFailed: Boolean = false)
+data class NoteUploadsState(
+    val loaded: Boolean = false,
+    val jobs: List<NoteUploadJob> = emptyList(),
+    val loadFailed: Boolean = false,
+    val busyJobIds: Set<String> = emptySet(),
+    val jobMessages: Map<String, String> = emptyMap(),
+)
 
 class NoteUploadStore(private val root: File) {
     fun load(): NoteUploadsState = synchronized(lock) {
@@ -51,8 +62,10 @@ class NoteUploadStore(private val root: File) {
         }
         require(existing.size < 256) { "Too many retained upload jobs" }
         val previous = existing.firstOrNull { it.noteId == snapshot.noteId && it.serverIdentity == server && it.ownerId == owner && it.phase == NoteUploadPhase.Uploaded }
+        val localVersion = noteMaterialVersionSummary(snapshot.inputJson, snapshot.manifestJson, null)
         val job = NoteUploadJob(newNoteId(), snapshot.versionId, snapshot.noteId, snapshot.revision, server, owner, name.take(200),
-            inputHash, manifestHash, previous?.versionId, System.currentTimeMillis(), totalBytes = snapshot.sizeBytes)
+            inputHash, manifestHash, previous?.versionId, System.currentTimeMillis(), totalBytes = snapshot.sizeBytes,
+            localVersion = localVersion)
         write(job); job
     }
 
@@ -63,6 +76,17 @@ class NoteUploadStore(private val root: File) {
         require(validMaterialDigest(job.inputSha256) && validMaterialDigest(job.manifestSha256))
         require(job.totalBytes >= 0 && job.uploadedBytes in 0..job.totalBytes)
         require(job.retryNotBeforeMillis >= 0 && job.consecutiveFailures in 0..9)
+        job.localVersion?.let {
+            require(it.versionId == job.versionId && it.noteId == job.noteId)
+        }
+        job.conflictRemoteVersion?.let {
+            require(it.noteId == job.noteId)
+        }
+        job.serverUpload?.let {
+            require(it.versionId == job.versionId && it.noteId == job.noteId && it.baseVersionId == job.baseVersionId)
+            require(it.phase in setOf("Uploading", "Uploaded", "Conflict"))
+            require(it.confirmedBytes() == job.uploadedBytes)
+        }
         if (job.phase in setOf(NoteUploadPhase.Uploaded, NoteUploadPhase.Conflict)) require(job.uploadedBytes == job.totalBytes)
         job
     }
@@ -74,7 +98,8 @@ class NoteUploadStore(private val root: File) {
             after.manifestSha256 == before.manifestSha256 && after.baseVersionId == before.baseVersionId &&
             after.noteId == before.noteId && after.revision == before.revision && after.totalBytes == before.totalBytes &&
             after.ownerName == before.ownerName && after.storageConsent && after.createdAtMillis == before.createdAtMillis &&
-            after.uploadedBytes in 0..after.totalBytes)
+            after.uploadedBytes in 0..after.totalBytes &&
+            (before.localVersion == null || after.localVersion == before.localVersion))
         write(after); after
     }
 

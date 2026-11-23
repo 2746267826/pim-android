@@ -52,9 +52,11 @@ class NoteUploadEngineTest {
         val snapshot = snapshot(mixed()); val job = create(snapshot); val remote = Server(snapshot); remote.losePart = true
         try { NoteUploadEngine(jobs, materials, remote.api).run(job.id); fail("Expect lost ack") } catch (_: IOException) { }
         val first = remote.parts.keys.single()
+        assertEquals(0, jobs.read(job.id).serverUpload!!.files.sumOf { it.uploadedParts.size })
         jobs.update(job.id) { it.copy(phase = NoteUploadPhase.WaitingForNetwork) }
         val result = NoteUploadEngine(NoteUploadStore.at(temp.root), NoteMaterialStore.at(temp.root), remote.api).run(job.id)
         assertEquals(NoteUploadPhase.Uploaded, result.phase)
+        assertEquals(listOf(0), result.serverUpload!!.files.flatMap { it.uploadedParts }.take(1))
         assertEquals(1, remote.partCalls.count { it == first }); assertEquals(1, remote.completes)
     }
 
@@ -88,6 +90,7 @@ class NoteUploadEngineTest {
         val snapshot = snapshot(mixed()); val job = create(snapshot); val remote = Server(snapshot); remote.loseComplete = true
         try { NoteUploadEngine(jobs, materials, remote.api).run(job.id); fail("Expect lost ack") } catch (_: IOException) { }
         assertNotEquals(NoteUploadPhase.Uploaded, jobs.read(job.id).phase)
+        assertNotEquals("Uploaded", jobs.read(job.id).serverUpload?.phase)
         val writes = remote.partCalls.size
         val result = NoteUploadEngine(jobs, materials, remote.api).run(job.id)
         assertEquals(NoteUploadPhase.Uploaded, result.phase); assertEquals(1, remote.completes); assertEquals(writes, remote.partCalls.size)
@@ -156,6 +159,12 @@ class NoteUploadEngineTest {
         while (state.phase != NoteUploadPhase.Uploaded && rounds < 20) {
             state = NoteUploadEngine(jobs, materials, remote.api, maxParts = 1).run(job.id)
             assertTrue(state.uploadedBytes >= previous); previous = state.uploadedBytes; rounds++
+            if (rounds == 1) {
+                assertEquals(NoteUploadPhase.Uploading, state.phase)
+                assertEquals(1, state.serverUpload!!.files.sumOf { it.uploadedParts.size })
+                assertTrue(state.uploadedBytes < state.totalBytes)
+                assertEquals(state.serverUpload, NoteUploadStore.at(temp.root).read(job.id).serverUpload)
+            }
         }
         assertEquals(NoteUploadPhase.Uploaded, state.phase)
         assertEquals(snapshot.files.size + 1, rounds)

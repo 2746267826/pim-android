@@ -85,6 +85,7 @@ internal interface UnusedNoteOperations : ApiService {
     override suspend fun getCurrentNativeNoteVersion(noteId: String): NoteMaterialVersionDtoApiResponse = error("Unexpected cloud note current read")
     override suspend fun cloneNativeNoteVersion(sourceVersionId: String, request: CloneNoteMaterialVersionRequest): NoteMaterialUploadDtoApiResponse = error("Unexpected cloud note clone")
     override suspend fun getNoteMaterialVersion(versionId: String): NoteMaterialVersionDtoApiResponse = error("Unexpected note read")
+    override suspend fun promoteNoteMaterialVersion(versionId: String, request: PromoteNoteMaterialVersionRequest): NoteMaterialUploadDtoApiResponse = error("Unexpected note promotion")
     override suspend fun downloadNoteMaterialFile(versionId: String, fileIndex: Int): retrofit2.Response<okhttp3.ResponseBody> = error("Unexpected note download")
     override suspend fun uploadNoteMaterialPart(versionId: String, fileIndex: Int, partIndex: Int, sha256: String, body: RequestBody): StringApiResponse = error("Unexpected note bytes")
     override suspend fun completeNoteMaterialUpload(versionId: String): NoteMaterialUploadDtoApiResponse = error("Unexpected note completion")

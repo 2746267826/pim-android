@@ -95,6 +95,16 @@ jobs:
           script: echo "AVD snapshot generated for caching."
 
       - name: Run connected instrumented tests
+        id: connected
+        # 已知问题（2026-11-23 首次实跑）：186 个用例中 160 通过 / 14 跳过 / 26 失败，
+        # 失败几乎全部集中在 com.pim.app.notes（realRecording / emulatedSystemCamera /
+        # ChineseComposition / keyboard 等），依赖真实录音、相机、中文输入法与特定屏幕尺寸，
+        # 无头模拟器天然不满足。这批用例此前从未在干净环境执行过（CI 只 assemble 不 run）。
+        #
+        # 因此本 job 目前是「报告模式」：真实执行、产出报告，但不阻塞 PR。
+        # 等 notes 用例按「需要真机」重新分类（或在测试里注入可用的假录音/相机）之后，
+        # 去掉 continue-on-error 并接入 ruleset 作为必需检查即可。
+        continue-on-error: true
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -106,6 +116,22 @@ jobs:
           working-directory: src/client-android
           # --no-daemon：CI 上常驻 Gradle daemon 只会占内存，run 结束即丢。
           script: ./gradlew :app:connectedDebugAndroidTest --no-daemon
+
+      - name: Summarize instrumented results
+        if: always()
+        working-directory: src/client-android
+        run: |
+          set -uo pipefail
+          {
+            echo "### Connected (instrumented) 测试结果"
+            echo ""
+            echo "| 项 | 值 |"
+            echo "| --- | --- |"
+            echo "| 执行结果 | \`${{ steps.connected.outcome }}\` |"
+            echo "| 说明 | 报告模式：失败不阻塞 PR（见 workflow 内注释） |"
+            echo ""
+            echo "完整报告见本次运行的 \`instrumented-test-reports-*\` artifact。"
+          } >> "$GITHUB_STEP_SUMMARY"
 
       - name: Upload instrumented test reports
         if: always()

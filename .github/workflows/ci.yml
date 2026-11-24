@@ -182,6 +182,7 @@ jobs:
           R_FRESHNESS: ${{ needs.contract-freshness.result }}
           R_CODEGEN: ${{ needs.contract-codegen.result }}
           R_CONNECTED: ${{ needs.connected-android.result }}
+          EVENT_NAME: ${{ github.event_name }}
         run: |
           set -uo pipefail
           fail=0
@@ -199,7 +200,21 @@ jobs:
           check "build-shell-android" "$R_SHELL"
           check "contract-freshness" "$R_FRESHNESS"
           check "contract-codegen" "$R_CODEGEN"
-          check "connected-android" "$R_CONNECTED"
+
+          # connected-android 只在 PR 上是必需项：master push 时该 job 不运行
+          # （PR 阶段已在同一份代码上跑过 146 个用例，没必要每次合并后再烧 20 分钟模拟器）。
+          # push 下 skipped 可接受，但 failure/cancelled 仍然要红 —— 不允许"跑挂了当没跑"。
+          if [ "$EVENT_NAME" = "pull_request" ]; then
+            check "connected-android" "$R_CONNECTED"
+          else
+            case "$R_CONNECTED" in
+              success|skipped)
+                echo "✅ connected-android — $R_CONNECTED（$EVENT_NAME 事件不要求运行）" ;;
+              *)
+                echo "❌ connected-android — ${R_CONNECTED:-<missing>}（$EVENT_NAME 事件不要求运行，但非 success/skipped 仍判红）"
+                fail=1 ;;
+            esac
+          fi
 
           if [ "$fail" -ne 0 ]; then
             echo ""

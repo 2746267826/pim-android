@@ -49,12 +49,10 @@ concurrency:
 jobs:
   connected:
     name: Connected tests (API 34)
-    # 直接 PR 触发时只在带 `run-instrumented` 标签时跑 full；
-    # 被 ci.yml 调用（workflow_call）或手动触发时总是跑。
-    if: |
-      github.event_name == 'workflow_call' ||
-      github.event_name == 'workflow_dispatch' ||
-      contains(github.event.pull_request.labels.*.name, 'run-instrumented')
+    # 关键：用「mode 有没有被显式传入」判断是否被 ci.yml 调用，不能用 event_name。
+    # reusable workflow 被 `uses:` 调用时 github.event_name 继承调用方（pull_request），
+    # 永远不等于 'workflow_call'；靠它判断会让 EVERY 普通 PR 都 skip，gate 必红。
+    if: ${{ (inputs.mode || '') != '' || contains(github.event.pull_request.labels.*.name, 'run-instrumented') }}
     runs-on: ubuntu-latest
     # 首次运行要下载系统镜像 + 冷启动 AVD；缓存命中后通常 15-25 分钟。
     timeout-minutes: 60
@@ -120,7 +118,8 @@ jobs:
       # ---------- stable：排除真机依赖用例，必须全绿（门禁有牙的部分）----------
       - name: Run stable connected tests (must pass)
         id: stable
-        if: ${{ inputs.mode != 'full' }}
+        # 标签触发的是 full 模式，这里必须让位；否则标签 PR 会同时跑两遍。
+        if: ${{ inputs.mode != 'full' && !contains(github.event.pull_request.labels.*.name, 'run-instrumented') }}
         uses: reactivecircus/android-emulator-runner@v2
         with:
           api-level: 34
@@ -138,7 +137,7 @@ jobs:
       # ---------- full：跑全部用例，报告模式（不阻塞）----------
       - name: Run full connected tests (report only)
         id: full
-        if: ${{ inputs.mode == 'full' }}
+        if: ${{ inputs.mode == 'full' || contains(github.event.pull_request.labels.*.name, 'run-instrumented') }}
         # 其中约 26 个用例依赖真实录音/相机/输入法/mock 定位，模拟器上必然失败。
         # 本通道用于真机能力回归，失败不阻塞，报告照常产出。
         continue-on-error: true

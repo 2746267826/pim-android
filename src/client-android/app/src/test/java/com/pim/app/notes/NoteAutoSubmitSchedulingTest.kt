@@ -54,8 +54,11 @@ class NoteAutoSubmitSchedulingTest {
     }
 
     @Test fun submitWaitsBehindPreparationAndRevocationLeavesPreparationIntact() {
-        val preparation = OneTimeWorkRequestBuilder<NoteMaterialWorker>()
-            .setInputData(workDataOf(NoteMaterialWorker.VERSION_ID to versionId)).addTag(NoteMaterialWorker.TAG).build()
+        // 必须用带 setInitialDelay 的 preparation()：手写一个没有 delay 的请求时，
+        // Robolectric 的同步执行器会让 NoteMaterialWorker 立刻跑完，submit 随即脱离
+        // BLOCKED，整条断言链的前提（preparation 未完成）就消失了 —— CI 上间歇性
+        // 失败在「取消后应为 CANCELLED」那一行，根因在这里，不在断言本身。
+        val preparation = preparation(versionId)
         workManager.enqueueUniqueWork("note-material-$versionId", ExistingWorkPolicy.KEEP, preparation).result.get()
         assertTrue(enqueueNoteAutoSubmit(workManager, versionId, NoteMaterialPhase.Preparing))
         val submit = workManager.getWorkInfosByTag(NoteAutoSubmitWorker.TAG).get().single()

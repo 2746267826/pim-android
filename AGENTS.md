@@ -55,7 +55,11 @@ This repository keeps `master` at the latest runnable version of the Android col
 ## Verification Commands
 
 - The commands below are optional local verification help, not a required pre-PR procedure. Existing CI owns the required checks. Base verification claims on actual output and identify the tested revision and environment; do not present stale or assumed results as current evidence.
-- App unit tests: `src/client-android/gradlew :app:testDebugUnitTest` (Windows: `src/client-android\gradlew.bat :app:testDebugUnitTest`). This already runs as a required job (`build-android`); locally run only the module you changed.
+- **Android tests run in CI only — never on this host, unit or connected.**
+  - Unit tests: the required `build-android` job already runs the complete `:app:testDebugUnitTest` (≈2300 cases). Running it locally re-executes exactly what CI runs, and the cost is not proportional to how many cases you filter: a full Gradle daemon start plus a whole-module Kotlin compile dominates. Measured on 2026-11-24: `--tests` filtered down to two classes still produced 20 MB/s of disk reads and ~400% CPU across two JVMs.
+  - Connected (instrumented) tests: `connected-android` (stable, part of `CI Gate`) and the `run-instrumented` label (full). See the two bullets below.
+  - **Why the rule is absolute**: on 2026-11-24 that filtered two-class run pushed host I/O pressure (`/proc/pressure/io full`) to 63% on a disk that was 89% full, starving the AI gateway for 13 minutes and making the whole machine feel dead. This host is 18 GB and shared with production services; local Gradle work is the single most expensive thing an agent can do to it.
+  - To get Android test results: wait for CI, or re-run the CI job. Do not reproduce them locally.
 - Connected (instrumented) tests run in CI (`.github/workflows/android-instrumented.yml`) in two modes:
   - **stable** — every PR via the `connected-android` job, and it is part of `CI Gate`. Runs `connectedDebugAndroidTest` with `notAnnotation=com.pim.app.RequiresDevice`. **These must pass**; a red run blocks the merge.
   - **full** — only with the `run-instrumented` PR label or a manual dispatch. Runs every connected case (including the device-dependent ones) in report mode.

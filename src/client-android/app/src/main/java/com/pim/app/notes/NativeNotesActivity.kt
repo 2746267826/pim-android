@@ -98,6 +98,7 @@ class NativeNotesActivity : ComponentActivity() {
             val autoSubmitAuthorization by model.uploads.autoSubmitAuthorization.collectAsStateWithLifecycle()
             val asr by model.asr.state.collectAsStateWithLifecycle()
             val artifacts by model.artifacts.state.collectAsStateWithLifecycle()
+            val processing by model.processing.state.collectAsStateWithLifecycle()
             val artifactEntry by model.artifactEntry.collectAsStateWithLifecycle()
             val artifactConsentDone by model.artifactConsentDone.collectAsStateWithLifecycle()
             val artifactStarting by model.artifactStarting.collectAsStateWithLifecycle()
@@ -194,6 +195,7 @@ class NativeNotesActivity : ComponentActivity() {
                     onRefreshUploadReceipt = model::refreshUploadReceipt,
                     onPromoteUploadConflict = model::promoteUploadConflict,
                     asr = asr, asrActions = asrActions, artifacts = artifacts,
+                    processing = processing, onRefreshProcessing = model::refreshProcessing,
                     legacyMigration = legacyMigration,
                     legacyMigrationActions = legacyMigrationActions,
                     artifactOverlay = {

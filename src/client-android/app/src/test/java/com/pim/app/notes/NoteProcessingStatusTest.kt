@@ -4,12 +4,15 @@ import com.pim.core.contract.NoteProcessingChainDto
 import com.pim.core.contract.NoteProcessingChainState
 import com.pim.core.contract.NoteProcessingState
 import com.pim.core.contract.NoteProcessingStatusDto
+import com.pim.core.contract.NoteProcessingStatusDtoApiResponse
 import com.pim.core.contract.NoteProcessingTaskKind
 import com.pim.core.network.BoundUploadSession
 import kotlinx.coroutines.runBlocking
+import kotlinx.serialization.encodeToString
 import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
@@ -85,6 +88,14 @@ class NoteProcessingStatusTest {
             )).toNoteProcessingStatusView(noteId, versionId)
         }.exceptionOrNull()
         assertTrue(wrongKind?.message.orEmpty().contains("ASR"))
+
+        val wrongDerivedKind = runCatching {
+            status(derived = chain(
+                kind = NoteProcessingTaskKind.ASR,
+                state = NoteProcessingChainState.QUEUED,
+            )).toNoteProcessingStatusView(noteId, versionId)
+        }.exceptionOrNull()
+        assertTrue(wrongDerivedKind?.message.orEmpty().contains("DERIVED"))
     }
 
     @Test
@@ -289,6 +300,222 @@ class NoteProcessingStatusTest {
 
         assertNull(entry.status)
         assertTrue(entry.problem.orEmpty().contains("synthetic processing rejection"))
+    }
+
+    @Test
+    fun publishingOneSessionNeverRemovesAnotherSessionsCachedStatus() = runBlocking {
+        val bob = NoteProcessingTarget(
+            BoundUploadSession(server, otherOwnerId),
+            "bob",
+            generation = 9L,
+        )
+        var current: NoteProcessingTarget? = bob
+        var failing = false
+        var onRead: (() -> Unit)? = null
+        val repository = NoteProcessingRepository(
+            targetProvider = { current },
+            transportFactory = {
+                NoteProcessingTransport { _, _ ->
+                    onRead?.invoke()
+                    if (failing) {
+                        throw HttpException(
+                            Response.error<Any>(
+                                503,
+                                "".toResponseBody("application/json".toMediaType()),
+                            ),
+                        )
+                    }
+                    status()
+                }
+            },
+            nowMillis = { 42L },
+        )
+
+        val bobEntry = repository.refresh(noteId, versionId, bob.binding, bob.generation)
+        assertNotNull(bobEntry.status)
+
+        current = target
+        val aliceEntry = repository.refresh(noteId, versionId, target.binding, target.generation)
+        assertNotNull(aliceEntry.status)
+        assertEquals(bobEntry, repository.entry(bob.binding, noteId, versionId, bob.generation))
+
+        failing = true
+        val failed = repository.refresh(noteId, versionId, target.binding, target.generation)
+        assertNotNull(failed.status)
+        assertTrue(failed.problem.orEmpty().contains("HTTP 503"))
+        assertEquals(bobEntry, repository.entry(bob.binding, noteId, versionId, bob.generation))
+
+        failing = false
+        current = target
+        onRead = { current = bob }
+        val late = repository.refresh(noteId, versionId, target.binding, target.generation)
+        assertNotNull(late.status)
+        assertTrue(late.problem.orEmpty().contains("账号或服务器"))
+        assertEquals(bobEntry, repository.entry(bob.binding, noteId, versionId, bob.generation))
+
+        onRead = null
+        current = bob
+        val stale = repository.refresh(noteId, versionId, target.binding, target.generation)
+        assertNotNull(stale.problem)
+        assertEquals(bobEntry, repository.entry(bob.binding, noteId, versionId, bob.generation))
+    }
+
+    @Test
+    fun temporarilyUnreadableTargetKeepsLastStatusAndShowsProblem() = runBlocking {
+        var current: NoteProcessingTarget? = target
+        val repository = NoteProcessingRepository(
+            targetProvider = { current },
+            transportFactory = {
+                NoteProcessingTransport { _, _ -> status() }
+            },
+            nowMillis = { 42L },
+        )
+
+        val cached = repository.refresh(noteId, versionId, target.binding, target.generation)
+        current = null
+        val unreadable = repository.refresh(noteId, versionId, target.binding, target.generation)
+
+        assertEquals(cached.status, unreadable.status)
+        assertTrue(unreadable.problem.orEmpty().contains("暂时无法确认"))
+        assertFalse(unreadable.syncing)
+    }
+
+    @Test
+    fun realResponseWrapperKeepsLastStatusOnBusinessErrorOrMissingData() = runBlocking {
+        val ok = NoteJson.decodeFromString<NoteProcessingStatusDtoApiResponse>(
+            """
+                {
+                  "code": 0,
+                  "data": ${NoteJson.encodeToString(status())},
+                  "message": "ok",
+                  "timestamp": "2026-11-23T00:02:00Z"
+                }
+            """.trimIndent(),
+        )
+        var response = ok
+        val repository = NoteProcessingRepository(
+            targetProvider = { target },
+            transportFactory = {
+                noteProcessingStatusTransport { _, _ -> response }
+            },
+            nowMillis = { 42L },
+        )
+
+        val cached = repository.refresh(noteId, versionId, target.binding, target.generation)
+        assertEquals(NoteProcessingState.PARTIALLYCOMPLETED, cached.status?.state)
+
+        response = NoteProcessingStatusDtoApiResponse(
+            code = 4001,
+            data = status(state = NoteProcessingState.COMPLETED),
+            message = "synthetic business rejection",
+            timestamp = "2026-11-23T00:03:00Z",
+        )
+        val rejected = repository.refresh(noteId, versionId, target.binding, target.generation)
+        assertEquals(cached.status, rejected.status)
+        assertTrue(rejected.problem.orEmpty().contains("synthetic business rejection"))
+
+        response = NoteProcessingStatusDtoApiResponse(
+            code = 0,
+            data = null,
+            message = "synthetic empty data",
+            timestamp = "2026-11-23T00:04:00Z",
+        )
+        val empty = repository.refresh(noteId, versionId, target.binding, target.generation)
+        assertEquals(cached.status, empty.status)
+        assertTrue(empty.problem.orEmpty().contains("synthetic empty data"))
+    }
+
+    @Test
+    fun wrongDerivedKindKeepsLastSuccessfulStatus() = runBlocking {
+        var derivedKind = NoteProcessingTaskKind.DERIVED
+        val repository = NoteProcessingRepository(
+            targetProvider = { target },
+            transportFactory = {
+                NoteProcessingTransport { _, _ ->
+                    status(derived = chain(kind = derivedKind, state = NoteProcessingChainState.QUEUED))
+                }
+            },
+            nowMillis = { 42L },
+        )
+
+        val cached = repository.refresh(noteId, versionId, target.binding, target.generation)
+        derivedKind = NoteProcessingTaskKind.ASR
+        val rejected = repository.refresh(noteId, versionId, target.binding, target.generation)
+
+        assertEquals(cached.status, rejected.status)
+        assertTrue(rejected.problem.orEmpty().contains("不匹配"))
+    }
+
+    @Test
+    fun incompleteOlderSchemaFailsClosedWithoutReplacingStatus() = runBlocking {
+        var oldSchema = false
+        val repository = NoteProcessingRepository(
+            targetProvider = { target },
+            transportFactory = {
+                noteProcessingStatusTransport { _, _ ->
+                    if (oldSchema) {
+                        NoteJson.decodeFromString<NoteProcessingStatusDtoApiResponse>(
+                            """
+                                {
+                                  "code": 0,
+                                  "data": {"noteId": "$noteId", "versionId": "$versionId"},
+                                  "message": "ok",
+                                  "timestamp": "2026-11-23T00:03:00Z"
+                                }
+                            """.trimIndent(),
+                        )
+                    } else {
+                        NoteProcessingStatusDtoApiResponse(
+                            code = 0,
+                            data = status(),
+                            message = "ok",
+                            timestamp = "2026-11-23T00:02:00Z",
+                        )
+                    }
+                }
+            },
+            nowMillis = { 42L },
+        )
+
+        val cached = repository.refresh(noteId, versionId, target.binding, target.generation)
+        oldSchema = true
+        val rejected = repository.refresh(noteId, versionId, target.binding, target.generation)
+
+        assertEquals(cached.status, rejected.status)
+        assertTrue(rejected.problem.orEmpty().contains("格式不完整"))
+    }
+
+    @Test
+    fun explicitCleanupDropsOnlySupersededGenerations() = runBlocking {
+        val bob = NoteProcessingTarget(
+            BoundUploadSession(server, otherOwnerId),
+            "bob",
+            generation = 7L,
+        )
+        var current: NoteProcessingTarget? = bob
+        val repository = NoteProcessingRepository(
+            targetProvider = { current },
+            transportFactory = {
+                NoteProcessingTransport { _, _ -> status() }
+            },
+            nowMillis = { 42L },
+        )
+
+        repository.refresh(noteId, versionId, bob.binding, bob.generation)
+        current = bob.copy(generation = 8L)
+        repository.refresh(noteId, versionId, bob.binding, bob.generation)
+        current = target
+        repository.refresh(noteId, versionId, target.binding, target.generation)
+
+        assertNotNull(repository.entry(bob.binding, noteId, versionId, 7L))
+        assertNotNull(repository.entry(bob.binding, noteId, versionId, 8L))
+        assertNotNull(repository.entry(target.binding, noteId, versionId, target.generation))
+
+        repository.discardSupersededGenerations(bob.binding, 8L)
+
+        assertNull(repository.entry(bob.binding, noteId, versionId, 7L))
+        assertNotNull(repository.entry(bob.binding, noteId, versionId, 8L))
+        assertNotNull(repository.entry(target.binding, noteId, versionId, target.generation))
     }
 
     private fun status(

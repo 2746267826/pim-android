@@ -6,6 +6,7 @@ import com.pim.core.contract.NoteProcessingChainState
 import com.pim.core.contract.NoteProcessingIssueDto
 import com.pim.core.contract.NoteProcessingState
 import com.pim.core.contract.NoteProcessingStatusDto
+import com.pim.core.contract.NoteProcessingStatusDtoApiResponse
 import com.pim.core.contract.NoteProcessingTaskKind
 import com.pim.core.network.ApiClientProvider
 import com.pim.core.network.BoundUploadSession
@@ -22,6 +23,7 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
+import kotlinx.serialization.SerializationException
 import retrofit2.HttpException
 
 data class NoteProcessingTarget(
@@ -98,6 +100,20 @@ internal fun interface NoteProcessingTransport {
 }
 
 internal class NoteProcessingServerException(message: String) : IOException(message)
+
+internal fun noteProcessingStatusTransport(
+    request: suspend (noteId: String, versionId: String) -> NoteProcessingStatusDtoApiResponse,
+): NoteProcessingTransport = NoteProcessingTransport { noteId, versionId ->
+    val response = request(noteId, versionId)
+    if (response.code != 0) {
+        throw NoteProcessingServerException(
+            response.message.ifBlank { "服务器返回 code=${response.code}" },
+        )
+    }
+    response.data ?: throw NoteProcessingServerException(
+        response.message.ifBlank { "服务器未返回处理状态" },
+    )
+}
 
 internal fun NoteProcessingStatusDto.toNoteProcessingStatusView(
     expectedNoteId: String,
@@ -205,16 +221,8 @@ class NoteProcessingRepository internal constructor(
         targetProvider = { currentNoteProcessingTarget(sessions, settings) },
         transportFactory = { target ->
             val service = clients.noteUploadApiService(target.binding)
-            NoteProcessingTransport { noteId, versionId ->
-                val response = service.getNoteProcessingStatus(noteId, versionId)
-                if (response.code != 0) {
-                    throw NoteProcessingServerException(
-                        response.message.ifBlank { "服务器返回 code=${response.code}" },
-                    )
-                }
-                response.data ?: throw NoteProcessingServerException(
-                    response.message.ifBlank { "服务器未返回处理状态" },
-                )
+            noteProcessingStatusTransport { noteId, versionId ->
+                service.getNoteProcessingStatus(noteId, versionId)
             }
         },
         nowMillis = System::currentTimeMillis,
@@ -240,10 +248,19 @@ class NoteProcessingRepository internal constructor(
         val key = NoteProcessingKey(expectedBinding, noteId, versionId, expectedGeneration)
         sync.withLock {
             val target = targetProvider()
-            if (target == null || !target.matches(expectedBinding, expectedGeneration)) {
+            if (target == null) {
                 return@withLock publish(
                     key,
-                    NoteProcessingEntry(
+                    (state.value.entries[key] ?: NoteProcessingEntry()).copy(
+                        syncing = false,
+                        problem = "暂时无法确认账号与服务器，未读取服务器处理状态；上次状态保留。",
+                    ),
+                )
+            }
+            if (!target.matches(expectedBinding, expectedGeneration)) {
+                return@withLock publish(
+                    key,
+                    (state.value.entries[key] ?: NoteProcessingEntry()).copy(
                         syncing = false,
                         problem = "账号或服务器已变化，未读取服务器处理状态。",
                     ),
@@ -261,7 +278,7 @@ class NoteProcessingRepository internal constructor(
                 if (!current.matches(expectedBinding, expectedGeneration)) {
                     publish(
                         key,
-                        NoteProcessingEntry(
+                        (state.value.entries[key] ?: NoteProcessingEntry()).copy(
                             syncing = false,
                             problem = "账号或服务器已变化，已丢弃旧的服务器处理状态。",
                         ),
@@ -291,11 +308,21 @@ class NoteProcessingRepository internal constructor(
         }
     }
 
+    suspend fun discardSupersededGenerations(
+        binding: BoundUploadSession,
+        generation: Long,
+    ) = sync.withLock {
+        val entries = state.value.entries
+        val retained = entries.filterKeys {
+            it.binding != binding || it.generation == generation
+        }
+        if (retained.size != entries.size) {
+            mutableState.value = NoteProcessingRepositoryState(retained)
+        }
+    }
+
     private fun publish(key: NoteProcessingKey, entry: NoteProcessingEntry): NoteProcessingEntry {
-        val scoped = state.value.entries.filterKeys {
-            it.binding == key.binding && it.generation == key.generation
-        } + (key to entry)
-        mutableState.value = NoteProcessingRepositoryState(scoped)
+        mutableState.value = NoteProcessingRepositoryState(state.value.entries + (key to entry))
         return entry
     }
 
@@ -306,6 +333,7 @@ class NoteProcessingRepository internal constructor(
             else -> "服务器处理状态暂时无法读取（HTTP ${error.code()}）；上次状态保留。"
         }
         is NoteProcessingServerException -> "服务器拒绝读取处理状态：${error.message}"
+        is SerializationException -> "服务器返回的处理状态格式不完整或与当前客户端不兼容，已忽略。"
         is IllegalArgumentException -> "服务器返回的处理状态与当前笔记或固定版本不匹配，已忽略。"
         is IOException -> "未能读取服务器处理状态；上次状态保留。"
         else -> "未能读取服务器处理状态；上次状态保留。"

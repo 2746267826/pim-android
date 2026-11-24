@@ -53,6 +53,9 @@ data class NativeWorkbenchUiState(
     val calendars: List<CalendarResponse> = emptyList(),
     val events: List<EventResponse> = emptyList(),
     val eventTotal: Int = 0,
+    val calendarView: NativeCalendarViewState = NativeCalendarViewState(),
+    val calendarViewEvents: List<EventResponse> = emptyList(),
+    val calendarViewEventTotal: Int = 0,
     val mobileSummary: MobileUsageSummaryResponse? = null,
     val mobileSummaryError: String? = null,
     val devices: List<DeviceListDto> = emptyList(),
@@ -126,6 +129,16 @@ class NativeWorkbenchViewModel @Inject constructor(
             eventTotal = if (section == NativeWorkbenchSection.Today ||
                 section == NativeWorkbenchSection.Calendar
             ) 0 else _state.value.eventTotal,
+            calendarViewEvents = if (section == NativeWorkbenchSection.Calendar) {
+                _state.value.calendarViewEvents
+            } else {
+                emptyList()
+            },
+            calendarViewEventTotal = if (section == NativeWorkbenchSection.Calendar) {
+                _state.value.calendarViewEventTotal
+            } else {
+                0
+            },
             calendars = if (section == NativeWorkbenchSection.Today ||
                 section == NativeWorkbenchSection.Calendar
             ) emptyList() else _state.value.calendars,
@@ -249,12 +262,19 @@ class NativeWorkbenchViewModel @Inject constructor(
                     }
                     NativeWorkbenchSection.Calendar -> {
                         val calendars = binding.repository.loadCalendars()
-                        val events = binding.repository.loadEvents(LocalDate.now())
+                        val viewState = _state.value.calendarView
+                        val range = viewState.dateRange()
+                        val zoneId = java.time.ZoneId.systemDefault()
+                        val viewEvents = binding.repository.loadEvents(
+                            startDate = range.start,
+                            endExclusive = range.endExclusive,
+                            zoneId = zoneId,
+                        )
                         updateIfCurrent(binding) {
                             it.copy(
                                 calendars = calendars,
-                                events = events.items,
-                                eventTotal = events.totalCount,
+                                calendarViewEvents = viewEvents.items,
+                                calendarViewEventTotal = viewEvents.totalCount,
                             )
                         }
                     }
@@ -346,6 +366,112 @@ class NativeWorkbenchViewModel @Inject constructor(
     }
 
     fun refreshTasks() = loadTasks()
+
+    fun selectCalendarViewMode(mode: NativeCalendarViewMode) {
+        if (_state.value.section != NativeWorkbenchSection.Calendar ||
+            _state.value.calendarView.mode == mode
+        ) return
+        _state.value = _state.value.copy(
+            calendarView = _state.value.calendarView.withMode(mode),
+            calendarViewEvents = emptyList(),
+            calendarViewEventTotal = 0,
+        )
+        loadCalendarView()
+    }
+
+    fun previousCalendarPage() = shiftCalendarPage(-1)
+
+    fun nextCalendarPage() = shiftCalendarPage(1)
+
+    fun goToCalendarToday() {
+        if (_state.value.section != NativeWorkbenchSection.Calendar) return
+        _state.value = _state.value.copy(
+            calendarView = _state.value.calendarView.goToToday(LocalDate.now()),
+            calendarViewEvents = emptyList(),
+            calendarViewEventTotal = 0,
+        )
+        loadCalendarView()
+    }
+
+    fun selectCalendarDate(date: LocalDate) {
+        if (_state.value.section != NativeWorkbenchSection.Calendar) return
+        if (_state.value.calendarView.anchorDate == date &&
+            _state.value.calendarViewEvents.isNotEmpty()
+        ) {
+            return
+        }
+        _state.value = _state.value.copy(
+            calendarView = _state.value.calendarView.goToDate(date),
+            calendarViewEvents = emptyList(),
+            calendarViewEventTotal = 0,
+        )
+        loadCalendarView()
+    }
+
+    fun openCalendarDateInDay(date: LocalDate) {
+        if (_state.value.section != NativeWorkbenchSection.Calendar) return
+        _state.value = _state.value.copy(
+            calendarView = _state.value.calendarView.openDay(date),
+            calendarViewEvents = emptyList(),
+            calendarViewEventTotal = 0,
+        )
+        loadCalendarView()
+    }
+
+    private fun shiftCalendarPage(delta: Int) {
+        if (_state.value.section != NativeWorkbenchSection.Calendar) return
+        _state.value = _state.value.copy(
+            calendarView = _state.value.calendarView.shift(delta),
+            calendarViewEvents = emptyList(),
+            calendarViewEventTotal = 0,
+        )
+        loadCalendarView()
+    }
+
+    private fun loadCalendarView() {
+        refreshJob?.cancel()
+        val binding = requireLoadedBindingOrShowError() ?: return
+        val viewState = _state.value.calendarView
+        val range = viewState.dateRange()
+        val zoneId = java.time.ZoneId.systemDefault()
+        _state.value = _state.value.copy(loading = true, error = null)
+        refreshJob = viewModelScope.launch {
+            try {
+                val events = binding.repository.loadEvents(
+                    startDate = range.start,
+                    endExclusive = range.endExclusive,
+                    zoneId = zoneId,
+                )
+                updateIfCurrent(binding) {
+                    if (it.section == NativeWorkbenchSection.Calendar &&
+                        it.calendarView == viewState
+                    ) {
+                        it.copy(
+                            calendarViewEvents = events.items,
+                            calendarViewEventTotal = events.totalCount,
+                            loading = false,
+                        )
+                    } else {
+                        it
+                    }
+                }
+                if (!sessionGuard.canApply(binding.session)) clearStaleSession()
+            } catch (e: CancellationException) {
+                throw e
+            } catch (e: Exception) {
+                if (!sessionGuard.canApply(binding.session)) {
+                    clearStaleSession()
+                } else if (_state.value.section == NativeWorkbenchSection.Calendar &&
+                    _state.value.calendarView == viewState
+                ) {
+                    _state.value = _state.value.copy(
+                        loading = false,
+                        error = e.workbenchMessage(),
+                    )
+                }
+            }
+        }
+    }
 
     fun setComputerUsageFrom(value: String) {
         if (_state.value.computerUsageFrom == value) return
@@ -947,11 +1073,18 @@ class NativeWorkbenchViewModel @Inject constructor(
                     }
                 }
                 NativeWorkbenchSection.Calendar -> {
-                    val events = binding.repository.loadEvents(LocalDate.now())
+                    val viewState = _state.value.calendarView
+                    val range = viewState.dateRange()
+                    val zoneId = java.time.ZoneId.systemDefault()
+                    val viewEvents = binding.repository.loadEvents(
+                        startDate = range.start,
+                        endExclusive = range.endExclusive,
+                        zoneId = zoneId,
+                    )
                     updateIfCurrent(binding) {
                         it.copy(
-                            events = events.items,
-                            eventTotal = events.totalCount,
+                            calendarViewEvents = viewEvents.items,
+                            calendarViewEventTotal = viewEvents.totalCount,
                             loading = false,
                         )
                     }

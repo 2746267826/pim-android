@@ -157,6 +157,18 @@ fun nativeWorkbenchRange(
     endExclusive = date.plusDays(7).atStartOfDay(zoneId).toInstant().toString(),
 )
 
+fun nativeWorkbenchRange(
+    startDate: LocalDate,
+    endExclusive: LocalDate,
+    zoneId: ZoneId = ZoneId.systemDefault(),
+): NativeWorkbenchRange {
+    require(endExclusive.isAfter(startDate)) { "日程查询结束日期必须晚于开始日期。" }
+    return NativeWorkbenchRange(
+        start = startDate.atStartOfDay(zoneId).toInstant().toString(),
+        endExclusive = endExclusive.atStartOfDay(zoneId).toInstant().toString(),
+    )
+}
+
 internal fun EventResponse.isOutlookMirror(): Boolean =
     source.startsWith("outlook", ignoreCase = true) ||
         outlookEventId != null ||
@@ -223,16 +235,40 @@ class NativeWorkbenchRepository @Inject constructor(
     suspend fun loadEvents(
         date: LocalDate,
         zoneId: ZoneId = ZoneId.systemDefault(),
-    ): NativeEventPage {
-        val range = nativeWorkbenchRange(date, zoneId)
-        val result = api.getEvents(
-            start = range.start,
-            end = range.endExclusive,
-            page = 1,
-            pageSize = 100,
-        )
-        val page = requireSuccess(result.code, result.data, result.message, "读取日程")
-        return NativeEventPage(page.items, page.totalCount, page.totalPages)
+    ): NativeEventPage = loadEvents(range = nativeWorkbenchRange(date, zoneId))
+
+    suspend fun loadEvents(
+        startDate: LocalDate,
+        endExclusive: LocalDate,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): NativeEventPage = loadEvents(
+        range = nativeWorkbenchRange(startDate, endExclusive, zoneId),
+    )
+
+    private suspend fun loadEvents(range: NativeWorkbenchRange): NativeEventPage {
+        val items = mutableListOf<EventResponse>()
+        var pageNumber = 1
+        var totalCount = 0
+        var totalPages = 0
+        while (true) {
+            val result = api.getEvents(
+                start = range.start,
+                end = range.endExclusive,
+                page = pageNumber,
+                pageSize = PAGE_SIZE,
+            )
+            val page = requireSuccess(result.code, result.data, result.message, "读取日程")
+            totalCount = page.totalCount
+            totalPages = page.totalPages
+            items += page.items
+            if (page.items.isEmpty() ||
+                pageNumber >= page.totalPages
+            ) {
+                break
+            }
+            pageNumber++
+        }
+        return NativeEventPage(items, totalCount, totalPages)
     }
 
     suspend fun loadTodayUsage(date: LocalDate): MobileUsageSummaryResponse {
@@ -496,6 +532,10 @@ class NativeWorkbenchRepository @Inject constructor(
         val result = api.archiveHabit(id)
         return requireSuccess(result.code, result.data, result.message, "归档习惯")
             .let(::nativeHabit)
+    }
+
+    private companion object {
+        const val PAGE_SIZE = 100
     }
 
     private fun <T> requireSuccess(

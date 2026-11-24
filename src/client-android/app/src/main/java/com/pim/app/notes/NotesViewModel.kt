@@ -27,6 +27,7 @@ class NotesViewModel @Inject constructor(
     val uploads: NoteUploadRepository,
     val asr: NoteAsrRepository,
     val artifacts: NoteArtifactRepository,
+    val processing: NoteProcessingRepository,
     val taskSuggestions: NoteTaskSuggestionRepository,
     val legacyQuickNoteMigration: LegacyQuickNoteMigrationRepository,
     val cloudNotes: CloudNoteRepository,
@@ -208,6 +209,16 @@ class NotesViewModel @Inject constructor(
         catch (error: CancellationException) { throw error }
         catch (_: Exception) { tell("未能确认保留版本；双方材料与本机回执仍保留") }
     } }
+
+    fun refreshProcessing(noteId: String, versionId: String, target: NoteUploadTarget) {
+        viewModelScope.launch {
+            try { processing.refresh(noteId, versionId, target.binding, target.generation) }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) {
+                tell("未能读取服务器处理状态；材料回执与本机任务保留")
+            }
+        }
+    }
 
     fun refreshAsr() { viewModelScope.launch { asr.refresh() } }
     fun refreshAsrTask(id: String) { viewModelScope.launch { asr.refreshTask(id) } }

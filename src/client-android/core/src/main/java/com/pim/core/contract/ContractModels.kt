@@ -1905,6 +1905,127 @@ data class NoteMaterialVersionDtoApiResponse(
     val timestamp: String,
 )
 
+/** 契约 `components.schemas.NoteProcessingArtifactDto`（response）。 */
+@Serializable
+data class NoteProcessingArtifactDto(
+    val artifactId: String,
+    val headVersionId: String? = null,
+    val kind: NoteDerivedArtifactKind,
+)
+
+/** 契约 `components.schemas.NoteProcessingChainDto`（response）。 */
+@Serializable
+data class NoteProcessingChainDto(
+    val completedItems: Int,
+    val errors: List<String>,
+    val failedItems: Int,
+    val hasResult: Boolean,
+    val kind: NoteProcessingTaskKind,
+    val phase: String? = null,
+    val revision: String? = null,
+    val state: NoteProcessingChainState,
+    val taskCreated: Boolean,
+    val taskId: String? = null,
+    val totalItems: Int,
+    val waitingReason: String? = null,
+)
+
+/** 契约 `components.schemas.NoteProcessingChainState`（response）。 */
+/**
+ * 契约枚举 `NoteProcessingChainState`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteProcessingChainState {
+    @SerialName("NotApplicable")
+    NOTAPPLICABLE,
+    @SerialName("WaitingForMaterial")
+    WAITINGFORMATERIAL,
+    @SerialName("WaitingForAsr")
+    WAITINGFORASR,
+    @SerialName("PendingStart")
+    PENDINGSTART,
+    @SerialName("Queued")
+    QUEUED,
+    @SerialName("Running")
+    RUNNING,
+    @SerialName("Succeeded")
+    SUCCEEDED,
+    @SerialName("NeedsAttention")
+    NEEDSATTENTION,
+    @SerialName("Stopped")
+    STOPPED,
+}
+
+/** 契约 `components.schemas.NoteProcessingIssueDto`（response）。 */
+@Serializable
+data class NoteProcessingIssueDto(
+    val code: String,
+    val message: String,
+    val task: NoteProcessingTaskKind? = null,
+)
+
+/** 契约 `components.schemas.NoteProcessingState`（response）。 */
+/**
+ * 契约枚举 `NoteProcessingState`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteProcessingState {
+    @SerialName("WaitingForMaterial")
+    WAITINGFORMATERIAL,
+    @SerialName("PendingProcessing")
+    PENDINGPROCESSING,
+    @SerialName("Processing")
+    PROCESSING,
+    @SerialName("PartiallyCompleted")
+    PARTIALLYCOMPLETED,
+    @SerialName("Completed")
+    COMPLETED,
+    @SerialName("NeedsAttention")
+    NEEDSATTENTION,
+}
+
+/** 契约 `components.schemas.NoteProcessingStatusDto`（response）。 */
+@Serializable
+data class NoteProcessingStatusDto(
+    val artifacts: List<NoteProcessingArtifactDto>,
+    val asr: NoteProcessingChainDto,
+    val autoProcessingEnabled: Boolean,
+    val autoStarted: Boolean,
+    val createdAt: String,
+    val derived: NoteProcessingChainDto,
+    val incrementalScopeSupported: Boolean,
+    val issues: List<NoteProcessingIssueDto>,
+    val manualStartAvailable: Boolean,
+    val noteId: String,
+    val pendingReason: String? = null,
+    val processingId: String,
+    val scope: String,
+    val state: NoteProcessingState,
+    val updatedAt: String,
+    val versionId: String,
+)
+
+/** 契约 `components.schemas.NoteProcessingStatusDtoApiResponse`（response）。 */
+@Serializable
+data class NoteProcessingStatusDtoApiResponse(
+    val code: Int,
+    val data: NoteProcessingStatusDto? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.NoteProcessingTaskKind`（response）。 */
+/**
+ * 契约枚举 `NoteProcessingTaskKind`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteProcessingTaskKind {
+    @SerialName("Asr")
+    ASR,
+    @SerialName("Derived")
+    DERIVED,
+}
+
 /** 契约 `components.schemas.NoteTaskSuggestionDto`（response）。 */
 @Serializable
 data class NoteTaskSuggestionDto(

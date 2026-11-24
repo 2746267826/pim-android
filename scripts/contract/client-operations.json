@@ -82,6 +82,7 @@
     {"apiService": "downloadNoteMaterialFile", "method": "GET", "path": "/api/v1/native-notes/versions/{versionId}/files/{fileIndex}"},
     {"apiService": "uploadNoteMaterialPart", "method": "PUT", "path": "/api/v1/native-notes/versions/{versionId}/files/{fileIndex}/parts/{partIndex}"},
     {"apiService": "completeNoteMaterialUpload", "method": "POST", "path": "/api/v1/native-notes/versions/{versionId}/complete"},
+    {"apiService": "getNoteProcessingStatus", "method": "GET", "path": "/api/v1/native-notes/processing"},
     {"apiService": "getNoteAsrSources", "method": "GET", "path": "/api/v1/native-notes/asr-tasks/sources"},
     {"apiService": "getNoteAsrDestinations", "method": "GET", "path": "/api/v1/native-notes/asr-tasks/destinations"},
     {"apiService": "getNoteAsrTasks", "method": "GET", "path": "/api/v1/native-notes/asr-tasks"},

@@ -70,7 +70,7 @@ class RecordingBoundaryTest {
         assertEquals("00:01:30 · 第 2 段", public.extras.getString("android.text"))
         assertFalse(public.extras.toString().contains(session.id))
         assertFalse(public.extras.toString().contains("private-note-secret"))
-        assertTrue(public.actions.isEmpty())
+        assertTrue(public.actions.orEmpty().isEmpty())
     }
 
     @Test fun durationDoesNotWrapAfterOneDayOrBecomeNegative() {

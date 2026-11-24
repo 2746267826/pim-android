@@ -53,6 +53,9 @@ data class NativeWorkbenchUiState(
     val calendars: List<CalendarResponse> = emptyList(),
     val events: List<EventResponse> = emptyList(),
     val eventTotal: Int = 0,
+    val calendarView: CalendarViewMode = CalendarViewMode.Day,
+    val calendarDate: LocalDate = LocalDate.now(),
+    val calendarLoaded: Boolean = false,
     val mobileSummary: MobileUsageSummaryResponse? = null,
     val mobileSummaryError: String? = null,
     val devices: List<DeviceListDto> = emptyList(),
@@ -95,6 +98,7 @@ class NativeWorkbenchViewModel @Inject constructor(
     private val sessionGuard = NativeWorkbenchSessionGuard(transport)
     private var refreshJob: Job? = null
     private var computerUsageRequestVersion = 0L
+    private var calendarRequestVersion = 0L
 
     private data class BoundWorkbench(
         val session: NativeWorkbenchSession,
@@ -126,6 +130,9 @@ class NativeWorkbenchViewModel @Inject constructor(
             eventTotal = if (section == NativeWorkbenchSection.Today ||
                 section == NativeWorkbenchSection.Calendar
             ) 0 else _state.value.eventTotal,
+            calendarLoaded = if (section == NativeWorkbenchSection.Today ||
+                section == NativeWorkbenchSection.Calendar
+            ) false else _state.value.calendarLoaded,
             calendars = if (section == NativeWorkbenchSection.Today ||
                 section == NativeWorkbenchSection.Calendar
             ) emptyList() else _state.value.calendars,
@@ -175,6 +182,60 @@ class NativeWorkbenchViewModel @Inject constructor(
         loadDevices()
     }
 
+    fun setCalendarView(view: CalendarViewMode) {
+        if (_state.value.calendarView == view) return
+        _state.value = _state.value.copy(
+            calendarView = view,
+            events = emptyList(),
+            eventTotal = 0,
+            calendarLoaded = false,
+            error = null,
+        )
+        if (_state.value.section == NativeWorkbenchSection.Calendar) refresh()
+    }
+
+    fun restoreCalendarView(view: CalendarViewMode) = setCalendarView(view)
+
+    fun moveCalendar(direction: Int) {
+        if (direction == 0) return
+        val next = moveCalendarDate(
+            _state.value.calendarView,
+            _state.value.calendarDate,
+            direction,
+        )
+        updateCalendarDate(next, _state.value.calendarView)
+    }
+
+    fun goToCalendarToday() {
+        val today = LocalDate.now()
+        if (_state.value.calendarDate == today) {
+            if (_state.value.section == NativeWorkbenchSection.Calendar) refresh()
+        } else {
+            updateCalendarDate(today, _state.value.calendarView)
+        }
+    }
+
+    fun selectCalendarDate(date: LocalDate, openDay: Boolean = false) {
+        val view = if (openDay) CalendarViewMode.Day else _state.value.calendarView
+        if (date == _state.value.calendarDate && view == _state.value.calendarView) {
+            if (_state.value.section == NativeWorkbenchSection.Calendar) refresh()
+            return
+        }
+        updateCalendarDate(date, view)
+    }
+
+    private fun updateCalendarDate(date: LocalDate, view: CalendarViewMode) {
+        _state.value = _state.value.copy(
+            calendarDate = date,
+            calendarView = view,
+            events = emptyList(),
+            eventTotal = 0,
+            calendarLoaded = false,
+            error = null,
+        )
+        if (_state.value.section == NativeWorkbenchSection.Calendar) refresh()
+    }
+
     fun refresh() {
         refreshJob?.cancel()
         val previouslyLoaded = sessionGuard.loadedSessionOrNull()
@@ -191,6 +252,11 @@ class NativeWorkbenchViewModel @Inject constructor(
         }
         _state.value = _state.value.copy(loading = true, error = null)
         val requestedSection = _state.value.section
+        val requestedCalendarView = _state.value.calendarView
+        val requestedCalendarDate = _state.value.calendarDate
+        val requestedCalendarVersion = if (requestedSection == NativeWorkbenchSection.Calendar) {
+            ++calendarRequestVersion
+        } else null
         val computerUsageVersion = if (requestedSection == NativeWorkbenchSection.ComputerUsage) {
             ++computerUsageRequestVersion
         } else null
@@ -249,13 +315,24 @@ class NativeWorkbenchViewModel @Inject constructor(
                     }
                     NativeWorkbenchSection.Calendar -> {
                         val calendars = binding.repository.loadCalendars()
-                        val events = binding.repository.loadEvents(LocalDate.now())
+                        val events = binding.repository.loadEvents(
+                            calendarRangeFor(requestedCalendarView, requestedCalendarDate)
+                        )
                         updateIfCurrent(binding) {
-                            it.copy(
-                                calendars = calendars,
-                                events = events.items,
-                                eventTotal = events.totalCount,
-                            )
+                            if (requestedCalendarVersion != calendarRequestVersion ||
+                                it.section != NativeWorkbenchSection.Calendar ||
+                                it.calendarView != requestedCalendarView ||
+                                it.calendarDate != requestedCalendarDate
+                            ) {
+                                it
+                            } else {
+                                it.copy(
+                                    calendars = calendars,
+                                    events = events.items,
+                                    eventTotal = events.totalCount,
+                                    calendarLoaded = true,
+                                )
+                            }
                         }
                     }
                     NativeWorkbenchSection.Devices -> {
@@ -947,13 +1024,20 @@ class NativeWorkbenchViewModel @Inject constructor(
                     }
                 }
                 NativeWorkbenchSection.Calendar -> {
-                    val events = binding.repository.loadEvents(LocalDate.now())
+                    val view = _state.value.calendarView
+                    val date = _state.value.calendarDate
+                    val events = binding.repository.loadEvents(calendarRangeFor(view, date))
                     updateIfCurrent(binding) {
-                        it.copy(
-                            events = events.items,
-                            eventTotal = events.totalCount,
-                            loading = false,
-                        )
+                        if (it.calendarView == view && it.calendarDate == date) {
+                            it.copy(
+                                events = events.items,
+                                eventTotal = events.totalCount,
+                                calendarLoaded = true,
+                                loading = false,
+                            )
+                        } else {
+                            it
+                        }
                     }
                 }
                 NativeWorkbenchSection.Devices -> {

@@ -223,8 +223,9 @@ class NativeWorkbenchRepository @Inject constructor(
     suspend fun loadEvents(
         date: LocalDate,
         zoneId: ZoneId = ZoneId.systemDefault(),
-    ): NativeEventPage {
-        val range = nativeWorkbenchRange(date, zoneId)
+    ): NativeEventPage = loadEvents(nativeWorkbenchRange(date, zoneId))
+
+    suspend fun loadEvents(range: NativeWorkbenchRange): NativeEventPage {
         val result = api.getEvents(
             start = range.start,
             end = range.endExclusive,

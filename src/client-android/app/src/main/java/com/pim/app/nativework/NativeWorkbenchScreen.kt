@@ -180,6 +180,14 @@ fun NativeWorkbenchScreen(
             )
             NativeWorkbenchSection.Calendar -> CalendarNativeContent(
                 state = state,
+                onViewChange = viewModel::setCalendarView,
+                onPrevious = { viewModel.moveCalendar(-1) },
+                onNext = { viewModel.moveCalendar(1) },
+                onToday = viewModel::goToCalendarToday,
+                onDateSelected = { viewModel.selectCalendarDate(it) },
+                onOpenDay = { viewModel.selectCalendarDate(it, openDay = true) },
+                onRestoreView = viewModel::restoreCalendarView,
+                onRetry = viewModel::refresh,
                 onNewEvent = {
                     eventEditor = EventEditorTarget(session = viewModel.currentEditorSession())
                 },
@@ -817,53 +825,6 @@ private fun TasksNativeContent(
 }
 
 @Composable
-private fun CalendarNativeContent(
-    state: NativeWorkbenchUiState,
-    onNewEvent: () -> Unit,
-    onCreateCalendar: () -> Unit,
-    onEditEvent: (EventResponse) -> Unit,
-    onDeleteEvent: (EventResponse) -> Unit,
-) {
-    LazyColumn(
-        Modifier.fillMaxSize(),
-        contentPadding = PaddingValues(16.dp),
-        verticalArrangement = Arrangement.spacedBy(10.dp)
-    ) {
-        item {
-            Row(
-                Modifier.fillMaxWidth(),
-                verticalAlignment = Alignment.CenterVertically
-            ) {
-                Text("未来 7 天 · ${state.eventTotal} 项", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
-                TextButton(onClick = onCreateCalendar) {
-                    Text("新建日历")
-                }
-                Button(onClick = onNewEvent, enabled = state.calendars.isNotEmpty()) {
-                    Icon(Icons.Filled.Add, null, Modifier.size(18.dp))
-                    Spacer(Modifier.width(4.dp))
-                    Text("新建日程")
-                }
-            }
-            if (state.calendars.isEmpty()) {
-                Text(
-                    "没有可写日历，请先用上方「新建日历」创建。",
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodySmall
-                )
-            }
-        }
-        if (state.events.isEmpty()) item { EmptyCard("未来 7 天暂无日程") }
-        items(state.events, key = { it.id }) { event ->
-            EventCard(
-                event = event,
-                onEdit = { onEditEvent(event) },
-                onDelete = { onDeleteEvent(event) },
-            )
-        }
-    }
-}
-
-@Composable
 private fun DevicesNativeContent(
     state: NativeWorkbenchUiState,
     onSort: (String) -> Unit,
@@ -1441,46 +1402,6 @@ private fun TaskCard(
                 }
                 TextButton(onClick = onDelete, enabled = !busy) {
                     Text("删除", color = MaterialTheme.colorScheme.error)
-                }
-            }
-        }
-    }
-}
-
-@Composable
-private fun EventCard(
-    event: EventResponse,
-    onEdit: () -> Unit,
-    onDelete: () -> Unit,
-) {
-    val blocked = event.isOutlookMirror() || event.hasRecurrenceMetadata()
-    OutlinedCard(Modifier.fillMaxWidth()) {
-        Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
-            Text(event.title, style = MaterialTheme.typography.titleMedium)
-            Text(formatEventRange(event), style = MaterialTheme.typography.bodySmall)
-            if (!event.location.isNullOrBlank()) {
-                Text("地点 ${event.location}", style = MaterialTheme.typography.bodySmall)
-            }
-            Text(
-                "来源 ${event.source}" + if (event.isSeriesMaster == true) " · 系列主记录" else "",
-                style = MaterialTheme.typography.bodySmall,
-                color = MaterialTheme.colorScheme.onSurfaceVariant
-            )
-            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
-                if (blocked) {
-                    Text(
-                        if (event.isOutlookMirror()) {
-                            "Outlook 镜像需通过同步写回"
-                        } else {
-                            "重复日程需确认编辑范围，请暂用日历网页"
-                        },
-                        style = MaterialTheme.typography.bodySmall
-                    )
-                } else {
-                    TextButton(onClick = onEdit) { Text("编辑") }
-                    TextButton(onClick = onDelete) {
-                        Text("删除", color = MaterialTheme.colorScheme.error)
-                    }
                 }
             }
         }

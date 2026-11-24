@@ -297,6 +297,44 @@ class NativeWorkbenchRepositoryTest {
     }
 
     @Test
+    fun calendarRangeReadsPastTheFormerTwentyPageBoundary() = runBlocking {
+        val requestedPages = mutableListOf<Int>()
+        val api = fakeApi { method, args ->
+            when (method) {
+                "getEvents" -> {
+                    val page = args[2] as Int
+                    requestedPages += page
+                    EventResponsePagedResultApiResponse(
+                        code = 0,
+                        data = EventResponsePagedResult(
+                            items = listOf(event().copy(id = "event-$page")),
+                            page = page,
+                            pageSize = 100,
+                            totalCount = 21,
+                            totalPages = 21,
+                        ),
+                        message = "ok",
+                        timestamp = "now",
+                    )
+                }
+                else -> error("Unexpected $method")
+            }
+        }
+
+        val result = NativeWorkbenchRepository(api).loadEvents(
+            startDate = LocalDate.of(2026, 3, 8),
+            endExclusive = LocalDate.of(2026, 3, 10),
+            zoneId = ZoneId.of("America/New_York"),
+        )
+
+        assertEquals((1..21).toList(), requestedPages)
+        assertEquals(21, result.items.size)
+        assertEquals("event-21", result.items.last().id)
+        assertEquals(21, result.totalCount)
+        assertEquals(21, result.totalPages)
+    }
+
+    @Test
     fun quickNotePagingIsBoundedAndUpdateKeepsAttachments() = runBlocking {
         var pageArgs: List<Any?>? = null
         var create: CreateQuickNoteRequest? = null

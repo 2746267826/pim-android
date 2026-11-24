@@ -250,7 +250,7 @@ class NativeWorkbenchRepository @Inject constructor(
         var pageNumber = 1
         var totalCount = 0
         var totalPages = 0
-        while (pageNumber <= MAX_EVENT_PAGES) {
+        while (true) {
             val result = api.getEvents(
                 start = range.start,
                 end = range.endExclusive,
@@ -258,14 +258,11 @@ class NativeWorkbenchRepository @Inject constructor(
                 pageSize = PAGE_SIZE,
             )
             val page = requireSuccess(result.code, result.data, result.message, "读取日程")
-            if (pageNumber == 1) {
-                totalCount = page.totalCount
-                totalPages = page.totalPages
-            }
+            totalCount = page.totalCount
+            totalPages = page.totalPages
             items += page.items
             if (page.items.isEmpty() ||
-                pageNumber >= page.totalPages ||
-                (page.totalCount > 0 && items.size >= page.totalCount)
+                pageNumber >= page.totalPages
             ) {
                 break
             }
@@ -539,7 +536,6 @@ class NativeWorkbenchRepository @Inject constructor(
 
     private companion object {
         const val PAGE_SIZE = 100
-        const val MAX_EVENT_PAGES = 20
     }
 
     private fun <T> requireSuccess(

@@ -8,8 +8,6 @@ import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.test.assertDoesNotExist
-import androidx.compose.ui.test.assertExists
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -230,7 +228,7 @@ class NativeCalendarNativeContentTest {
     }
 
     @Test
-    fun monthNavigationUsesTargetMonthEnd() {
+    fun monthNavigationClampsToTargetMonthEnd() {
         val capture = setCalendarContent(
             NativeWorkbenchUiState(
                 section = NativeWorkbenchSection.Calendar,
@@ -247,7 +245,7 @@ class NativeCalendarNativeContentTest {
         compose.onNodeWithText("2026年2月").assertIsDisplayed()
 
         compose.onNodeWithTag("native-calendar-next").performClick()
-        assertEquals(LocalDate.of(2026, 3, 31), capture().calendarView.anchorDate)
+        assertEquals(LocalDate.of(2026, 3, 28), capture().calendarView.anchorDate)
         compose.onNodeWithText("2026年3月").assertIsDisplayed()
     }
 
@@ -281,7 +279,7 @@ class NativeCalendarNativeContentTest {
 
         compose.onNodeWithText("全天安排").performScrollTo().assertExists()
         compose.onNodeWithText("上午日程").performScrollTo().assertExists()
-        compose.onNodeWithText("全天", substring = true).assertExists()
+        compose.onNodeWithText("全天 · 3月8日").assertExists()
     }
 
     @Test

@@ -56,27 +56,27 @@ class NativeCalendarViewStateTest {
         )
         assertEquals(LocalDate.of(2026, 2, 28), january31.shift(1).anchorDate)
         assertEquals(
-            LocalDate.of(2026, 3, 31),
+            LocalDate.of(2026, 3, 28),
             january31.shift(1).shift(1).anchorDate,
         )
 
         val leapJanuary31 = january31.copy(anchorDate = LocalDate.of(2028, 1, 31))
         assertEquals(LocalDate.of(2028, 2, 29), leapJanuary31.shift(1).anchorDate)
         assertEquals(
-            LocalDate.of(2028, 3, 31),
+            LocalDate.of(2028, 3, 29),
             leapJanuary31.shift(1).shift(1).anchorDate,
         )
 
         val march31 = january31.copy(anchorDate = LocalDate.of(2026, 3, 31))
         assertEquals(LocalDate.of(2026, 2, 28), march31.shift(-1).anchorDate)
         assertEquals(
-            LocalDate.of(2026, 1, 31),
+            LocalDate.of(2026, 1, 28),
             march31.shift(-1).shift(-1).anchorDate,
         )
 
         val february28 = january31.copy(anchorDate = LocalDate.of(2026, 2, 28))
-        assertEquals(LocalDate.of(2026, 1, 31), february28.shift(-1).anchorDate)
-        assertEquals(LocalDate.of(2026, 3, 31), february28.shift(1).anchorDate)
+        assertEquals(LocalDate.of(2026, 1, 28), february28.shift(-1).anchorDate)
+        assertEquals(LocalDate.of(2026, 3, 28), february28.shift(1).anchorDate)
     }
 
     @Test

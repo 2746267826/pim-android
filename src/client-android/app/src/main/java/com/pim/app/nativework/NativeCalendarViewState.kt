@@ -54,7 +54,8 @@ fun NativeCalendarViewState.shift(delta: Int): NativeCalendarViewState {
         anchorDate = when (mode) {
             NativeCalendarViewMode.Day -> anchorDate.plusDays(delta.toLong())
             NativeCalendarViewMode.Week -> anchorDate.plusWeeks(delta.toLong())
-            NativeCalendarViewMode.Month -> anchorDate.plusMonths(delta.toLong())
+            NativeCalendarViewMode.Month ->
+                anchorDate.withDayOfMonth(1).plusMonths(delta.toLong())
         }
     )
 }

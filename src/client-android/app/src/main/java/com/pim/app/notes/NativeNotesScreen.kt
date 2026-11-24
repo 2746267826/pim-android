@@ -23,7 +23,6 @@ import com.pim.app.recording.*
 import com.pim.app.ui.components.PimStatusBanner
 import com.pim.app.ui.components.PimStatusTone
 import com.pim.app.ui.theme.PimTheme
-import com.pim.core.network.BoundUploadSession
 import java.io.File
 import kotlinx.coroutines.launch
 import kotlinx.serialization.json.JsonObject
@@ -55,7 +54,7 @@ fun NativeNotesScreen(
     asr: NoteAsrRepositoryState = NoteAsrRepositoryState(), asrActions: NoteAsrActions = NoteAsrActions(),
     artifacts: NoteArtifactRepositoryState = NoteArtifactRepositoryState(),
     processing: NoteProcessingRepositoryState = NoteProcessingRepositoryState(),
-    onRefreshProcessing: (String, String, BoundUploadSession) -> Unit = { _, _, _ -> },
+    onRefreshProcessing: (String, String, NoteUploadTarget) -> Unit = { _, _, _ -> },
     legacyMigration: LegacyQuickNoteMigrationState = LegacyQuickNoteMigrationState(),
     legacyMigrationActions: LegacyQuickNoteMigrationActions = LegacyQuickNoteMigrationActions(),
     initialAsr: Boolean = false,

@@ -17,7 +17,11 @@ import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
-data class NoteUploadTarget(val binding: BoundUploadSession, val name: String)
+data class NoteUploadTarget(
+    val binding: BoundUploadSession,
+    val name: String,
+    val generation: Long = 0L,
+)
 data class NoteAutoSubmitRegistration(val authorized: Boolean, val scheduled: Boolean)
 
 @Singleton
@@ -175,10 +179,19 @@ class NoteUploadRepository @Inject constructor(@ApplicationContext private val c
         val origin = PimServerEndpoints.from(settings.getBaseUrl()).trustedOrigin
         var target: NoteUploadTarget? = null
         settings.commitSessionIfCurrentServer(origin) {
+            val before = sessions.sessionIdentityGeneration()
             val session = sessions.snapshot()
+            val after = sessions.sessionIdentityGeneration()
             val ownerId = session.ownerId
-            if (session.tokens == null || session.serverIdentity != origin || ownerId == null) false
-            else { target = NoteUploadTarget(BoundUploadSession(origin, ownerId), session.ownerName.orEmpty()); true }
+            if (before != after || session.tokens == null || session.serverIdentity != origin || ownerId == null) false
+            else {
+                target = NoteUploadTarget(
+                    binding = BoundUploadSession(origin, ownerId),
+                    name = session.ownerName.orEmpty(),
+                    generation = after,
+                )
+                true
+            }
         }
         target
     }.getOrNull()

@@ -7,10 +7,15 @@ import com.pim.core.contract.NoteProcessingStatusDto
 import com.pim.core.contract.NoteProcessingTaskKind
 import com.pim.core.network.BoundUploadSession
 import kotlinx.coroutines.runBlocking
+import okhttp3.MediaType.Companion.toMediaType
+import okhttp3.ResponseBody.Companion.toResponseBody
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertNotNull
 import org.junit.Assert.assertNull
 import org.junit.Assert.assertTrue
 import org.junit.Test
+import retrofit2.HttpException
+import retrofit2.Response
 
 class NoteProcessingStatusTest {
     private val noteId = "11111111-1111-4111-8111-111111111111"
@@ -22,6 +27,7 @@ class NoteProcessingStatusTest {
     private val target = NoteProcessingTarget(
         BoundUploadSession(server, ownerId),
         "alice",
+        generation = 7L,
     )
 
     @Test
@@ -163,7 +169,7 @@ class NoteProcessingStatusTest {
             nowMillis = { 42L },
         )
 
-        val entry = repository.refresh(noteId, versionId, target.binding)
+        val entry = repository.refresh(noteId, versionId, target.binding, target.generation)
 
         assertEquals(target, observedTarget)
         assertEquals(noteId, observedNoteId)
@@ -172,8 +178,9 @@ class NoteProcessingStatusTest {
         assertEquals(versionId, entry.status?.versionId)
         assertEquals(42L, entry.observedAtMillis)
         assertNull(entry.problem)
-        assertEquals(entry, repository.entry(target.binding, noteId, versionId))
-        assertNull(repository.entry(BoundUploadSession(server, otherOwnerId), noteId, versionId))
+        assertEquals(entry, repository.entry(target.binding, noteId, versionId, target.generation))
+        assertNull(repository.entry(BoundUploadSession(server, otherOwnerId), noteId, versionId, target.generation))
+        assertNull(repository.entry(BoundUploadSession("https://other.invalid", ownerId), noteId, versionId, target.generation))
     }
 
     @Test
@@ -188,7 +195,7 @@ class NoteProcessingStatusTest {
             nowMillis = { 42L },
         )
 
-        val entry = repository.refresh(noteId, versionId, target.binding)
+        val entry = repository.refresh(noteId, versionId, target.binding, target.generation)
 
         assertNull(entry.status)
         assertTrue(entry.problem.orEmpty().contains("固定版本"))
@@ -197,7 +204,7 @@ class NoteProcessingStatusTest {
     @Test
     fun ownerChangeDuringReadDiscardsTheOldOwnersResponse() = runBlocking {
         var current = target
-        val other = NoteProcessingTarget(BoundUploadSession(server, otherOwnerId), "bob")
+        val other = NoteProcessingTarget(BoundUploadSession(server, otherOwnerId), "bob", generation = 8L)
         val repository = NoteProcessingRepository(
             targetProvider = { current },
             transportFactory = {
@@ -209,11 +216,79 @@ class NoteProcessingStatusTest {
             nowMillis = { 42L },
         )
 
-        val entry = repository.refresh(noteId, versionId, target.binding)
+        val entry = repository.refresh(noteId, versionId, target.binding, target.generation)
 
         assertNull(entry.status)
         assertTrue(entry.problem.orEmpty().contains("账号或服务器"))
-        assertNull(repository.entry(other.binding, noteId, versionId))
+        assertNull(repository.entry(other.binding, noteId, versionId, other.generation))
+    }
+
+    @Test
+    fun sameBindingWithANewSessionGenerationDiscardsTheOldResponse() = runBlocking {
+        var current = target
+        val repository = NoteProcessingRepository(
+            targetProvider = { current },
+            transportFactory = {
+                NoteProcessingTransport { _, _ ->
+                    current = target.copy(generation = target.generation + 1)
+                    status()
+                }
+            },
+            nowMillis = { 42L },
+        )
+
+        val entry = repository.refresh(noteId, versionId, target.binding, target.generation)
+
+        assertNull(entry.status)
+        assertTrue(entry.problem.orEmpty().contains("账号或服务器"))
+        assertNull(repository.entry(target.binding, noteId, versionId, target.generation + 1))
+    }
+
+    @Test
+    fun serverErrorIsVisibleAndKeepsTheLastPublishedStatus() = runBlocking {
+        var fail = false
+        val repository = NoteProcessingRepository(
+            targetProvider = { target },
+            transportFactory = {
+                NoteProcessingTransport { _, _ ->
+                    if (!fail) status()
+                    else throw HttpException(
+                        Response.error<Any>(
+                            503,
+                            "".toResponseBody("application/json".toMediaType()),
+                        ),
+                    )
+                }
+            },
+            nowMillis = { 42L },
+        )
+
+        repository.refresh(noteId, versionId, target.binding, target.generation)
+        fail = true
+        val failed = repository.refresh(noteId, versionId, target.binding, target.generation)
+
+        assertNotNull(failed.status)
+        assertEquals(NoteProcessingState.PARTIALLYCOMPLETED, failed.status?.state)
+        assertTrue(failed.problem.orEmpty().contains("HTTP 503"))
+        assertTrue(failed.problem.orEmpty().contains("上次状态保留"))
+    }
+
+    @Test
+    fun serverEnvelopeErrorIsVisibleWithoutPublishingPartialData() = runBlocking {
+        val repository = NoteProcessingRepository(
+            targetProvider = { target },
+            transportFactory = {
+                NoteProcessingTransport { _, _ ->
+                    throw NoteProcessingServerException("synthetic processing rejection")
+                }
+            },
+            nowMillis = { 42L },
+        )
+
+        val entry = repository.refresh(noteId, versionId, target.binding, target.generation)
+
+        assertNull(entry.status)
+        assertTrue(entry.problem.orEmpty().contains("synthetic processing rejection"))
     }
 
     private fun status(

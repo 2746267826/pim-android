@@ -16,7 +16,6 @@ import androidx.compose.ui.platform.testTag
 import com.pim.app.recording.*
 import com.pim.app.ui.components.PimButton
 import com.pim.app.ui.theme.PimTheme
-import com.pim.core.network.BoundUploadSession
 
 @OptIn(ExperimentalMaterial3Api::class)
 @Composable
@@ -29,7 +28,7 @@ internal fun NoteMaterialsSheet(
     artifacts: NoteArtifactRepositoryState = NoteArtifactRepositoryState(),
     processing: NoteProcessingRepositoryState = NoteProcessingRepositoryState(),
     onRefreshUploadReceipt: (String) -> Unit = {}, onPromoteConflict: (String, String) -> Unit = { _, _ -> },
-    onRefreshProcessing: (String, String, BoundUploadSession) -> Unit = { _, _, _ -> },
+    onRefreshProcessing: (String, String, NoteUploadTarget) -> Unit = { _, _, _ -> },
 ) {
     val d = PimTheme.dimensions
     val versions = materials.entries.filter { it.noteId == note.id }

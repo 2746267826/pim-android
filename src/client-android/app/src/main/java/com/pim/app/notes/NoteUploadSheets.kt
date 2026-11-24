@@ -72,7 +72,7 @@ internal fun NoteUploadJobs(
     showProcessingStatuses: Boolean = true,
     showConflictActions: Boolean = false,
     onRefreshReceipt: (String) -> Unit = {},
-    onRefreshProcessing: (String, String, BoundUploadSession) -> Unit = { _, _, _ -> },
+    onRefreshProcessing: (String, String, NoteUploadTarget) -> Unit = { _, _, _ -> },
     onPromoteConflict: (String, String) -> Unit = { _, _ -> },
 ) {
     val d = PimTheme.dimensions
@@ -184,7 +184,7 @@ private fun NoteProcessingStatuses(
     asr: NoteAsrRepositoryState,
     artifacts: NoteArtifactRepositoryState,
     processing: NoteProcessingRepositoryState,
-    onRefreshProcessing: (String, String, BoundUploadSession) -> Unit,
+    onRefreshProcessing: (String, String, NoteUploadTarget) -> Unit,
 ) {
     val binding = target?.binding
     val asrTask = binding?.let { current ->
@@ -196,7 +196,9 @@ private fun NoteProcessingStatuses(
             it.materialVersionId == job.versionId && it.noteId == job.noteId && it.binding == current
         }.maxByOrNull { it.updatedAtMillis }
     }
-    val entry = binding?.let { processing.entry(it, job.noteId, job.versionId) }
+    val entry = target?.let {
+        processing.entry(it.binding, job.noteId, job.versionId, it.generation)
+    }
     NoteProcessingStatusDetails(
         tag = job.id,
         materialReceipt = uploadReceiptPhaseText(job),
@@ -206,7 +208,7 @@ private fun NoteProcessingStatuses(
         problem = entry?.problem,
         syncing = entry?.syncing == true,
         onRefresh = {
-            if (binding != null) onRefreshProcessing(job.noteId, job.versionId, binding)
+            target?.let { onRefreshProcessing(job.noteId, job.versionId, it) }
         },
     )
 }

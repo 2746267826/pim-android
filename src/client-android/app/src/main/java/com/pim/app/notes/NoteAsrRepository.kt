@@ -54,11 +54,17 @@ class NoteAsrRepository @Inject constructor(
         val origin = PimServerEndpoints.from(settings.getBaseUrl()).trustedOrigin
         var target: NoteUploadTarget? = null
         settings.commitSessionIfCurrentServer(origin) {
+            val before = sessions.sessionIdentityGeneration()
             val session = sessions.snapshot()
+            val after = sessions.sessionIdentityGeneration()
             val ownerId = session.ownerId
-            if (session.tokens == null || session.serverIdentity != origin || ownerId == null) false
+            if (before != after || session.tokens == null || session.serverIdentity != origin || ownerId == null) false
             else {
-                target = NoteUploadTarget(BoundUploadSession(origin, ownerId), session.ownerName.orEmpty())
+                target = NoteUploadTarget(
+                    binding = BoundUploadSession(origin, ownerId),
+                    name = session.ownerName.orEmpty(),
+                    generation = after,
+                )
                 true
             }
         }

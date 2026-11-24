@@ -997,7 +997,7 @@ fun CalendarNativeContent(
                         anchorDate = viewState.anchorDate,
                         today = today,
                         eventsByDate = eventsByDate,
-                        onOpenDateInDay = onSelectDate,
+                        onOpenDateInDay = onOpenDateInDay,
                         titlesBreakpoint = monthTitlesBreakpoint,
                     )
                 }
@@ -1037,7 +1037,7 @@ private fun WeekCalendarView(
     breakpoint: Dp,
 ) {
     BoxWithConstraints(Modifier.fillMaxWidth()) {
-        if (breakpoint < 0.dp) {
+        if (maxWidth >= breakpoint) {
             WideWeekCalendar(
                 range = range,
                 today = today,

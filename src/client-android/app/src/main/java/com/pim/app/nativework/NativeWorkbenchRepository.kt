@@ -162,7 +162,7 @@ fun nativeWorkbenchRange(
     endExclusive: LocalDate,
     zoneId: ZoneId = ZoneId.systemDefault(),
 ): NativeWorkbenchRange {
-    require(!endExclusive.isAfter(startDate)) { "日程查询结束日期必须晚于开始日期。" }
+    require(endExclusive.isAfter(startDate)) { "日程查询结束日期必须晚于开始日期。" }
     return NativeWorkbenchRange(
         start = startDate.atStartOfDay(zoneId).toInstant().toString(),
         endExclusive = endExclusive.atStartOfDay(zoneId).toInstant().toString(),
@@ -246,14 +246,32 @@ class NativeWorkbenchRepository @Inject constructor(
     )
 
     private suspend fun loadEvents(range: NativeWorkbenchRange): NativeEventPage {
-        val result = api.getEvents(
-            start = range.start,
-            end = range.endExclusive,
-            page = 1,
-            pageSize = PAGE_SIZE,
-        )
-        val page = requireSuccess(result.code, result.data, result.message, "读取日程")
-        return NativeEventPage(page.items, page.totalCount, page.totalPages)
+        val items = mutableListOf<EventResponse>()
+        var pageNumber = 1
+        var totalCount = 0
+        var totalPages = 0
+        while (pageNumber <= MAX_EVENT_PAGES) {
+            val result = api.getEvents(
+                start = range.start,
+                end = range.endExclusive,
+                page = pageNumber,
+                pageSize = PAGE_SIZE,
+            )
+            val page = requireSuccess(result.code, result.data, result.message, "读取日程")
+            if (pageNumber == 1) {
+                totalCount = page.totalCount
+                totalPages = page.totalPages
+            }
+            items += page.items
+            if (page.items.isEmpty() ||
+                pageNumber >= page.totalPages ||
+                (page.totalCount > 0 && items.size >= page.totalCount)
+            ) {
+                break
+            }
+            pageNumber++
+        }
+        return NativeEventPage(items, totalCount, totalPages)
     }
 
     suspend fun loadTodayUsage(date: LocalDate): MobileUsageSummaryResponse {

@@ -31,7 +31,7 @@ data class NativeCalendarDateRange(
     val endExclusive: LocalDate,
 ) {
     init {
-        require(!endExclusive.isAfter(start)) { "日历范围结束日期必须晚于开始日期。" }
+        require(endExclusive.isAfter(start)) { "日历范围结束日期必须晚于开始日期。" }
     }
 
     val dates: List<LocalDate>
@@ -54,8 +54,7 @@ fun NativeCalendarViewState.shift(delta: Int): NativeCalendarViewState {
         anchorDate = when (mode) {
             NativeCalendarViewMode.Day -> anchorDate.plusDays(delta.toLong())
             NativeCalendarViewMode.Week -> anchorDate.plusWeeks(delta.toLong())
-            NativeCalendarViewMode.Month ->
-                anchorDate.withDayOfMonth(1).plusMonths(delta.toLong())
+            NativeCalendarViewMode.Month -> anchorDate.plusMonths(delta.toLong())
         }
     )
 }
@@ -67,7 +66,7 @@ fun NativeCalendarViewState.goToDate(date: LocalDate): NativeCalendarViewState =
     copy(anchorDate = date)
 
 fun NativeCalendarViewState.openDay(date: LocalDate): NativeCalendarViewState =
-    copy(anchorDate = date)
+    copy(mode = NativeCalendarViewMode.Day, anchorDate = date)
 
 fun NativeCalendarViewState.withMode(mode: NativeCalendarViewMode): NativeCalendarViewState =
     copy(mode = mode)
@@ -217,6 +216,7 @@ private fun parseCalendarInstant(raw: String): Instant? {
     val value = raw.trim()
     if (value.isEmpty()) return null
     return runCatching { Instant.parse(value) }.getOrNull()
+        ?: runCatching { OffsetDateTime.parse(value).toInstant() }.getOrNull()
 }
 
 fun localDateToDatePickerMillis(date: LocalDate): Long =

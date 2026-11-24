@@ -3377,7 +3377,13 @@ class ForegroundLocationServiceTest {
             .invoke(service)
     }
 
-    private fun idleUntil(timeoutMillis: Long = 5_000L, predicate: () -> Boolean) {
+    // 默认 5s 在 GitHub runner 上不够稳：多数被测条件由后台线程推进
+    // （acquireCount / streamState），shadow looper 的 idle() 只推虚拟时间，
+    // 等不到它们，只能靠真实时间空转。CI 上曾因此间歇性超时
+    // （ForegroundLocationServiceTest:3385, "condition not met within 5000ms"）。
+    // 15s 与同文件其它调用点（L1779/1789/1792）保持一致；超时只是兜底，
+    // 真正的逻辑错误仍会失败，只是多等一会儿。
+    private fun idleUntil(timeoutMillis: Long = 15_000L, predicate: () -> Boolean) {
         val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMillis)
         while (!predicate()) {
             shadowOf(Looper.getMainLooper()).idle()

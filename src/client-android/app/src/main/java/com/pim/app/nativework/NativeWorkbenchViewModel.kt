@@ -49,6 +49,7 @@ data class NativeWorkbenchUiState(
     val feedback: String? = null,
     val tasks: List<TaskResponse> = emptyList(),
     val taskTotal: Int = 0,
+    val taskStatuses: List<String> = emptyList(),
     val taskBooks: List<TaskBookDto> = emptyList(),
     val calendars: List<CalendarResponse> = emptyList(),
     val events: List<EventResponse> = emptyList(),
@@ -181,6 +182,30 @@ class NativeWorkbenchViewModel @Inject constructor(
         }
     }
 
+    fun toggleTaskStatus(status: String) {
+        if (status !in NativeTaskStatusFilter.all) return
+        val selected = _state.value.taskStatuses
+        val next = if (status in selected) selected - status else selected + status
+        setTaskStatuses(next)
+    }
+
+    fun clearTaskStatuses() {
+        if (_state.value.taskStatuses.isEmpty()) return
+        setTaskStatuses(emptyList())
+    }
+
+    private fun setTaskStatuses(statuses: List<String>) {
+        val normalized = try {
+            NativeTaskStatusFilter.normalize(statuses)
+        } catch (e: NativeTaskStatusFilterException) {
+            _state.value = _state.value.copy(error = e.message)
+            return
+        }
+        if (_state.value.taskStatuses == normalized) return
+        _state.value = _state.value.copy(taskStatuses = normalized, error = null)
+        if (_state.value.section == NativeWorkbenchSection.Tasks) loadTasks()
+    }
+
     fun setDeviceSort(sortBy: String) {
         if (sortBy != "active" && sortBy != "data") return
         if (_state.value.deviceSort == sortBy) return
@@ -241,7 +266,10 @@ class NativeWorkbenchViewModel @Inject constructor(
                         }
                     }
                     NativeWorkbenchSection.Tasks -> {
-                        val tasks = binding.repository.loadTasks(_state.value.search)
+                        val tasks = binding.repository.loadTasks(
+                            _state.value.search,
+                            _state.value.taskStatuses,
+                        )
                         var booksError: String? = null
                         val books = try {
                             binding.repository.loadTaskBooks()
@@ -922,7 +950,10 @@ class NativeWorkbenchViewModel @Inject constructor(
         if (showLoading) _state.value = _state.value.copy(loading = true, error = null)
         refreshJob = viewModelScope.launch {
             try {
-                val tasks = binding.repository.loadTasks(_state.value.search)
+                val tasks = binding.repository.loadTasks(
+                    _state.value.search,
+                    _state.value.taskStatuses,
+                )
                 updateIfCurrent(binding) {
                     it.copy(
                         tasks = tasks.items,
@@ -1063,7 +1094,10 @@ class NativeWorkbenchViewModel @Inject constructor(
                     }
                 }
                 NativeWorkbenchSection.Tasks -> {
-                    val tasks = binding.repository.loadTasks(_state.value.search)
+                    val tasks = binding.repository.loadTasks(
+                        _state.value.search,
+                        _state.value.taskStatuses,
+                    )
                     updateIfCurrent(binding) {
                         it.copy(
                             tasks = tasks.items,

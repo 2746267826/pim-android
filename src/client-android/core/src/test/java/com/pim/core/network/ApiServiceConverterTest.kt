@@ -113,6 +113,28 @@ class ApiServiceConverterTest {
     }
 
     @Test
+    fun `task status list is sent as repeated query parameters`() = runBlocking {
+        server.enqueue(
+            MockResponse()
+                .setResponseCode(200)
+                .setHeader("Content-Type", "application/json")
+                .setBody(
+                    """{"code":0,"data":{"items":[],"page":1,"pageSize":100,"totalCount":0,"totalPages":0},"message":"ok","timestamp":"now"}"""
+                )
+        )
+
+        uploadApi(server.url("/api/v1/").toString())
+            .getTasksPaged(status = listOf("NEEDS-ACTION", "IN-PROCESS"))
+
+        val request = server.takeRequest()
+        assertEquals(
+            "/api/v1/calendar/tasks?status=NEEDS-ACTION&status=IN-PROCESS",
+            request.path,
+        )
+        assertEquals("GET", request.method)
+    }
+
+    @Test
     fun `real Retrofit empty HTTP 202 body is an observable failure not a parsed null data envelope`() = runBlocking {
         server.enqueue(
             MockResponse()

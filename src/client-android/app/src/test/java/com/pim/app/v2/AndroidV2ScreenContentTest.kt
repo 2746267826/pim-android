@@ -21,6 +21,7 @@ class AndroidV2ScreenContentTest {
             "延后",
             "忽略",
             "保存正文",
+            "全部状态",
         )) {
             assertTrue("Native workbench missing action surface: $marker", src.contains(marker))
         }

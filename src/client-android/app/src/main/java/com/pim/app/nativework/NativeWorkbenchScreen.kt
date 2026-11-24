@@ -790,6 +790,11 @@ private fun TasksNativeContent(
             TextButton(onClick = onNewTaskBook) { Text("任务本") }
             Button(onClick = onNewTask) { Text("新建") }
         }
+        NativeTaskStatusFilterRow(
+            selected = state.taskStatuses,
+            onToggle = viewModel::toggleTaskStatus,
+            onClear = viewModel::clearTaskStatuses,
+        )
         LazyColumn(
             Modifier.weight(1f),
             contentPadding = PaddingValues(horizontal = 16.dp, vertical = 8.dp),
@@ -797,7 +802,9 @@ private fun TasksNativeContent(
         ) {
             item {
                 Text(
-                    "共 ${state.taskTotal} 项，本轮最多读取 100 项 · 任务本 ${state.taskBooks.size} 个",
+                    "共 ${state.taskTotal} 项，本轮最多读取 100 项 · 任务本 ${state.taskBooks.size} 个" +
+                        if (state.taskStatuses.isEmpty()) "" else
+                            " · 状态 ${state.taskStatuses.joinToString("、") { NativeTaskStatusFilter.label(it) }}",
                     style = MaterialTheme.typography.bodySmall
                 )
             }
@@ -831,6 +838,40 @@ private fun TasksNativeContent(
 
 private val calendarWeekdayLabels = listOf("一", "二", "三", "四", "五", "六", "日")
 private val calendarWeekdayFullLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
+@Composable
+internal fun NativeTaskStatusFilterRow(
+    selected: List<String>,
+    onToggle: (String) -> Unit,
+    onClear: () -> Unit,
+) {
+    LazyRow(
+        Modifier.fillMaxWidth().testTag("native-task-status-filter"),
+        contentPadding = PaddingValues(horizontal = 16.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp),
+        verticalAlignment = Alignment.CenterVertically,
+    ) {
+        item {
+            Text("状态", style = MaterialTheme.typography.bodySmall)
+        }
+        item {
+            FilterChip(
+                selected = selected.isEmpty(),
+                onClick = onClear,
+                label = { Text("全部状态") },
+                modifier = Modifier.testTag("native-task-status-all"),
+            )
+        }
+        items(NativeTaskStatusFilter.all) { status ->
+            FilterChip(
+                selected = status in selected,
+                onClick = { onToggle(status) },
+                label = { Text(NativeTaskStatusFilter.label(status)) },
+                modifier = Modifier.testTag("native-task-status-$status"),
+            )
+        }
+    }
+}
 
 @Composable
 fun CalendarNativeContent(

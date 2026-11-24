@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 e788b2ce4902e79bfa360aed7b5a8a8d561b2f0c5e4d46100abb2e5d724e61a6)
+//   契约快照 : contract/openapi.json (sha256 c33efcb7bafd64d00a39eb0d68b150fe5f4f11e934026163ffc2cfaf72cd2bc8)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）

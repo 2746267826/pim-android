@@ -95,7 +95,7 @@ class NoteProcessingStatusTest {
                 state = NoteProcessingChainState.QUEUED,
             )).toNoteProcessingStatusView(noteId, versionId)
         }.exceptionOrNull()
-        assertTrue(wrongDerivedKind?.message.orEmpty().contains("DERIVED"))
+        assertTrue(wrongDerivedKind?.message.orEmpty().contains("derived"))
     }
 
     @Test
@@ -503,7 +503,7 @@ class NoteProcessingStatusTest {
 
         repository.refresh(noteId, versionId, bob.binding, bob.generation)
         current = bob.copy(generation = 8L)
-        repository.refresh(noteId, versionId, bob.binding, bob.generation)
+        repository.refresh(noteId, versionId, bob.binding, 8L)
         current = target
         repository.refresh(noteId, versionId, target.binding, target.generation)
 

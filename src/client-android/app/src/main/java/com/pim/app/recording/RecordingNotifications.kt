@@ -1,5 +1,6 @@
 package com.pim.app.recording
 
+import android.annotation.SuppressLint
 import android.app.Notification
 import android.app.NotificationChannel
 import android.app.NotificationManager
@@ -7,6 +8,7 @@ import android.app.PendingIntent
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import androidx.core.app.NotificationCompat
 import com.pim.app.MainActivity
 import com.pim.app.notes.NativeNotesActivity
@@ -35,23 +37,66 @@ internal object RecordingNotifications {
         }
         val text = if (interrupted) (state.problem ?: RecordingProblem.Input).message
             else "第 ${session?.currentSegment ?: 1} 段 · ${recordingDuration(session?.durationMillis ?: 0)} · 仅本机保存"
+        val publicText = "${recordingDuration(session?.durationMillis ?: 0)} · 第 ${session?.currentSegment ?: 1} 段"
+        val publicVersion = NotificationCompat.Builder(context, CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle(title)
+            .setContentText(publicText)
+            .build()
+        val activeSession = session?.takeIf { it.active && !interrupted }
+        if (activeSession != null && Build.VERSION.SDK_INT >= 36 &&
+            RecordingLiveUpdateCapability.isAvailable(context)
+        ) {
+            return buildPromoted(context, activeSession, title, text, publicVersion)
+        }
         val builder = NotificationCompat.Builder(context, CHANNEL)
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(title).setContentText(text)
             .setContentIntent(PendingIntent.getActivity(context, 82010, openIntent(context, session?.noteId), FLAGS))
             .setOnlyAlertOnce(true).setOngoing(!interrupted).setSilent(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE).setVisibility(NotificationCompat.VISIBILITY_PRIVATE)
-            .setPublicVersion(NotificationCompat.Builder(context, CHANNEL)
-                .setSmallIcon(android.R.drawable.ic_btn_speak_now).setContentTitle(title).build())
-        if (session?.active == true && !interrupted) {
-            val paused = session.phase == RecordingPhase.Paused
-            val action = if (paused) RecordingController.RESUME else RecordingController.PAUSE
-            builder.addAction(0, if (paused) "继续" else "暂停", PendingIntent.getService(
-                context, 82011, RecordingController.intent(context, action, session.id), FLAGS))
-            builder.addAction(0, "结束录音", PendingIntent.getService(
-                context, 82012, RecordingController.intent(context, RecordingController.FINISH, session.id), FLAGS))
+            .setPublicVersion(publicVersion)
+        if (activeSession != null) {
+            actions(context, activeSession).forEach { (label, intent) -> builder.addAction(0, label, intent) }
         }
         return builder.build()
+    }
+
+    @SuppressLint("NewApi")
+    private fun buildPromoted(
+        context: Context,
+        session: RecordingSession,
+        title: String,
+        text: String,
+        publicVersion: Notification,
+    ): Notification {
+        val builder = Notification.Builder(context, CHANNEL)
+            .setSmallIcon(android.R.drawable.ic_btn_speak_now)
+            .setContentTitle(title).setContentText(text)
+            .setContentIntent(PendingIntent.getActivity(context, 82010, openIntent(context, session.noteId), FLAGS))
+            .setOnlyAlertOnce(true).setOngoing(true).setSilent(true)
+            .setCategory(Notification.CATEGORY_SERVICE).setVisibility(Notification.VISIBILITY_PRIVATE)
+            .setPublicVersion(publicVersion)
+        actions(context, session).forEach { (label, intent) ->
+            builder.addAction(Notification.Action.Builder(null, label, intent).build())
+        }
+        try {
+            builder.setRequestPromotedOngoing(true)
+            builder.setShortCriticalText("${session.currentSegment}段")
+        } catch (_: LinkageError) {
+        }
+        return builder.build()
+    }
+
+    private fun actions(context: Context, session: RecordingSession): List<Pair<String, PendingIntent>> {
+        val paused = session.phase == RecordingPhase.Paused
+        val action = if (paused) RecordingController.RESUME else RecordingController.PAUSE
+        return listOf(
+            (if (paused) "继续" else "暂停") to PendingIntent.getService(
+                context, 82011, RecordingController.intent(context, action, session.id), FLAGS),
+            "结束录音" to PendingIntent.getService(
+                context, 82012, RecordingController.intent(context, RecordingController.FINISH, session.id), FLAGS),
+        )
     }
 
     fun openIntent(context: Context, noteId: String? = null): Intent {

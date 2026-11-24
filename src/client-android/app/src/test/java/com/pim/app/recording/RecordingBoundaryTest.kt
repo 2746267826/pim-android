@@ -57,6 +57,22 @@ class RecordingBoundaryTest {
         assertEquals(NotificationManager.IMPORTANCE_LOW, channel.importance)
     }
 
+    @Test fun lockScreenPublicVersionShowsDurationAndSegmentWithoutNoteIdentity() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        RecordingNotifications.createChannel(app)
+        val session = RecordingSession(
+            "private-session-identity", 1, currentSegment = 2,
+            chunks = listOf(RecordingChunk(1, 1, 16_000 * 60), RecordingChunk(2, 1, 16_000 * 30)),
+            noteId = "private-note-secret"
+        )
+        val public = RecordingNotifications.build(app, RecordingState(session)).publicVersion!!
+        assertEquals("正在录音", public.extras.getString("android.title"))
+        assertEquals("00:01:30 · 第 2 段", public.extras.getString("android.text"))
+        assertFalse(public.extras.toString().contains(session.id))
+        assertFalse(public.extras.toString().contains("private-note-secret"))
+        assertTrue(public.actions.isEmpty())
+    }
+
     @Test fun durationDoesNotWrapAfterOneDayOrBecomeNegative() {
         assertEquals("25:00:00", recordingDuration(25 * 60 * 60 * 1000L))
         assertEquals("00:00:00", recordingDuration(-1))

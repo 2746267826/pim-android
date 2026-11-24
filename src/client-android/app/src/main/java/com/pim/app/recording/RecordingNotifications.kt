@@ -74,7 +74,7 @@ internal object RecordingNotifications {
             .setSmallIcon(android.R.drawable.ic_btn_speak_now)
             .setContentTitle(title).setContentText(text)
             .setContentIntent(PendingIntent.getActivity(context, 82010, openIntent(context, session.noteId), FLAGS))
-            .setOnlyAlertOnce(true).setOngoing(true).setSilent(true)
+            .setOnlyAlertOnce(true).setOngoing(true)
             .setCategory(Notification.CATEGORY_SERVICE).setVisibility(Notification.VISIBILITY_PRIVATE)
             .setPublicVersion(publicVersion)
         actions(context, session).forEach { (label, intent) ->

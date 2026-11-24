@@ -10,6 +10,8 @@ import com.pim.core.contract.CalendarResponseApiResponse
 import com.pim.core.contract.CalendarResponseListApiResponse
 import com.pim.core.contract.EventResponse
 import com.pim.core.contract.EventResponseApiResponse
+import com.pim.core.contract.EventResponsePagedResult
+import com.pim.core.contract.EventResponsePagedResultApiResponse
 import com.pim.core.contract.QuickNoteDetailDto
 import com.pim.core.contract.QuickNoteDetailDtoApiResponse
 import com.pim.core.contract.QuickNoteListItemDtoPagedResult
@@ -30,6 +32,8 @@ import com.pim.core.contract.UpdateTaskRequest
 import com.pim.core.network.ApiService
 import java.lang.reflect.Proxy
 import java.time.Instant
+import java.time.LocalDate
+import java.time.ZoneId
 import kotlinx.coroutines.runBlocking
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNull
@@ -242,6 +246,54 @@ class NativeWorkbenchRepositoryTest {
         }
 
         assertEquals(listOf("writable"), NativeWorkbenchRepository(api).loadCalendars().map { it.id })
+    }
+
+    @Test
+    fun calendarRangeLoadsEveryPageUsingLocalMidnightWindow() = runBlocking {
+        val calls = mutableListOf<List<Any?>>()
+        val api = fakeApi { method, args ->
+            when (method) {
+                "getEvents" -> {
+                    calls += args.dropLast(1)
+                    val page = args[2] as Int
+                    val items = if (page == 1) {
+                        listOf(event().copy(id = "event-1"), event().copy(id = "event-2"))
+                    } else {
+                        listOf(event().copy(id = "event-3"))
+                    }
+                    EventResponsePagedResultApiResponse(
+                        code = 0,
+                        data = EventResponsePagedResult(
+                            items = items,
+                            page = page,
+                            pageSize = 100,
+                            totalCount = 3,
+                            totalPages = 2,
+                        ),
+                        message = "ok",
+                        timestamp = "now",
+                    )
+                }
+                else -> error("Unexpected $method")
+            }
+        }
+
+        val result = NativeWorkbenchRepository(api).loadEvents(
+            startDate = LocalDate.of(2026, 3, 8),
+            endExclusive = LocalDate.of(2026, 3, 10),
+            zoneId = ZoneId.of("America/New_York"),
+        )
+
+        assertEquals(listOf("event-1", "event-2", "event-3"), result.items.map { it.id })
+        assertEquals(3, result.totalCount)
+        assertEquals(
+            listOf("2026-03-08T05:00:00Z", "2026-03-10T04:00:00Z", 1, 100),
+            calls[0],
+        )
+        assertEquals(
+            listOf("2026-03-08T05:00:00Z", "2026-03-10T04:00:00Z", 2, 100),
+            calls[1],
+        )
     }
 
     @Test

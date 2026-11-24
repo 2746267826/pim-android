@@ -3,7 +3,9 @@
 package com.pim.app.nativework
 
 import androidx.compose.foundation.horizontalScroll
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
+import androidx.compose.foundation.layout.BoxWithConstraints
 import androidx.compose.foundation.layout.Column
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
@@ -34,6 +36,8 @@ import androidx.compose.material3.AssistChip
 import androidx.compose.material3.Button
 import androidx.compose.material3.Card
 import androidx.compose.material3.CircularProgressIndicator
+import androidx.compose.material3.DatePicker
+import androidx.compose.material3.DatePickerDialog
 import androidx.compose.material3.Divider
 import androidx.compose.material3.FilterChip
 import androidx.compose.material3.Icon
@@ -43,6 +47,7 @@ import androidx.compose.material3.OutlinedCard
 import androidx.compose.material3.OutlinedTextField
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
+import androidx.compose.material3.rememberDatePickerState
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
@@ -53,7 +58,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextAlign
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.Dp
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -180,6 +187,12 @@ fun NativeWorkbenchScreen(
             )
             NativeWorkbenchSection.Calendar -> CalendarNativeContent(
                 state = state,
+                onSelectMode = viewModel::selectCalendarViewMode,
+                onPreviousPage = viewModel::previousCalendarPage,
+                onNextPage = viewModel::nextCalendarPage,
+                onToday = viewModel::goToCalendarToday,
+                onSelectDate = viewModel::selectCalendarDate,
+                onOpenDateInDay = viewModel::openCalendarDateInDay,
                 onNewEvent = {
                     eventEditor = EventEditorTarget(session = viewModel.currentEditorSession())
                 },
@@ -816,16 +829,37 @@ private fun TasksNativeContent(
     }
 }
 
+private val calendarWeekdayLabels = listOf("一", "二", "三", "四", "五", "六", "日")
+private val calendarWeekdayFullLabels = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")
+
 @Composable
-private fun CalendarNativeContent(
+fun CalendarNativeContent(
     state: NativeWorkbenchUiState,
+    modifier: Modifier = Modifier,
+    onSelectMode: (NativeCalendarViewMode) -> Unit,
+    onPreviousPage: () -> Unit,
+    onNextPage: () -> Unit,
+    onToday: () -> Unit,
+    onSelectDate: (LocalDate) -> Unit,
+    onOpenDateInDay: (LocalDate) -> Unit,
     onNewEvent: () -> Unit,
     onCreateCalendar: () -> Unit,
     onEditEvent: (EventResponse) -> Unit,
     onDeleteEvent: (EventResponse) -> Unit,
+    weekColumnsBreakpoint: Dp = 720.dp,
+    monthTitlesBreakpoint: Dp = 600.dp,
 ) {
+    val viewState = state.calendarView
+    val range = viewState.dateRange()
+    val zoneId = ZoneId.systemDefault()
+    val eventsByDate = remember(state.calendarViewEvents, range, zoneId) {
+        calendarEventsByDate(state.calendarViewEvents, range, zoneId)
+    }
+    var showDatePicker by remember { mutableStateOf(false) }
+    val today = LocalDate.now()
+
     LazyColumn(
-        Modifier.fillMaxSize(),
+        modifier.fillMaxSize(),
         contentPadding = PaddingValues(16.dp),
         verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
@@ -834,7 +868,7 @@ private fun CalendarNativeContent(
                 Modifier.fillMaxWidth(),
                 verticalAlignment = Alignment.CenterVertically
             ) {
-                Text("未来 7 天 · ${state.eventTotal} 项", Modifier.weight(1f), style = MaterialTheme.typography.titleMedium)
+                Text("日程", Modifier.weight(1f), style = MaterialTheme.typography.titleLarge)
                 TextButton(onClick = onCreateCalendar) {
                     Text("新建日历")
                 }
@@ -852,15 +886,443 @@ private fun CalendarNativeContent(
                 )
             }
         }
-        if (state.events.isEmpty()) item { EmptyCard("未来 7 天暂无日程") }
-        items(state.events, key = { it.id }) { event ->
-            EventCard(
-                event = event,
-                onEdit = { onEditEvent(event) },
-                onDelete = { onDeleteEvent(event) },
+        item {
+            Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                NativeCalendarViewMode.entries.forEach { mode ->
+                    FilterChip(
+                        selected = viewState.mode == mode,
+                        onClick = { onSelectMode(mode) },
+                        label = { Text(mode.label) },
+                        modifier = Modifier.testTag("native-calendar-mode-${mode.name.lowercase()}"),
+                    )
+                }
+            }
+        }
+        item {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = onPreviousPage,
+                    modifier = Modifier.testTag("native-calendar-previous"),
+                ) {
+                    Text("上一${viewState.mode.label}")
+                }
+                TextButton(
+                    onClick = { showDatePicker = true },
+                    modifier = Modifier.weight(1f).testTag("native-calendar-period"),
+                    contentPadding = PaddingValues(horizontal = 4.dp),
+                ) {
+                    Text(
+                        viewState.periodTitle(),
+                        textAlign = TextAlign.Center,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis,
+                        style = MaterialTheme.typography.titleMedium,
+                    )
+                }
+                TextButton(
+                    onClick = onNextPage,
+                    modifier = Modifier.testTag("native-calendar-next"),
+                ) {
+                    Text("下一${viewState.mode.label}")
+                }
+            }
+        }
+        item {
+            Row(
+                Modifier.fillMaxWidth(),
+                verticalAlignment = Alignment.CenterVertically,
+            ) {
+                TextButton(
+                    onClick = onToday,
+                    modifier = Modifier.testTag("native-calendar-today"),
+                ) {
+                    Text("今天")
+                }
+                TextButton(
+                    onClick = { showDatePicker = true },
+                    modifier = Modifier.testTag("native-calendar-date-picker"),
+                ) {
+                    Text("选择日期")
+                }
+                Spacer(Modifier.weight(1f))
+                Text(
+                    "${viewState.mode.label}视图 · ${state.calendarViewEventTotal} 项",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+        }
+
+        when (viewState.mode) {
+            NativeCalendarViewMode.Day -> {
+                val dayEvents = eventsByDate[viewState.anchorDate].orEmpty()
+                item {
+                    SectionTitle(calendarDateLabel(viewState.anchorDate), "${dayEvents.size} 项")
+                }
+                if (dayEvents.isEmpty()) {
+                    item { EmptyCard("当日暂无日程") }
+                } else {
+                    items(dayEvents, key = { "calendar-day-${it.id}" }) { event ->
+                        EventCard(
+                            event = event,
+                            modifier = Modifier.testTag("native-calendar-event-${event.id}"),
+                            onEdit = { onEditEvent(event) },
+                            onDelete = { onDeleteEvent(event) },
+                        )
+                    }
+                }
+            }
+            NativeCalendarViewMode.Week -> {
+                item {
+                    WeekCalendarView(
+                        range = range,
+                        anchorDate = viewState.anchorDate,
+                        today = today,
+                        eventsByDate = eventsByDate,
+                        onSelectDate = onSelectDate,
+                        onOpenDateInDay = onOpenDateInDay,
+                        onEditEvent = onEditEvent,
+                        onDeleteEvent = onDeleteEvent,
+                        breakpoint = weekColumnsBreakpoint,
+                    )
+                }
+            }
+            NativeCalendarViewMode.Month -> {
+                item {
+                    MonthCalendarGrid(
+                        range = range,
+                        anchorDate = viewState.anchorDate,
+                        today = today,
+                        eventsByDate = eventsByDate,
+                        onOpenDateInDay = onSelectDate,
+                        titlesBreakpoint = monthTitlesBreakpoint,
+                    )
+                }
+                item {
+                    Text(
+                        "点击日期进入当天日程",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+        }
+    }
+
+    if (showDatePicker) {
+        NativeCalendarDatePickerDialog(
+            initialDate = viewState.anchorDate,
+            onDismiss = { showDatePicker = false },
+            onDateSelected = { date ->
+                showDatePicker = false
+                onSelectDate(date)
+            },
+        )
+    }
+}
+
+@Composable
+private fun WeekCalendarView(
+    range: NativeCalendarDateRange,
+    anchorDate: LocalDate,
+    today: LocalDate,
+    eventsByDate: Map<LocalDate, List<EventResponse>>,
+    onSelectDate: (LocalDate) -> Unit,
+    onOpenDateInDay: (LocalDate) -> Unit,
+    onEditEvent: (EventResponse) -> Unit,
+    onDeleteEvent: (EventResponse) -> Unit,
+    breakpoint: Dp,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        if (breakpoint < 0.dp) {
+            WideWeekCalendar(
+                range = range,
+                today = today,
+                eventsByDate = eventsByDate,
+                onOpenDateInDay = onOpenDateInDay,
+            )
+        } else {
+            NarrowWeekCalendar(
+                range = range,
+                anchorDate = anchorDate,
+                today = today,
+                eventsByDate = eventsByDate,
+                onSelectDate = onSelectDate,
+                onEditEvent = onEditEvent,
+                onDeleteEvent = onDeleteEvent,
             )
         }
     }
+}
+
+@Composable
+private fun WideWeekCalendar(
+    range: NativeCalendarDateRange,
+    today: LocalDate,
+    eventsByDate: Map<LocalDate, List<EventResponse>>,
+    onOpenDateInDay: (LocalDate) -> Unit,
+) {
+    Row(
+        Modifier.fillMaxWidth().testTag("native-calendar-week-wide"),
+        horizontalArrangement = Arrangement.spacedBy(4.dp),
+    ) {
+        range.dates.forEach { date ->
+            val dayEvents = eventsByDate[date].orEmpty()
+            OutlinedCard(
+                Modifier
+                    .weight(1f)
+                    .clickable { onOpenDateInDay(date) }
+                    .testTag("native-calendar-week-column-$date"),
+            ) {
+                Column(
+                    Modifier.padding(horizontal = 5.dp, vertical = 8.dp),
+                    verticalArrangement = Arrangement.spacedBy(5.dp),
+                ) {
+                    Text(
+                        calendarWeekdayFullLabels[date.dayOfWeek.value - 1],
+                        style = MaterialTheme.typography.labelSmall,
+                        color = if (date == today) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurfaceVariant
+                        },
+                    )
+                    Text(
+                        "${date.monthValue}/${date.dayOfMonth}",
+                        style = MaterialTheme.typography.titleSmall,
+                        fontWeight = if (date == today) FontWeight.Bold else FontWeight.Normal,
+                        color = if (date == today) {
+                            MaterialTheme.colorScheme.primary
+                        } else {
+                            MaterialTheme.colorScheme.onSurface
+                        },
+                    )
+                    if (dayEvents.isEmpty()) {
+                        Text(
+                            "无日程",
+                            style = MaterialTheme.typography.labelSmall,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        )
+                    } else {
+                        dayEvents.take(3).forEach { event ->
+                            Text(
+                                event.title,
+                                style = MaterialTheme.typography.labelSmall,
+                                maxLines = 2,
+                                overflow = TextOverflow.Ellipsis,
+                            )
+                        }
+                        if (dayEvents.size > 3) {
+                            Text(
+                                "+${dayEvents.size - 3}",
+                                style = MaterialTheme.typography.labelSmall,
+                                color = MaterialTheme.colorScheme.onSurfaceVariant,
+                            )
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NarrowWeekCalendar(
+    range: NativeCalendarDateRange,
+    anchorDate: LocalDate,
+    today: LocalDate,
+    eventsByDate: Map<LocalDate, List<EventResponse>>,
+    onSelectDate: (LocalDate) -> Unit,
+    onEditEvent: (EventResponse) -> Unit,
+    onDeleteEvent: (EventResponse) -> Unit,
+) {
+    Column(verticalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(Modifier.fillMaxWidth(), horizontalArrangement = Arrangement.spacedBy(2.dp)) {
+            range.dates.forEach { date ->
+                OutlinedCard(
+                    Modifier
+                        .weight(1f)
+                        .clickable { onSelectDate(date) }
+                        .testTag("native-calendar-week-day-$date"),
+                ) {
+                    Column(
+                        Modifier.fillMaxWidth().padding(vertical = 6.dp),
+                        horizontalAlignment = Alignment.CenterHorizontally,
+                        verticalArrangement = Arrangement.spacedBy(2.dp),
+                    ) {
+                        Text(
+                            calendarWeekdayLabels[date.dayOfWeek.value - 1],
+                            style = MaterialTheme.typography.labelSmall,
+                            color = if (date == today) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurfaceVariant
+                            },
+                        )
+                        Text(
+                            "${date.dayOfMonth}",
+                            style = MaterialTheme.typography.titleSmall,
+                            fontWeight = if (date == anchorDate) {
+                                FontWeight.Bold
+                            } else {
+                                FontWeight.Normal
+                            },
+                            color = if (date == anchorDate || date == today) {
+                                MaterialTheme.colorScheme.primary
+                            } else {
+                                MaterialTheme.colorScheme.onSurface
+                            },
+                        )
+                    }
+                }
+            }
+        }
+        val selectedEvents = eventsByDate[anchorDate].orEmpty()
+        SectionTitle(calendarDateLabel(anchorDate), "${selectedEvents.size} 项")
+        if (selectedEvents.isEmpty()) {
+            EmptyCard("当日暂无日程")
+        } else {
+            selectedEvents.forEach { event ->
+                EventCard(
+                    event = event,
+                    modifier = Modifier.testTag("native-calendar-event-${event.id}"),
+                    onEdit = { onEditEvent(event) },
+                    onDelete = { onDeleteEvent(event) },
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun MonthCalendarGrid(
+    range: NativeCalendarDateRange,
+    anchorDate: LocalDate,
+    today: LocalDate,
+    eventsByDate: Map<LocalDate, List<EventResponse>>,
+    onOpenDateInDay: (LocalDate) -> Unit,
+    titlesBreakpoint: Dp,
+) {
+    BoxWithConstraints(Modifier.fillMaxWidth()) {
+        val showTitles = maxWidth >= titlesBreakpoint
+        Column(verticalArrangement = Arrangement.spacedBy(4.dp)) {
+            Row(Modifier.fillMaxWidth()) {
+                calendarWeekdayLabels.forEach { weekday ->
+                    Text(
+                        weekday,
+                        Modifier.weight(1f),
+                        textAlign = TextAlign.Center,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                    )
+                }
+            }
+            range.dates.chunked(7).forEach { week ->
+                Row(Modifier.fillMaxWidth()) {
+                    week.forEach { date ->
+                        val dayEvents = eventsByDate[date].orEmpty()
+                        val inDisplayedMonth = date.year == anchorDate.year &&
+                            date.monthValue == anchorDate.monthValue
+                        OutlinedCard(
+                            Modifier
+                                .weight(1f)
+                                .padding(2.dp)
+                                .clickable { onOpenDateInDay(date) }
+                                .testTag("native-calendar-date-$date"),
+                        ) {
+                            Column(
+                                Modifier.padding(horizontal = 4.dp, vertical = 6.dp),
+                                verticalArrangement = Arrangement.spacedBy(2.dp),
+                            ) {
+                                Text(
+                                    "${date.dayOfMonth}",
+                                    style = MaterialTheme.typography.labelMedium,
+                                    fontWeight = if (date == anchorDate || date == today) {
+                                        FontWeight.Bold
+                                    } else {
+                                        FontWeight.Normal
+                                    },
+                                    color = when {
+                                        date == anchorDate || date == today ->
+                                            MaterialTheme.colorScheme.primary
+                                        inDisplayedMonth -> MaterialTheme.colorScheme.onSurface
+                                        else -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                )
+                                if (showTitles) {
+                                    dayEvents.take(2).forEach { event ->
+                                        Text(
+                                            event.title,
+                                            style = MaterialTheme.typography.labelSmall,
+                                            maxLines = 1,
+                                            overflow = TextOverflow.Ellipsis,
+                                        )
+                                    }
+                                    if (dayEvents.size > 2) {
+                                        Text(
+                                            "+${dayEvents.size - 2}",
+                                            style = MaterialTheme.typography.labelSmall,
+                                            color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                        )
+                                    }
+                                } else if (dayEvents.isNotEmpty()) {
+                                    Text(
+                                        "${dayEvents.size} 项",
+                                        style = MaterialTheme.typography.labelSmall,
+                                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                                    )
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun NativeCalendarDatePickerDialog(
+    initialDate: LocalDate,
+    onDismiss: () -> Unit,
+    onDateSelected: (LocalDate) -> Unit,
+) {
+    val datePickerState = rememberDatePickerState(
+        initialSelectedDateMillis = localDateToDatePickerMillis(initialDate),
+    )
+    DatePickerDialog(
+        onDismissRequest = onDismiss,
+        confirmButton = {
+            val selectedMillis = datePickerState.selectedDateMillis
+            TextButton(
+                onClick = {
+                    selectedMillis?.let {
+                        onDateSelected(datePickerMillisToLocalDate(it))
+                    }
+                },
+                enabled = selectedMillis != null,
+            ) {
+                Text("确定")
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onDismiss) {
+                Text("取消")
+            }
+        },
+    ) {
+        DatePicker(state = datePickerState)
+    }
+}
+
+private fun calendarDateLabel(date: LocalDate): String {
+    val weekday = listOf("周一", "周二", "周三", "周四", "周五", "周六", "周日")[
+        date.dayOfWeek.value - 1
+    ]
+    return "${date.monthValue}月${date.dayOfMonth}日 $weekday"
 }
 
 @Composable
@@ -1450,11 +1912,12 @@ private fun TaskCard(
 @Composable
 private fun EventCard(
     event: EventResponse,
+    modifier: Modifier = Modifier,
     onEdit: () -> Unit,
     onDelete: () -> Unit,
 ) {
     val blocked = event.isOutlookMirror() || event.hasRecurrenceMetadata()
-    OutlinedCard(Modifier.fillMaxWidth()) {
+    OutlinedCard(modifier.fillMaxWidth()) {
         Column(Modifier.padding(12.dp), verticalArrangement = Arrangement.spacedBy(5.dp)) {
             Text(event.title, style = MaterialTheme.typography.titleMedium)
             Text(formatEventRange(event), style = MaterialTheme.typography.bodySmall)
@@ -2233,14 +2696,7 @@ private fun flattenCategories(
 }
 
 private fun formatEventRange(event: EventResponse): String {
-    val formatter = DateTimeFormatter.ofPattern("MM-dd HH:mm", Locale.SIMPLIFIED_CHINESE)
-        .withZone(ZoneId.systemDefault())
-    val start = runCatching { Instant.parse(event.dtStart) }.getOrNull()
-    val end = runCatching { Instant.parse(event.dtEnd) }.getOrNull()
-    return when {
-        start != null && end != null -> "${formatter.format(start)} – ${formatter.format(end)}"
-        else -> "${event.dtStart} – ${event.dtEnd}"
-    }
+    return formatCalendarEventRange(event, ZoneId.systemDefault())
 }
 
 private fun formatDuration(totalSeconds: Long): String {

@@ -157,6 +157,18 @@ fun nativeWorkbenchRange(
     endExclusive = date.plusDays(7).atStartOfDay(zoneId).toInstant().toString(),
 )
 
+fun nativeWorkbenchRange(
+    startDate: LocalDate,
+    endExclusive: LocalDate,
+    zoneId: ZoneId = ZoneId.systemDefault(),
+): NativeWorkbenchRange {
+    require(!endExclusive.isAfter(startDate)) { "日程查询结束日期必须晚于开始日期。" }
+    return NativeWorkbenchRange(
+        start = startDate.atStartOfDay(zoneId).toInstant().toString(),
+        endExclusive = endExclusive.atStartOfDay(zoneId).toInstant().toString(),
+    )
+}
+
 internal fun EventResponse.isOutlookMirror(): Boolean =
     source.startsWith("outlook", ignoreCase = true) ||
         outlookEventId != null ||
@@ -223,13 +235,22 @@ class NativeWorkbenchRepository @Inject constructor(
     suspend fun loadEvents(
         date: LocalDate,
         zoneId: ZoneId = ZoneId.systemDefault(),
-    ): NativeEventPage {
-        val range = nativeWorkbenchRange(date, zoneId)
+    ): NativeEventPage = loadEvents(range = nativeWorkbenchRange(date, zoneId))
+
+    suspend fun loadEvents(
+        startDate: LocalDate,
+        endExclusive: LocalDate,
+        zoneId: ZoneId = ZoneId.systemDefault(),
+    ): NativeEventPage = loadEvents(
+        range = nativeWorkbenchRange(startDate, endExclusive, zoneId),
+    )
+
+    private suspend fun loadEvents(range: NativeWorkbenchRange): NativeEventPage {
         val result = api.getEvents(
             start = range.start,
             end = range.endExclusive,
             page = 1,
-            pageSize = 100,
+            pageSize = PAGE_SIZE,
         )
         val page = requireSuccess(result.code, result.data, result.message, "读取日程")
         return NativeEventPage(page.items, page.totalCount, page.totalPages)
@@ -496,6 +517,11 @@ class NativeWorkbenchRepository @Inject constructor(
         val result = api.archiveHabit(id)
         return requireSuccess(result.code, result.data, result.message, "归档习惯")
             .let(::nativeHabit)
+    }
+
+    private companion object {
+        const val PAGE_SIZE = 100
+        const val MAX_EVENT_PAGES = 20
     }
 
     private fun <T> requireSuccess(

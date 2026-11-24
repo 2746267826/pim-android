@@ -169,6 +169,35 @@ class NativeWorkbenchCalendarStateTest {
     }
 
     @Test
+    fun readInProgressExposesLoadingWithoutAnEmptyState() = runTest {
+        withMainDispatcher {
+            val transport = TestTransport()
+            var pending: Continuation<Any?>? = null
+            val api = fakeApi { _, _ ->
+                pending = pendingContinuation
+                COROUTINE_SUSPENDED
+            }
+            val viewModel = viewModel(api, transport)
+            transport.current = session()
+            viewModel.selectSection(NativeWorkbenchSection.Calendar)
+            runCurrent()
+
+            assertTrue(viewModel.state.value.loading)
+            assertFalse(viewModel.state.value.calendarLoaded)
+            assertTrue(viewModel.state.value.events.isEmpty())
+
+            pending!!.resumeWith(
+                Result.success(eventPage(event(id = "loaded", dtStart = "2026-11-24T09:00:00Z")))
+            )
+            runCurrent()
+
+            assertFalse(viewModel.state.value.loading)
+            assertTrue(viewModel.state.value.calendarLoaded)
+            assertEquals(listOf("loaded"), viewModel.state.value.events.map { it.id })
+        }
+    }
+
+    @Test
     fun readFailureKeepsSelectionAndRetryRecovers() = runTest {
         withMainDispatcher {
             val transport = TestTransport()

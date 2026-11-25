@@ -98,7 +98,7 @@ class StatusCenterScreenTest {
         composeTestRule.setContent {
             PimTheme { StatusCenterContent(sprintSummary = sprintSummaryForTest(), state = normalState().copy(syncPhase = SyncPhase.Running)) }
         }
-        composeTestRule.onNodeWithTag("status-sync-phase").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-sync-phase").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("status-sync-button").assertIsNotEnabled()
     }
 
@@ -119,16 +119,16 @@ class StatusCenterScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("status-pending").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-pending").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("42").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-pending-location").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-confirmed").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-rejected").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-permanent-rejected").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-terminal-usage").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-last-success").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-last-attempt").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-next-attempt").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-pending-location").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-confirmed").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-rejected").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-permanent-rejected").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-terminal-usage").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-last-success").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-last-attempt").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-next-attempt").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -228,6 +228,7 @@ class StatusCenterScreenTest {
         }
 
         composeTestRule.onNodeWithTag("status-sync-button")
+            .performScrollTo()
             .assertIsEnabled()
             .assertTextContains("立即同步")
             .performClick()
@@ -259,7 +260,7 @@ class StatusCenterScreenTest {
                     onSyncNow = { clickCount++ })
             }
         }
-        composeTestRule.onNodeWithTag("status-sync-button").performClick()
+        composeTestRule.onNodeWithTag("status-sync-button").performScrollTo().performClick()
         assertTrue("Expected 1 click", clickCount == 1)
     }
 
@@ -547,7 +548,7 @@ class StatusCenterScreenTest {
 
         topTags.forEach { tag ->
             composeTestRule.onAllNodesWithTag(tag).assertCountEquals(1)
-            val node = composeTestRule.onNodeWithTag(tag).assertIsDisplayed()
+            val node = composeTestRule.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
             val bounds = node.getUnclippedBoundsInRoot()
             assertTrue("$tag must stay inside the 320dp host", bounds.left >= hostBounds.left)
             assertTrue("$tag must stay inside the 320dp host", bounds.right <= hostBounds.right)

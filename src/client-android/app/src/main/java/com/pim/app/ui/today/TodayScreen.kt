@@ -223,29 +223,30 @@ internal fun TodayStatusBar(
 
         Spacer(modifier = Modifier.height(dimensions.spaceSmall))
 
+        AssistChip(
+            onClick = onOpenStatusCenter,
+            modifier = Modifier.testTag("today-local-status"),
+            label = {
+                Text(
+                    text = localStatus.label,
+                    style = MaterialTheme.typography.labelSmall,
+                )
+            },
+            leadingIcon = {
+                Icon(
+                    imageVector = Icons.Filled.Security,
+                    contentDescription = null,
+                    modifier = Modifier.size(16.dp),
+                )
+            },
+        )
+
         Row(
             modifier = Modifier
                 .fillMaxWidth()
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(dimensions.spaceSmall)
         ) {
-            AssistChip(
-                onClick = onOpenStatusCenter,
-                modifier = Modifier.testTag("today-local-status"),
-                label = {
-                    Text(
-                        text = localStatus.label,
-                        style = MaterialTheme.typography.labelSmall,
-                    )
-                },
-                leadingIcon = {
-                    Icon(
-                        imageVector = Icons.Filled.Security,
-                        contentDescription = null,
-                        modifier = Modifier.size(16.dp),
-                    )
-                },
-            )
             FactChip("待传总数", state.pendingCount.toString(), "today-pending-total")
             FactChip("定位待传", state.pendingLocationPoints.toString(), "today-pending-location")
             FactChip(

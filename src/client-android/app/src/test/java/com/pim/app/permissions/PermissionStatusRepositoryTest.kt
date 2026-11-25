@@ -10,6 +10,7 @@ import com.pim.app.TestPimApp
 import com.pim.app.mobile.usage.UsageAccessChecker
 import com.pim.app.status.CollectionPermissionAccess
 import com.pim.app.status.CollectionPermissionKind
+import com.pim.app.status.collectionPermissions
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -69,6 +70,13 @@ class PermissionStatusRepositoryTest {
                     throw SecurityException("permission check restricted")
                 }
                 return super.checkPermission(permission, pid, uid)
+            }
+
+            override fun checkSelfPermission(permission: String): Int {
+                if (permission == Manifest.permission.ACCESS_FINE_LOCATION) {
+                    throw SecurityException("permission check restricted")
+                }
+                return super.checkSelfPermission(permission)
             }
         }
         val repo = PermissionStatusRepository(context, UsageAccessChecker(context))

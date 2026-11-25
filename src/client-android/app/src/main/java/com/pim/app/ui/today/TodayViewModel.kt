@@ -134,7 +134,8 @@ data class TodayUiState(
     val generatedAt: String? = null,
     val embedSupported: Boolean? = null,
     val missingLocalPermissionCount: Int = 0,
-    val localPermissionsChecking: Boolean = false,
+    // 首帧尚未拿到权限快照时必须显示“检查中”，不能把空快照误报成已就绪。
+    val localPermissionsChecking: Boolean = true,
     val isSyncing: Boolean = false,
     val isSyncButtonDisabled: Boolean = false,
     val syncButtonLabel: String = "立即同步",

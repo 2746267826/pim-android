@@ -71,6 +71,14 @@ class TodayLocalStatusSummaryTest {
     }
 
     @Test
+    fun `default today state does not claim permissions are ready on the first frame`() {
+        val summary = TodayLocalStatusSummary.from(TodayUiState(), keepAliveAlert = null)
+
+        assertEquals(0, summary.pendingCount)
+        assertEquals("本机状态 · 检查中", summary.label)
+    }
+
+    @Test
     fun `known keepalive alert stays visible while permission checks are loading`() {
         val summary = TodayLocalStatusSummary.from(
             StatusCenterState.empty(),

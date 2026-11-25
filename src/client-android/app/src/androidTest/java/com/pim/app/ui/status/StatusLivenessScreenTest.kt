@@ -103,13 +103,14 @@ class StatusLivenessScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("status-liveness").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-liveness-conclusion").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-liveness-last-heartbeat").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-liveness-coverage-hour").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-liveness-coverage-heartbeat").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-liveness-last-cause").assertIsDisplayed().performScrollTo()
+        composeTestRule.onNodeWithTag("status-liveness").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-liveness-conclusion").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-liveness-last-heartbeat").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-liveness-coverage-hour").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-liveness-coverage-heartbeat").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-liveness-last-cause").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("存活有缺口：最长静默 135 分钟，区间内共 1 段 ≥30 分钟静默。")
+            .performScrollTo()
             .assertIsDisplayed()
     }
 
@@ -124,9 +125,9 @@ class StatusLivenessScreenTest {
         }
 
         composeTestRule.onNodeWithTag("status-liveness-stale")
-            .assertIsDisplayed()
             .performScrollTo()
-        composeTestRule.onNodeWithText("数据为 2 小时前").assertIsDisplayed()
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithText("数据为 2 小时前").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -147,18 +148,22 @@ class StatusLivenessScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithText(LivenessRules.NO_DATA_CONCLUSION).assertIsDisplayed()
+        composeTestRule.onNodeWithText(LivenessRules.NO_DATA_CONCLUSION).performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("status-liveness-coverage-hour")
+            .performScrollTo()
             .assertIsDisplayed()
             .assertTextContains(empty.coverageByHourText)
         composeTestRule.onNodeWithTag("status-liveness-coverage-heartbeat")
+            .performScrollTo()
             .assertIsDisplayed()
             .assertTextContains(empty.coverageByExpectedHeartbeatText)
         composeTestRule.onNodeWithTag("status-liveness-last-cause")
+            .performScrollTo()
             .assertIsDisplayed()
             .assertTextContains("未知")
         // 推断依据整行是"推断依据：…"，因此按子串断言（assertTextContains 默认是整段相等）。
         composeTestRule.onNodeWithTag("status-liveness-cause-inference")
+            .performScrollTo()
             .assertIsDisplayed()
             .assertTextContains("不能据此判定设备没有异常", substring = true)
     }

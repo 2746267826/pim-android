@@ -20,6 +20,7 @@ internal const val INK_WIDTH_COARSE = 6f
 internal const val INK_DEFAULT_WIDTH = 2.5f
 internal const val INK_ERASER_RADIUS = 12f
 internal const val INK_MAX_POINTS = 50_000
+internal const val INK_MAX_STROKES = 10_000
 
 internal val InkColorOptions = listOf(INK_COLOR_INK, INK_COLOR_RED, INK_COLOR_BLUE, INK_COLOR_GREEN)
 internal val InkWidthOptions = listOf(INK_WIDTH_THIN, INK_WIDTH_MEDIUM, INK_WIDTH_COARSE)
@@ -122,9 +123,17 @@ data class InkData(
     val strokes: List<InkStroke> = emptyList(),
     val extras: JsonObject = JsonObject(emptyMap()),
 ) {
+    internal fun limitViolation(additionalStrokes: Int = 0, additionalPoints: Int = 0): InkLimitViolation? = when {
+        strokes.size.toLong() + additionalStrokes > INK_MAX_STROKES.toLong() ->
+            InkLimitViolation.TooManyStrokes
+        strokes.sumOf { it.points.size.toLong() } + additionalPoints > INK_MAX_POINTS.toLong() ->
+            InkLimitViolation.TooManyPoints
+        else -> null
+    }
+
     fun validate() {
         require(width.isFinite() && height.isFinite() && width in 80f..2048f && height in 80f..4096f)
-        require(strokes.size <= MAX_INK_STROKES)
+        require(strokes.size <= INK_MAX_STROKES) { "笔画数量超过上限" }
         require(strokes.sumOf { it.points.size.toLong() } <= INK_MAX_POINTS.toLong()) { "笔迹点数超过上限" }
         strokes.forEach { stroke ->
             require(stroke.width.isFinite() && stroke.width in 0.5f..24f && stroke.points.isNotEmpty())
@@ -204,10 +213,11 @@ data class InkData(
         }
         return if (changed) base.copy(strokes = next) else this
     }
+}
 
-    private companion object {
-        const val MAX_INK_STROKES = 10_000
-    }
+internal enum class InkLimitViolation(val message: String) {
+    TooManyStrokes("手写内容已达 10,000 笔上限，本次输入未写入。可先擦除或撤销后再继续。"),
+    TooManyPoints("手写内容已达 50,000 点上限，本次输入未写入。可先擦除或撤销后再继续。"),
 }
 
 internal fun normalizedInkColor(value: String): String {
@@ -227,7 +237,7 @@ private fun parseInk(ink: JsonObject): InkData {
     val height = ink.requiredFiniteNumber("height", "画布高度")
     require(width in 80f..2048f && height in 80f..4096f) { "画布尺寸超出 schema-v1 范围" }
     val rawStrokes = ink["strokes"] as? JsonArray ?: throw IllegalArgumentException("笔画列表无效")
-    require(rawStrokes.size <= 10_000) { "笔画数量无效" }
+    require(rawStrokes.size <= INK_MAX_STROKES) { "笔画数量无效" }
     var pointCount = 0
 
     val rawIds = ink["strokeIds"]

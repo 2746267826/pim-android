@@ -32,6 +32,8 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.pim.app.ui.components.PimStatusBanner
+import com.pim.app.ui.components.PimStatusTone
 import com.pim.app.ui.theme.PimLightColorScheme
 import com.pim.app.ui.theme.PimTheme
 import com.pim.app.ui.theme.pimColor
@@ -103,6 +105,7 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
     var stylusOnly by rememberSaveable(id) { mutableStateOf(defaultInkStylusOnly(smallestScreenWidthDp)) }
     var brushPanelOpen by rememberSaveable(id) { mutableStateOf(false) }
     var canUndo by remember(id) { mutableStateOf(false) }
+    var limitMessage by rememberSaveable(id) { mutableStateOf<String?>(null) }
     val undo = remember(id) { InkUndoStack() }
     var resizing by remember { mutableStateOf<InkData?>(null) }
     val (brush, setBrush) = rememberInkPenPreference()
@@ -113,7 +116,11 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
     val commit: (InkData, InkData) -> Unit = { previous, next ->
-        if (next != previous) {
+        val violation = next.limitViolation()
+        if (violation != null) {
+            limitMessage = violation.message
+        } else if (next != previous) {
+            limitMessage = null
             undo.record(previous)
             canUndo = undo.canUndo
             onChange(next)
@@ -129,6 +136,13 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
             if (!readOnly) TextButton(onClick = { keyboard?.hide(); focus.clearFocus(); draw = !draw }, modifier = Modifier.testTag("ink-draw-$id")) {
                 Text(if (draw) "完成书写" else "书写")
             }
+        }
+        if (draw && !readOnly) limitMessage?.let {
+            PimStatusBanner(
+                it,
+                PimStatusTone.Warning,
+                Modifier.padding(bottom = d.spaceSmall).testTag("ink-limit-$id"),
+            )
         }
         if (draw && !readOnly) Row(
             Modifier.fillMaxWidth().horizontalScroll(rememberScrollState()),
@@ -209,9 +223,11 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
                 onClick = {
                     val previous = undo.undo()
                     if (previous != null) {
+                        limitMessage = null
                         canUndo = undo.canUndo
                         onChange(previous)
                     } else if (ink.strokes.isNotEmpty()) {
+                        limitMessage = null
                         onChange(ink.copy(strokes = ink.strokes.dropLast(1)))
                     }
                 },
@@ -253,7 +269,7 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
                         null
                     }
                     it.stylusOnly = stylusOnly; it.penColor = brush.color; it.penWidth = brush.width
-                    it.onInkChanged = commit
+                    it.onInkChanged = commit; it.onInkRejected = { limitMessage = it.message }
                 })
                 if (!readOnly) Box(Modifier.align(Alignment.BottomEnd).size(d.minimumTouchTarget)
                     .testTag("ink-resize-$id")

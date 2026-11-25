@@ -238,6 +238,38 @@ class InkSchemaCompatibilityTest {
                 strokes = listOf(InkStroke(List(INK_MAX_POINTS + 1) { InkPoint(1f, 1f) })),
             ).validate()
         }
+        assertThrows(IllegalArgumentException::class.java) {
+            withInk(inkBlock(320f), InkData(
+                strokes = listOf(InkStroke(
+                    List(INK_MAX_POINTS + 1) { InkPoint(1f, 1f) },
+                    id = newNoteId(),
+                )),
+            ))
+        }
+    }
+
+    @Test fun strokeCountLimitIsSharedByParserValidationAndEncoder() {
+        assertEquals(10_000, INK_MAX_STROKES)
+        val point = buildJsonObject { put("x", 1); put("y", 1) }
+        fun stroke() = buildJsonObject {
+            put("points", JsonArray(listOf(point)))
+        }
+        fun inkWithStrokeCount(count: Int) = buildJsonObject {
+            put("width", 320)
+            put("height", 240)
+            put("strokes", JsonArray(List(count) { stroke() }))
+        }
+
+        val accepted = inkOf(buildJsonObject { put("ink", inkWithStrokeCount(INK_MAX_STROKES)) })
+        assertEquals(INK_MAX_STROKES, accepted.strokes.size)
+        assertThrows(IllegalArgumentException::class.java) {
+            inkOf(buildJsonObject { put("ink", inkWithStrokeCount(INK_MAX_STROKES + 1)) })
+        }
+        val oversized = InkData(
+            strokes = List(INK_MAX_STROKES + 1) { InkStroke(listOf(InkPoint(1f, 1f))) },
+        )
+        assertThrows(IllegalArgumentException::class.java) { oversized.validate() }
+        assertThrows(IllegalArgumentException::class.java) { withInk(inkBlock(320f), oversized) }
     }
 
     @Test fun knownFieldsFailClosedInsteadOfBeingSilentlyIgnoredOrRewritten() {

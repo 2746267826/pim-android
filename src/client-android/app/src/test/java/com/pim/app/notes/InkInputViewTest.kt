@@ -53,4 +53,152 @@ class InkInputViewTest {
         try { assertFalse(view.onTouchEvent(event)) } finally { event.recycle() }
         assertEquals(0, count)
     }
+
+    @Test fun noMovePartialEraserTapSplitsOnlyTheTouchedStroke() {
+        val touchedId = newNoteId()
+        val otherId = newNoteId()
+        val touched = InkStroke(
+            listOf(InkPoint(20f, 100f), InkPoint(620f, 100f)),
+            width = INK_WIDTH_COARSE,
+            color = INK_COLOR_BLUE,
+            id = touchedId,
+        )
+        val other = InkStroke(
+            listOf(InkPoint(20f, 200f), InkPoint(620f, 200f)),
+            width = INK_WIDTH_THIN,
+            color = INK_COLOR_RED,
+            id = otherId,
+        )
+        val initial = InkData(width = 640f, height = 480f, strokes = listOf(touched, other))
+        val view = view().apply {
+            ink = initial
+            eraserMode = InkEraserMode.Partial
+        }
+        var changes = 0
+        var latest: InkData? = null
+        view.onInkChanged = { previous, next ->
+            changes++
+            assertEquals(initial, previous)
+            latest = next
+        }
+
+        touch(view, MotionEvent.ACTION_DOWN, 320f, 100f)
+        touch(view, MotionEvent.ACTION_UP, 320f, 100f)
+
+        assertEquals(1, changes)
+        assertEquals(3, latest!!.strokes.size)
+        assertEquals(touched.color, latest!!.strokes[0].color)
+        assertEquals(touched.width, latest!!.strokes[0].width)
+        assertEquals(touched.color, latest!!.strokes[1].color)
+        assertEquals(touched.width, latest!!.strokes[1].width)
+        assertTrue(latest!!.strokes[0].points.last().x < 320f)
+        assertTrue(latest!!.strokes[1].points.first().x > 320f)
+        assertEquals(other, latest!!.strokes[2])
+    }
+
+    @Test fun noMoveWholeStrokeEraserTapRemovesOnlyTheTouchedStroke() {
+        val touched = InkStroke(
+            listOf(InkPoint(20f, 100f), InkPoint(620f, 100f)),
+            width = INK_WIDTH_COARSE,
+            color = INK_COLOR_BLUE,
+            id = newNoteId(),
+        )
+        val other = InkStroke(
+            listOf(InkPoint(20f, 200f), InkPoint(620f, 200f)),
+            width = INK_WIDTH_THIN,
+            color = INK_COLOR_RED,
+            id = newNoteId(),
+        )
+        val initial = InkData(width = 640f, height = 480f, strokes = listOf(touched, other))
+        val view = view().apply {
+            ink = initial
+            eraserMode = InkEraserMode.WholeStroke
+        }
+        var changes = 0
+        var latest: InkData? = null
+        view.onInkChanged = { previous, next ->
+            changes++
+            assertEquals(initial, previous)
+            latest = next
+        }
+
+        touch(view, MotionEvent.ACTION_DOWN, 320f, 100f)
+        touch(view, MotionEvent.ACTION_UP, 320f, 100f)
+
+        assertEquals(1, changes)
+        assertEquals(listOf(other), latest!!.strokes)
+    }
+
+    @Test fun newStrokeAtPointLimitIsRejectedBeforeInkChanges() {
+        val initial = InkData(
+            width = 640f,
+            height = 480f,
+            strokes = listOf(InkStroke(List(INK_MAX_POINTS) { InkPoint(1f, 1f) }, id = newNoteId())),
+        )
+        val view = view().apply { ink = initial }
+        var changes = 0
+        var rejection: InkLimitViolation? = null
+        view.onInkChanged = { _, next ->
+            changes++
+            next.validate()
+        }
+        view.onInkRejected = { rejection = it }
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f, 100f)
+        touch(view, MotionEvent.ACTION_UP, 100f, 100f)
+
+        assertEquals(0, changes)
+        assertEquals(InkLimitViolation.TooManyPoints, rejection)
+        assertSame(initial, view.ink)
+    }
+
+    @Test fun newStrokeAtStrokeLimitIsRejectedBeforeInkChanges() {
+        val initial = InkData(
+            width = 640f,
+            height = 480f,
+            strokes = List(INK_MAX_STROKES) { InkStroke(listOf(InkPoint(1f, 1f))) },
+        )
+        val view = view().apply { ink = initial }
+        var changes = 0
+        var rejection: InkLimitViolation? = null
+        view.onInkChanged = { _, next ->
+            changes++
+            next.validate()
+        }
+        view.onInkRejected = { rejection = it }
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f, 100f)
+        touch(view, MotionEvent.ACTION_UP, 100f, 100f)
+
+        assertEquals(0, changes)
+        assertEquals(InkLimitViolation.TooManyStrokes, rejection)
+        assertSame(initial, view.ink)
+    }
+
+    @Test fun eraserSplitAtStrokeLimitIsRejectedBeforeInkChanges() {
+        val target = InkStroke(listOf(InkPoint(20f, 100f), InkPoint(620f, 100f)))
+        val initial = InkData(
+            width = 640f,
+            height = 480f,
+            strokes = List(INK_MAX_STROKES - 1) { InkStroke(listOf(InkPoint(1f, 1f))) } + target,
+        )
+        val view = view().apply {
+            ink = initial
+            eraserMode = InkEraserMode.Partial
+        }
+        var changes = 0
+        var rejection: InkLimitViolation? = null
+        view.onInkChanged = { _, next ->
+            changes++
+            next.validate()
+        }
+        view.onInkRejected = { rejection = it }
+
+        touch(view, MotionEvent.ACTION_DOWN, 320f, 100f)
+        touch(view, MotionEvent.ACTION_UP, 320f, 100f)
+
+        assertEquals(0, changes)
+        assertEquals(InkLimitViolation.TooManyStrokes, rejection)
+        assertSame(initial, view.ink)
+    }
 }

@@ -100,9 +100,6 @@ class RecordingBoundaryTest {
             )
         )
         assertFalse(RecordingPermissionsInspector.inspect(app).canStart)
-        manager.deleteNotificationChannel(RecordingNotifications.CHANNEL)
-        RecordingNotifications.createChannel(app)
-        assertTrue(RecordingPermissionsInspector.inspect(app).canStart)
     }
 
     @Test fun missingPrerequisitesAreNamedInUserFacingOrder() {

@@ -1,32 +1,55 @@
 package com.pim.app.recording
 
+internal enum class RecordingRequestPhase {
+    AwaitingPermission,
+    AwaitingDocument,
+}
+
+internal data class PendingRecordingRequest(
+    val noteId: String,
+    val phase: RecordingRequestPhase,
+)
+
 internal class RecordingRequestGate {
-    private var pendingNoteIdValue: String? = null
+    private var pendingValue: PendingRecordingRequest? = null
 
     @Synchronized
     fun begin(noteId: String): Boolean {
-        if (pendingNoteIdValue != null) return false
-        pendingNoteIdValue = noteId
+        if (pendingValue != null) return false
+        pendingValue = PendingRecordingRequest(noteId, RecordingRequestPhase.AwaitingPermission)
+        return true
+    }
+
+    /**
+     * The activity result callback may be delivered again after recreation. Keep the same
+     * note in the document-waiting phase instead of dropping it or starting a different note.
+     */
+    @Synchronized
+    fun onPermissionResult(): PendingRecordingRequest? {
+        val pending = pendingValue ?: return null
+        if (pending.phase == RecordingRequestPhase.AwaitingPermission) {
+            pendingValue = pending.copy(phase = RecordingRequestPhase.AwaitingDocument)
+        }
+        return pendingValue
+    }
+
+    @Synchronized
+    fun complete(noteId: String): Boolean {
+        if (pendingValue?.noteId != noteId) return false
+        pendingValue = null
         return true
     }
 
     @Synchronized
-    fun consume(): String? {
-        val pending = pendingNoteIdValue
-        pendingNoteIdValue = null
-        return pending
-    }
-
-    @Synchronized
-    fun restore(noteId: String) {
-        pendingNoteIdValue = noteId
+    fun restore(request: PendingRecordingRequest) {
+        pendingValue = request
     }
 
     @Synchronized
     fun cancel() {
-        pendingNoteIdValue = null
+        pendingValue = null
     }
 
     @Synchronized
-    fun pendingNoteId(): String? = pendingNoteIdValue
+    fun pending(): PendingRecordingRequest? = pendingValue
 }

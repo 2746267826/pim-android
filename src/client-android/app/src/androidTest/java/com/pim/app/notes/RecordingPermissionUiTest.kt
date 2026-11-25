@@ -2,6 +2,7 @@ package com.pim.app.notes
 
 import androidx.compose.foundation.layout.Box
 import androidx.compose.ui.test.assertIsDisplayed
+import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule
 import androidx.compose.ui.test.onNodeWithTag
@@ -60,6 +61,39 @@ class RecordingPermissionUiTest {
         compose.onNodeWithTag("recording-permission-notification-settings").performClick()
         assertEquals(1, requested)
         assertEquals(RecordingPermissionSetting.NotificationSettings, settings)
+    }
+
+    @Test fun requestActionNamesOnlyTheMissingPermission() {
+        compose.setContent {
+            PimTheme {
+                RecordingPermissionNotice(
+                    permissions = RecordingPermissions(notificationPermissionGranted = false),
+                    onRequest = {},
+                    onOpenSettings = {},
+                )
+            }
+        }
+
+        compose.onNodeWithText("允许使用通知").assertIsDisplayed()
+        compose.onNodeWithTag("recording-permission-request").assertIsDisplayed()
+        compose.onNodeWithTag("recording-permission-microphone-settings").assertDoesNotExist()
+    }
+
+    @Test fun requestWaitsForTheCurrentNoteToBeSaved() {
+        compose.setContent {
+            PimTheme {
+                RecordingPermissionNotice(
+                    permissions = RecordingPermissions(microphoneGranted = false),
+                    requestEnabled = false,
+                    onRequest = {},
+                    onOpenSettings = {},
+                )
+            }
+        }
+
+        compose.onNodeWithText("笔记保存完成后才能请求录音权限", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("recording-permission-request").assertIsNotEnabled()
+        compose.onNodeWithTag("recording-permission-microphone-settings").performClick()
     }
 
     @Test fun globalNotificationSwitchAndChannelHaveSeparateSettingsActions() {

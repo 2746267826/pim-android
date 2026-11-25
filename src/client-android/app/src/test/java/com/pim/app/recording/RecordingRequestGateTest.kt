@@ -12,18 +12,29 @@ class RecordingRequestGateTest {
 
         assertTrue(gate.begin("note-a"))
         assertFalse(gate.begin("note-b"))
-        assertEquals("note-a", gate.pendingNoteId())
-        assertEquals("note-a", gate.consume())
-        assertNull(gate.consume())
+        assertEquals("note-a", gate.pending()?.noteId)
+        assertEquals(RecordingRequestPhase.AwaitingPermission, gate.pending()?.phase)
+
+        val firstResult = gate.onPermissionResult()
+        assertEquals("note-a", firstResult?.noteId)
+        assertEquals(RecordingRequestPhase.AwaitingDocument, firstResult?.phase)
+        assertEquals(firstResult, gate.onPermissionResult())
+
+        assertTrue(gate.complete("note-a"))
+        assertNull(gate.pending())
+        assertNull(gate.onPermissionResult())
         assertTrue(gate.begin("note-b"))
     }
 
-    @Test fun restoredRequestIsConsumedOnlyOnce() {
+    @Test fun restoredDocumentWaitSurvivesRecreationUntilNotesAreReady() {
         val gate = RecordingRequestGate()
-        gate.restore("note-a")
+        gate.restore(PendingRecordingRequest("note-a", RecordingRequestPhase.AwaitingDocument))
 
-        assertEquals("note-a", gate.consume())
-        assertNull(gate.consume())
+        assertEquals("note-a", gate.pending()?.noteId)
+        assertEquals(RecordingRequestPhase.AwaitingDocument, gate.pending()?.phase)
+        assertFalse(gate.complete("note-b"))
+        assertEquals("note-a", gate.pending()?.noteId)
+        assertTrue(gate.complete("note-a"))
     }
 
     @Test fun cancelledRequestAllowsANewLaunch() {
@@ -31,6 +42,6 @@ class RecordingRequestGateTest {
         assertTrue(gate.begin("note-a"))
         gate.cancel()
         assertTrue(gate.begin("note-b"))
-        assertEquals("note-b", gate.consume())
+        assertEquals(PendingRecordingRequest("note-b", RecordingRequestPhase.AwaitingPermission), gate.pending())
     }
 }

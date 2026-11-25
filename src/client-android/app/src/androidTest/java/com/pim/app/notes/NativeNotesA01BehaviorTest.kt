@@ -83,6 +83,30 @@ class NativeNotesA01BehaviorTest {
         assertTrue(model.notes.state.value.documents.containsKey(newId))
     }
 
+    @Test fun libraryLaunchCreatesAtMostOneNoteUntilTheScreenReturns() {
+        compose.waitUntil(15_000) { model.notes.state.value.loaded }
+        val beforeIds = model.notes.state.value.entries.map { it.id }.toSet()
+        var first: String? = null
+        var second: String? = null
+        compose.runOnUiThread {
+            first = model.createForLibraryLaunch()
+            second = model.createForLibraryLaunch()
+        }
+
+        assertNotNull(first)
+        assertNull(second)
+        val afterIds = model.notes.state.value.entries.map { it.id }.toSet()
+        assertEquals(beforeIds + first!!, afterIds)
+
+        var third: String? = null
+        compose.runOnUiThread {
+            model.finishLibraryLaunch()
+            third = model.createForLibraryLaunch()
+        }
+        assertNotNull(third)
+        assertNotEquals(first, third)
+    }
+
     @Test fun anotherActiveNoteOffersChoiceAndKeepsItsSessionOwnership() {
         compose.waitUntil(15_000) {
             model.notes.state.value.loaded && model.materials.state.value.loaded

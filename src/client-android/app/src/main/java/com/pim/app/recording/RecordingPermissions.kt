@@ -3,8 +3,11 @@ package com.pim.app.recording
 import android.Manifest
 import android.app.NotificationManager
 import android.content.Context
+import android.content.Intent
 import android.content.pm.PackageManager
+import android.net.Uri
 import android.os.Build
+import android.provider.Settings
 import androidx.core.content.ContextCompat
 
 enum class RecordingPermissionSetting {
@@ -28,6 +31,14 @@ data class RecordingPermissions(
     val canRequest: Boolean
         get() = !microphoneGranted || !notificationPermissionGranted
 
+    val requestActionLabel: String?
+        get() = when {
+            !canRequest -> null
+            !microphoneGranted && !notificationPermissionGranted -> "允许麦克风和使用通知"
+            !microphoneGranted -> "允许麦克风"
+            else -> "允许使用通知"
+        }
+
     val missingLabels: List<String>
         get() = buildList {
             if (!microphoneGranted) add("麦克风权限")
@@ -40,12 +51,28 @@ data class RecordingPermissions(
         get() = "还不能开始录音：${missingLabels.joinToString("、")}。" +
             "笔记仍保存在本机；完成授权或打开设置后，回到这里再点「开始录音」。"
 
+    fun runtimePermissionsToRequest(sdkInt: Int): Array<String> = buildList {
+        if (!microphoneGranted) add(Manifest.permission.RECORD_AUDIO)
+        if (sdkInt >= 33 && !notificationPermissionGranted) add(Manifest.permission.POST_NOTIFICATIONS)
+    }.toTypedArray()
+
     fun startProblem(): RecordingProblem? = when {
         !microphoneGranted -> RecordingProblem.Permission
         !notificationPermissionGranted || !notificationsEnabled -> RecordingProblem.Notifications
         !channelEnabled -> RecordingProblem.NotificationChannel
         else -> null
     }
+}
+
+internal fun RecordingPermissionSetting.createIntent(context: Context): Intent = when (this) {
+    RecordingPermissionSetting.AppSettings ->
+        Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", context.packageName, null))
+    RecordingPermissionSetting.NotificationSettings ->
+        Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+    RecordingPermissionSetting.RecordingChannelSettings ->
+        Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+            .putExtra(Settings.EXTRA_APP_PACKAGE, context.packageName)
+            .putExtra(Settings.EXTRA_CHANNEL_ID, RecordingNotifications.CHANNEL)
 }
 
 internal object RecordingPermissionsInspector {

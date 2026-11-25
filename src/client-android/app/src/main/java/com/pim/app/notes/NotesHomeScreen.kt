@@ -41,7 +41,10 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
     val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
     DisposableEffect(lifecycle) {
         val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
-            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) launchingNote = false
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) {
+                launchingNote = false
+                model.finishLibraryLaunch()
+            }
         }
         lifecycle.addObserver(observer)
         onDispose { lifecycle.removeObserver(observer) }
@@ -74,6 +77,7 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
                         try { context.startActivity(NativeNotesActivity.intent(context, id, true)) }
                         catch (_: Exception) {
                             launchingNote = false
+                            model.finishLibraryLaunch()
                             model.tell("无法打开笔记编辑页，笔记已保存在本机")
                         }
                     }

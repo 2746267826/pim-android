@@ -81,7 +81,7 @@ class RecordingBoundaryTest {
         assertNull(shadowOf(app).nextStartedService)
     }
 
-    @Test fun inspectingAgainReadsCurrentNotificationState() {
+    @Test fun onResumeStyleInspectionReadsCurrentNotificationState() {
         val app = ApplicationProvider.getApplicationContext<Application>()
         shadowOf(app).grantPermissions(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
         RecordingNotifications.createChannel(app)

@@ -107,6 +107,9 @@ fun NativeNotesScreen(
                 val activeOtherTitle = activeOtherSession?.let { session ->
                     session.noteId?.let { noteDisplayTitle(state, it) } ?: "另一篇笔记"
                 }
+                LaunchedEffect(activeOtherSession?.id) {
+                    showRecordingConflict = false
+                }
                 val sessions = (listOfNotNull(ownSession) + recording.archives.mapNotNull { it.session }).distinctBy { it.id }
                     .filter { it.noteId == note.id }.sortedWith(compareBy({ it.createdAtMillis }, { it.id }))
                 val latest = materials.entries.firstOrNull { it.noteId == note.id }
@@ -185,6 +188,7 @@ fun NativeNotesScreen(
                                         if (!ownActive && !recording.active && !recordingPermissions.canStart) {
                                             RecordingPermissionNotice(
                                                 permissions = recordingPermissions,
+                                                requestEnabled = saved,
                                                 onRequest = { afterInput { onRequestRecordingPermissions() } },
                                                 onOpenSettings = onOpenRecordingSettings,
                                             )
@@ -252,7 +256,7 @@ fun NativeNotesScreen(
                     NoteEditorDock(recording, ownActive, activeOtherTitle, saved && !busy && !committing && !recording.preparing,
                         !busy && !committing && !preview && lastMarkdown != null,
                         onRecord = {
-                            if (recording.active && !ownActive) showRecordingConflict = true
+                            if (activeOtherSession != null) showRecordingConflict = true
                             else afterInput { onRecord(it.id) }
                         }, onPauseResume = onPauseResume,
                         onRecordings = { leaveInput(); showRecordings = true },

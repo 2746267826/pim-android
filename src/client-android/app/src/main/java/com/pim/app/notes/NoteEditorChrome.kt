@@ -167,6 +167,7 @@ internal fun NoteEditorDock(
 @Composable
 internal fun RecordingPermissionNotice(
     permissions: RecordingPermissions,
+    requestEnabled: Boolean = true,
     onRequest: () -> Unit,
     onOpenSettings: (RecordingPermissionSetting) -> Unit,
 ) {
@@ -176,9 +177,20 @@ internal fun RecordingPermissionNotice(
         verticalArrangement = Arrangement.spacedBy(d.spaceExtraSmall),
     ) {
         PimStatusBanner(permissions.message, PimStatusTone.Warning)
+        if (permissions.canRequest && !requestEnabled) {
+            Text(
+                "笔记保存完成后才能请求录音权限；现在仍可先打开系统设置。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
         if (permissions.canRequest) {
-            TextButton(onClick = onRequest, modifier = Modifier.testTag("recording-permission-request")) {
-                Text("允许麦克风和使用通知")
+            TextButton(
+                onClick = onRequest,
+                enabled = requestEnabled,
+                modifier = Modifier.testTag("recording-permission-request"),
+            ) {
+                Text(permissions.requestActionLabel ?: "允许录音权限")
             }
         }
         if (!permissions.microphoneGranted) {

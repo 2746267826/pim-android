@@ -37,6 +37,9 @@ class NotesViewModel @Inject constructor(
     val message = mutableMessage.asStateFlow()
     private val mutableBusy = MutableStateFlow(false)
     val busy = mutableBusy.asStateFlow()
+    private val libraryLaunches = NoteLibraryLaunchGate {
+        if (busy.value) null else notes.create()
+    }
     private val mutableCompletion = MutableStateFlow<NoteCompletion?>(null)
     val completion = mutableCompletion.asStateFlow()
     private val mutableArtifactEntry = MutableStateFlow<NoteArtifactEntry?>(null)
@@ -109,11 +112,9 @@ class NotesViewModel @Inject constructor(
         return id
     }
 
-    @Synchronized
-    fun createForLibraryLaunch(): String? {
-        if (busy.value) return null
-        return notes.create()
-    }
+    fun createForLibraryLaunch(): String? = libraryLaunches.launch()
+
+    fun finishLibraryLaunch() = libraryLaunches.finish()
 
     fun openLegacyQuickNoteMigration() { viewModelScope.launch { legacyQuickNoteMigration.open() } }
     fun refreshLegacyQuickNoteMigration() {

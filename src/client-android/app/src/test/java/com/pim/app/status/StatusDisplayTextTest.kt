@@ -25,6 +25,11 @@ class StatusDisplayTextTest {
     }
 
     @Test
+    fun apiReasonInsecureHttpReturnsHttpsRequirement() {
+        assertEquals("远程服务器必须使用 HTTPS", StatusDisplayText.apiReason("insecure-http"))
+    }
+
+    @Test
     fun apiReasonUnknownDoesNotEchoRawCode() {
         assertEquals("未知状态", StatusDisplayText.apiReason("some-unknown-code"))
     }

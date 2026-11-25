@@ -69,7 +69,7 @@ class ScheduleWindowRepositoryTest {
             context,
             FakeAuthSessionStore()
         )
-        serverSettings.setBaseUrl("http://test-server:5858/api/v1/")
+        serverSettings.setBaseUrl("https://test-server:5858/api/v1/")
 
         repo = ScheduleWindowRepository(
             apiService = api,
@@ -290,10 +290,10 @@ class ScheduleWindowRepositoryTest {
     @Test
     fun `server identity switch clears old windows`() = runTest {
         api.events = listOf(event(id = "server-a"))
-        serverSettings.setBaseUrl("http://server-a:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-a:5858/api/v1/")
         repo.refreshIfStale(force = true, nowMillis = 1_000L)
 
-        serverSettings.setBaseUrl("http://server-b:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-b:5858/api/v1/")
         api.events = listOf(event(id = "server-b"))
         val result = repo.refreshIfStale(force = true, nowMillis = 2_000L)
 
@@ -304,14 +304,14 @@ class ScheduleWindowRepositoryTest {
     @Test
     fun `server identity switch clears old windows before refresh`() = runTest {
         api.events = listOf(event(id = "server-a"))
-        serverSettings.setBaseUrl("http://server-a:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-a:5858/api/v1/")
         repo.refreshIfStale(force = true, nowMillis = 1_000L)
 
-        serverSettings.setBaseUrl("http://server-b:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-b:5858/api/v1/")
         api.failNext = IOException("no network for server-b")
         val result = repo.refreshIfStale(force = true, nowMillis = 2_000L)
 
-        assertEquals("server-b identity", serverIdentity("http://server-b:5858/api/v1/"), result.serverIdentity)
+        assertEquals("server-b identity", serverIdentity("https://server-b:5858/api/v1/"), result.serverIdentity)
         assertTrue("old server-a windows must not leak", result.windows.isEmpty())
         assertEquals(ScheduleCacheFreshness.Missing, result.freshness)
     }
@@ -319,14 +319,14 @@ class ScheduleWindowRepositoryTest {
     @Test
     fun `current snapshot guard clears old windows synchronously after server switch`() = runTest {
         api.events = listOf(event(id = "server-a"))
-        serverSettings.setBaseUrl("http://server-a:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-a:5858/api/v1/")
         repo.refreshIfStale(force = true, nowMillis = 1_000L)
 
-        serverSettings.setBaseUrl("http://server-b:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-b:5858/api/v1/")
 
         val guarded = repo.snapshotForCurrentServer()
 
-        assertEquals("server-b identity", serverIdentity("http://server-b:5858/api/v1/"), guarded.serverIdentity)
+        assertEquals("server-b identity", serverIdentity("https://server-b:5858/api/v1/"), guarded.serverIdentity)
         assertTrue("guarded snapshot must not expose old server windows", guarded.windows.isEmpty())
         assertEquals(ScheduleCacheFreshness.Missing, guarded.freshness)
         assertTrue("repository snapshot must also clear old windows", repo.snapshot.value.windows.isEmpty())
@@ -409,7 +409,7 @@ class ScheduleWindowRepositoryTest {
 
     @Test
     fun `future lastSuccessAtMillis does not return Fresh`() = runTest {
-        val identity = serverIdentity("http://test-server:5858/api/v1/")
+        val identity = serverIdentity("https://test-server:5858/api/v1/")
         cacheStore.cacheFile(identity).writeText(
             """{"windows":[],"rangeStartMillis":0,"rangeEndMillis":0,"lastAttemptAtMillis":2000,"lastSuccessAtMillis":2000}"""
         )
@@ -421,7 +421,7 @@ class ScheduleWindowRepositoryTest {
 
     @Test
     fun `future lastAttemptAtMillis does not throttle`() = runTest {
-        val identity = serverIdentity("http://test-server:5858/api/v1/")
+        val identity = serverIdentity("https://test-server:5858/api/v1/")
         cacheStore.cacheFile(identity).writeText(
             """{"windows":[],"rangeStartMillis":0,"rangeEndMillis":0,"lastAttemptAtMillis":2000}"""
         )
@@ -433,7 +433,7 @@ class ScheduleWindowRepositoryTest {
 
     @Test
     fun `failed force refresh prevents next non-force Fresh`() = runTest {
-        val identity = serverIdentity("http://test-server:5858/api/v1/")
+        val identity = serverIdentity("https://test-server:5858/api/v1/")
         cacheStore.write(identity, ScheduleCacheDocument(
             windows = listOf(ScheduleCacheWindow("old", "old", "", 100L, 200L)),
             rangeStartMillis = 0L, rangeEndMillis = 1000L,
@@ -479,14 +479,14 @@ class ScheduleWindowRepositoryTest {
     @Test
     fun `server identity switch resets all freshness fields`() = runTest {
         api.events = listOf(event(id = "a"))
-        serverSettings.setBaseUrl("http://server-a:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-a:5858/api/v1/")
         repo.refreshIfStale(force = true, nowMillis = 1_000L)
 
-        serverSettings.setBaseUrl("http://server-b:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-b:5858/api/v1/")
         api.failNext = IOException("no B")
         val result = repo.refreshIfStale(force = true, nowMillis = 2_000L)
 
-        assertEquals(serverIdentity("http://server-b:5858/api/v1/"), result.serverIdentity)
+        assertEquals(serverIdentity("https://server-b:5858/api/v1/"), result.serverIdentity)
         assertTrue("windows must be empty for new identity", result.windows.isEmpty())
         assertEquals(ScheduleCacheFreshness.Missing, result.freshness)
         assertNull("lastSuccessAtMillis must be null", result.lastSuccessAtMillis)
@@ -495,7 +495,7 @@ class ScheduleWindowRepositoryTest {
 
     @Test
     fun `non-force corrupt cache with API success refreshes and repairs file`() = runTest {
-        val identity = serverIdentity("http://test-server:5858/api/v1/")
+        val identity = serverIdentity("https://test-server:5858/api/v1/")
         cacheStore.cacheFile(identity).writeText("{not-json")
         assertEquals(ScheduleCacheStore.CacheReadResult.Corrupt, cacheStore.readOutcome(identity))
 
@@ -511,7 +511,7 @@ class ScheduleWindowRepositoryTest {
 
     @Test
     fun `non-force corrupt cache with API IOException exposes Cache Missing`() = runTest {
-        val identity = serverIdentity("http://test-server:5858/api/v1/")
+        val identity = serverIdentity("https://test-server:5858/api/v1/")
         cacheStore.cacheFile(identity).writeText("{not-json")
         assertEquals(ScheduleCacheStore.CacheReadResult.Corrupt, cacheStore.readOutcome(identity))
 
@@ -527,7 +527,7 @@ class ScheduleWindowRepositoryTest {
 
     @Test
     fun `failed error metadata write keeps memory Network over older disk Fresh`() = runTest {
-        val identity = serverIdentity("http://test-server:5858/api/v1/")
+        val identity = serverIdentity("https://test-server:5858/api/v1/")
         val hybridDir = File(cacheDir, "hybrid")
         hybridDir.mkdirs()
         val hybridStore = ScheduleCacheStore(hybridDir, json)
@@ -648,13 +648,13 @@ class ScheduleWindowRepositoryTest {
         val scripted = ScriptedApiService()
         val scriptedRepo = ScheduleWindowRepository(scripted, cacheStore, serverSettings)
 
-        serverSettings.setBaseUrl("http://server-a:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-a:5858/api/v1/")
         val deferredA = async { scriptedRepo.refreshIfStale(force = true, nowMillis = 1_000L) }
 
         withTimeout(5_000) { scripted.startedA.await() }
         assertEquals(1, scripted.callCount)
 
-        serverSettings.setBaseUrl("http://server-b:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-b:5858/api/v1/")
         val deferredB = async { scriptedRepo.refreshIfStale(force = true, nowMillis = 2_000L) }
 
         withTimeout(5_000) { scripted.startedB.await() }
@@ -663,23 +663,23 @@ class ScheduleWindowRepositoryTest {
         scripted.releaseB.complete(Unit)
         val resultB = withTimeout(5_000) { deferredB.await() }
         assertEquals("B", resultB.windows.single().id)
-        assertEquals(serverIdentity("http://server-b:5858/api/v1/"), scriptedRepo.snapshot.value.serverIdentity)
+        assertEquals(serverIdentity("https://server-b:5858/api/v1/"), scriptedRepo.snapshot.value.serverIdentity)
         assertEquals("B", scriptedRepo.snapshot.value.windows.single().id)
 
         scripted.releaseA.complete(Unit)
         val resultA = withTimeout(5_000) { deferredA.await() }
         assertEquals("A", resultA.windows.single().id)
 
-        assertEquals(serverIdentity("http://server-b:5858/api/v1/"), scriptedRepo.snapshot.value.serverIdentity)
+        assertEquals(serverIdentity("https://server-b:5858/api/v1/"), scriptedRepo.snapshot.value.serverIdentity)
         assertEquals("B", scriptedRepo.snapshot.value.windows.single().id)
     }
 
     @Test
     fun `snapshotForCurrentServer must not overwrite concurrent refresh result`() = runTest(UnconfinedTestDispatcher()) {
-        val identityA = serverIdentity("http://server-a:5858/api/v1/")
-        val identityB = serverIdentity("http://test-server:5858/api/v1/")
+        val identityA = serverIdentity("https://server-a:5858/api/v1/")
+        val identityB = serverIdentity("https://test-server:5858/api/v1/")
 
-        serverSettings.setBaseUrl("http://server-a:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-a:5858/api/v1/")
         cacheStore.write(
             identityA,
             ScheduleCacheDocument(
@@ -693,7 +693,7 @@ class ScheduleWindowRepositoryTest {
         repo.refreshIfStale(force = true, nowMillis = 100L)
         assertEquals(listOf("a-win"), repo.snapshot.value.windows.map { it.id })
 
-        serverSettings.setBaseUrl("http://test-server:5858/api/v1/")
+        serverSettings.setBaseUrl("https://test-server:5858/api/v1/")
 
         val snapshotField = ScheduleWindowRepository::class.java.getDeclaredField("_snapshot")
         snapshotField.isAccessible = true

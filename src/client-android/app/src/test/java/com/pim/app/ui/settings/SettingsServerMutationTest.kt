@@ -196,6 +196,19 @@ class SettingsServerMutationTest {
     }
 
     @Test
+    fun remoteCleartextAddressIsRejectedBeforeSave() {
+        val fixture = fixture()
+        fixture.viewModel.updateApiAddress("http://203.0.113.8:5858/api/v1/")
+
+        assertFalse(fixture.viewModel.saveApiAddress())
+
+        val state = fixture.viewModel.state.value
+        assertEquals(SERVER_A_URL, fixture.serverSettings.getBaseUrl())
+        assertEquals("insecure-http", state.apiError)
+        assertEquals("API 地址无效，无法保存。", state.apiStatus)
+    }
+
+    @Test
     fun saveApiAddressToSameOriginDoesNotClearWebViewData() {
         val fixture = fixture()
         fixture.viewModel.updateApiAddress(SERVER_A_URL)

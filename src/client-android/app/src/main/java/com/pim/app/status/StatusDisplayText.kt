@@ -8,6 +8,7 @@ object StatusDisplayText {
         null, "" -> "暂无"
         "missing" -> "未配置"
         "invalid-api-url" -> "地址格式不正确"
+        "insecure-http" -> "远程服务器必须使用 HTTPS"
         else -> "未知状态"
     }
 

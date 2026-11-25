@@ -4,6 +4,8 @@
     <base-config cleartextTrafficPermitted="false">
         <trust-anchors>
             <certificates src="system" />
+            <!-- Q04: allow a user-installed private CA, still validating chain, hostname and expiry. -->
+            <certificates src="user" />
         </trust-anchors>
     </base-config>
     <!-- Allow cleartext only for loopback/local dev. Release builds should prefer https. -->
@@ -11,5 +13,6 @@
         <domain includeSubdomains="true">127.0.0.1</domain>
         <domain includeSubdomains="true">10.0.2.2</domain>
         <domain includeSubdomains="true">localhost</domain>
+        <domain includeSubdomains="false">::1</domain>
     </domain-config>
 </network-security-config>

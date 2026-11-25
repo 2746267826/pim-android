@@ -71,6 +71,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import com.pim.app.settings.TrackingPresetCatalog
+import com.pim.app.status.StatusDisplayText
 import com.pim.app.status.PolicyTransitionDisplay
 import com.pim.app.status.StatusPermissionNavigator
 import com.pim.app.ui.permissions.DND_ACCESS_ISSUE_CODE
@@ -252,8 +253,14 @@ fun SettingsScreen(
                     color = MaterialTheme.colorScheme.tertiary
                 )
             }
+            if (state.apiWarnings.contains("cleartext-http")) {
+                Text(
+                    text = "当前使用本机或模拟器开发地址的 HTTP 连接；正式服务器必须使用 HTTPS。",
+                    color = MaterialTheme.colorScheme.tertiary
+                )
+            }
             state.apiError?.let { reason ->
-                Text("地址问题：$reason", color = MaterialTheme.colorScheme.error)
+                Text("地址问题：${StatusDisplayText.apiReason(reason)}", color = MaterialTheme.colorScheme.error)
             }
             state.apiStatus?.let { Text(it, color = MaterialTheme.colorScheme.primary) }
             Row(

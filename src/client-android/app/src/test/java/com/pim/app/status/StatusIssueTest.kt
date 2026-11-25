@@ -21,6 +21,14 @@ class StatusIssueTest {
     }
 
     @Test
+    fun insecureHttpIssueExplainsHttpsRequirement() {
+        val issue = StatusIssue.apiUrlInvalid("insecure-http")
+
+        assertEquals("API 地址无效", issue.title)
+        assertEquals("当前 API 地址使用明文 HTTP，远程服务器必须使用 HTTPS。", issue.message)
+    }
+
+    @Test
     fun snapshotPlannerAddsActionableBlockingIssues() {
         val snapshot = StatusCenterSnapshot(
             permissions = PermissionStatusSnapshot(

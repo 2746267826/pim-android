@@ -1168,7 +1168,7 @@ class ForegroundLocationServiceTest {
         idleUntil { !isScheduleRefreshJobActive(service) }
 
         // Switch server; next refresh must clear old windows before applying new ones.
-        fixture.serverSettings.setBaseUrl("http://other-server:5858/api/v1/")
+        fixture.serverSettings.setBaseUrl("https://other-server:5858/api/v1/")
         val started = CompletableDeferred<Unit>()
         val release = CompletableDeferred<Unit>()
         fixture.api.started = started
@@ -3417,7 +3417,7 @@ class ForegroundLocationServiceTest {
             override fun clear() = true
         }
         val serverSettings = ServerSettingsStore(context, authStore).also {
-            it.setBaseUrl("http://test-server:5858/api/v1/")
+            it.setBaseUrl("https://test-server:5858/api/v1/")
         }
         val api = GatedApiService()
         val repository = ScheduleWindowRepository(api, cacheStore, serverSettings)

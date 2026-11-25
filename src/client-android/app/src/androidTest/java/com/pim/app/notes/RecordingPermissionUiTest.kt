@@ -1,7 +1,6 @@
 package com.pim.app.notes
 
 import androidx.compose.foundation.layout.Box
-import androidx.compose.ui.test.assertDoesNotExist
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createComposeRule

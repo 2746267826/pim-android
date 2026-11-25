@@ -55,7 +55,11 @@ internal fun suggestionEventWire(value: String, timeZoneId: String?): String? {
     if (!eventInputPattern.matches(value)) {
         throw IllegalArgumentException("时间格式必须是 YYYY-MM-DDTHH:mm")
     }
-    val local = LocalDateTime.parse(value, eventInputFormatter)
+    val local = try {
+        LocalDateTime.parse(value, eventInputFormatter)
+    } catch (_: DateTimeException) {
+        throw IllegalArgumentException("时间不存在或格式无效，请使用 YYYY-MM-DDTHH:mm")
+    }
     val offsets = ZoneId.of(zone).rules.getValidOffsets(local)
     if (offsets.isEmpty()) {
         throw IllegalArgumentException("该时间在所选时区不存在，请避开夏令时跳变")

@@ -57,7 +57,8 @@ class NoteTaskSuggestionEventTimeTest {
             suggestionEventWire("2026-02-30T10:00", "Asia/Shanghai")
         }.exceptionOrNull()
 
-        assertTrue(invalid is java.time.format.DateTimeParseException)
+        assertTrue(invalid is IllegalArgumentException)
+        assertTrue(invalid?.message.orEmpty().contains("时间不存在"))
     }
 
     @Test

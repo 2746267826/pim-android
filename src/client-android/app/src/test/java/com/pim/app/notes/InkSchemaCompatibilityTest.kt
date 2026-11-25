@@ -3,6 +3,7 @@ package com.pim.app.notes
 import kotlinx.serialization.decodeFromString
 import kotlinx.serialization.encodeToString
 import kotlinx.serialization.json.JsonArray
+import kotlinx.serialization.json.JsonElement
 import kotlinx.serialization.json.JsonObject
 import kotlinx.serialization.json.JsonPrimitive
 import kotlinx.serialization.json.buildJsonObject
@@ -37,6 +38,7 @@ class InkSchemaCompatibilityTest {
         assertEquals("keep", ink.strokes[0].extras.string("futureStroke"))
         assertEquals("keep", ink.strokes[0].points[0].extras.string("futurePoint"))
         assertEquals("keep", ink.strokes[0].styleExtras.string("futureStyle"))
+        assertEquals("keep", block.string("futureBlock"))
         assertEquals(JsonPrimitive(true), note.source.getValue("futureRoot").jsonObject.getValue("keep"))
 
         val written = withInk(block, ink)
@@ -69,6 +71,7 @@ class InkSchemaCompatibilityTest {
         assertEquals("keep", reopenedInk.strokes[0].styleExtras.string("futureStyle"))
         assertEquals("keep", reopenedInk.strokes[0].extras.string("futureStroke"))
         assertEquals("keep", reopenedInk.strokes[0].points[0].extras.string("futurePoint"))
+        assertEquals("keep", reopened.blocks.single().string("futureBlock"))
 
         val material = NoteMaterialInput(newNoteId(), 1L, reopened.source, emptyList())
         assertEquals(
@@ -104,6 +107,137 @@ class InkSchemaCompatibilityTest {
         assertEquals(JsonPrimitive(true), writtenInk.extras.getValue("futureInk").jsonObject.getValue("keep"))
         assertEquals("keep", writtenInk.strokes.single().extras.string("futureStroke"))
         assertEquals("keep", writtenInk.strokes.single().points[0].extras.string("futurePoint"))
+    }
+
+    @Test fun missingStrokeColorFallsBackToTheFrozenLegacyColor() {
+        assertEquals("#263b85", INK_LEGACY_COLOR)
+        val block = buildJsonObject {
+            put("id", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+            put("kind", "ink")
+            put("ink", buildJsonObject {
+                put("width", 320)
+                put("height", 240)
+                put("strokes", JsonArray(listOf(buildJsonObject {
+                    put("points", JsonArray(listOf(buildJsonObject {
+                        put("x", 20)
+                        put("y", 30)
+                    })))
+                })))
+            })
+        }
+
+        val ink = inkOf(block)
+        assertEquals(INK_LEGACY_COLOR, ink.strokes.single().color)
+        assertEquals(INK_DEFAULT_WIDTH, ink.strokes.single().width)
+
+        val written = withInk(block, ink).getValue("ink").jsonObject
+        val writtenStroke = written.getValue("strokes").jsonArray.single().jsonObject
+        assertEquals(INK_LEGACY_COLOR, writtenStroke.string("color"))
+        assertEquals(INK_DEFAULT_WIDTH, writtenStroke.getValue("width").jsonPrimitive.content.toFloat())
+        assertEquals(
+            INK_LEGACY_COLOR,
+            written.getValue("strokeStyles").jsonArray.single().jsonObject.string("color"),
+        )
+    }
+
+    @Test fun inlineOnlyColorAndWidthSurviveReencoding() {
+        val block = buildJsonObject {
+            put("id", "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb")
+            put("kind", "ink")
+            put("ink", buildJsonObject {
+                put("width", 320)
+                put("height", 240)
+                put("strokes", JsonArray(listOf(buildJsonObject {
+                    put("color", "#245fba")
+                    put("width", 6)
+                    put("points", JsonArray(listOf(buildJsonObject {
+                        put("x", 20)
+                        put("y", 30)
+                    })))
+                })))
+            })
+        }
+
+        val ink = inkOf(block)
+        assertEquals("#245fba", ink.strokes.single().color)
+        assertEquals(6f, ink.strokes.single().width)
+
+        val written = withInk(block, ink).getValue("ink").jsonObject
+        val writtenStroke = written.getValue("strokes").jsonArray.single().jsonObject
+        assertEquals("#245fba", writtenStroke.string("color"))
+        assertEquals(6f, writtenStroke.getValue("width").jsonPrimitive.content.toFloat())
+        assertEquals(
+            "#245fba",
+            written.getValue("strokeStyles").jsonArray.single().jsonObject.string("color"),
+        )
+    }
+
+    @Test fun emptyD04IdentityAndStyleArraysSurviveAnEdit() {
+        val note = NoteDocument.decode(
+            """
+            {
+              "schemaVersion": 1,
+              "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+              "title": "empty ink",
+              "revision": 0,
+              "createdAtMillis": 1,
+              "blocks": [{
+                "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+                "kind": "ink",
+                "ink": {
+                  "width": 320,
+                  "height": 240,
+                  "strokeIds": [],
+                  "strokeStyles": [],
+                  "strokes": []
+                }
+              }]
+            }
+            """.trimIndent(),
+        )
+        val encoded = withInk(note.blocks.single(), inkOf(note.blocks.single()))
+            .getValue("ink").jsonObject
+
+        assertEquals(0, encoded.getValue("strokeIds").jsonArray.size)
+        assertEquals(0, encoded.getValue("strokeStyles").jsonArray.size)
+        assertEquals(0, encoded.getValue("strokes").jsonArray.size)
+    }
+
+    @Test fun erasingOneWebStrokeKeepsTheOtherIdentityStyleAndExtensions() {
+        val note = NoteDocument.decode(resource("notes/ink-web-d04-v1.json"))
+        val erased = inkOf(note.blocks.single()).erasedBy(
+            listOf(InkPoint(150f, 90f), InkPoint(150f, 110f)),
+            InkEraserMode.WholeStroke,
+        )
+
+        assertEquals(1, erased.strokes.size)
+        assertEquals("dddddddd-dddd-4ddd-8ddd-dddddddddddd", erased.strokes.single().id)
+        assertEquals(INK_COLOR_BLUE, erased.strokes.single().color)
+        assertEquals(INK_WIDTH_COARSE, erased.strokes.single().width)
+        assertEquals(JsonPrimitive(true), erased.extras.getValue("webInkExtension").jsonObject.getValue("keep"))
+    }
+
+    @Test fun totalPointCountMatchesTheWebEditorLimit() {
+        assertEquals(50_000, INK_MAX_POINTS)
+        val point = buildJsonObject { put("x", 1); put("y", 1) }
+        fun inkWithPointCount(count: Int) = buildJsonObject {
+            put("width", 320)
+            put("height", 240)
+            put("strokes", JsonArray(listOf(buildJsonObject {
+                put("points", JsonArray(List(count) { point }))
+            })))
+        }
+
+        val accepted = inkOf(buildJsonObject { put("ink", inkWithPointCount(INK_MAX_POINTS)) })
+        assertEquals(INK_MAX_POINTS, accepted.strokes.single().points.size)
+        assertThrows(IllegalArgumentException::class.java) {
+            inkOf(buildJsonObject { put("ink", inkWithPointCount(INK_MAX_POINTS + 1)) })
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            InkData(
+                strokes = listOf(InkStroke(List(INK_MAX_POINTS + 1) { InkPoint(1f, 1f) })),
+            ).validate()
+        }
     }
 
     @Test fun knownFieldsFailClosedInsteadOfBeingSilentlyIgnoredOrRewritten() {
@@ -153,6 +287,50 @@ class InkSchemaCompatibilityTest {
                     JsonObject(strokes[0].jsonObject + ("color" to JsonPrimitive("<svg>"))),
                 ))))
             })
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NoteDocument.decode(replaceInk { ink ->
+                JsonObject(ink + mapOf(
+                    "strokeIds" to JsonArray(listOf(
+                        JsonPrimitive("11111111-1111-4111-8111-111111111111"),
+                        JsonPrimitive("11111111-1111-4111-8111-111111111111"),
+                    )),
+                    "strokes" to JsonArray(listOf(strokes[0], strokes[0])),
+                ))
+            })
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NoteDocument.decode(replaceInk { ink ->
+                JsonObject(ink + ("strokes" to JsonArray(listOf(
+                    JsonObject(strokes[0].jsonObject + ("points" to JsonArray(emptyList<JsonElement>()))),
+                ))))
+            })
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NoteDocument.decode(replaceInk { ink ->
+                val points = strokes[0].jsonObject.getValue("points").jsonArray
+                JsonObject(ink + ("strokes" to JsonArray(listOf(
+                    JsonObject(strokes[0].jsonObject + ("points" to JsonArray(listOf(
+                        JsonObject(points[0].jsonObject + ("x" to JsonPrimitive(321))),
+                    )))),
+                ))))
+            })
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NoteDocument.decode(replaceInk { ink ->
+                val points = strokes[0].jsonObject.getValue("points").jsonArray
+                JsonObject(ink + ("strokes" to JsonArray(listOf(
+                    JsonObject(strokes[0].jsonObject + ("points" to JsonArray(listOf(
+                        JsonObject(points[0].jsonObject + ("pressure" to JsonPrimitive(1.1))),
+                    )))),
+                ))))
+            })
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NoteDocument.decode(replaceInk { ink -> JsonObject(ink + ("width" to JsonPrimitive(79))) })
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            NoteDocument.decode(replaceInk { ink -> JsonObject(ink + ("height" to JsonPrimitive(4097))) })
         }
         assertEquals(original, note.source.toString())
     }

@@ -353,6 +353,19 @@ class InkToolsTest {
         assertNotEquals(NoteFileStore.inkPath(blue), NoteFileStore.inkPath(red))
     }
 
+    @Test fun legacyDefaultStrokeUsesTheFrozenInkColorOnWhitePaper() {
+        assertEquals("#263b85", INK_LEGACY_COLOR)
+        val bitmap = InkRendering.bitmap(InkData(strokes = listOf(
+            InkStroke(listOf(InkPoint(30f, 40f))),
+        )))
+        try {
+            assertEquals(android.graphics.Color.parseColor(INK_LEGACY_COLOR), bitmap.getPixel(30, 40))
+            assertEquals(android.graphics.Color.WHITE, bitmap.getPixel(1, 1))
+        } finally {
+            bitmap.recycle()
+        }
+    }
+
     @Test fun savedStylesIdsAndPreviewColorsSurviveFileStoreReopen() {
         val root = temp.newFolder("ink-style-restore")
         val store = NoteFileStore(root)

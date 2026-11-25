@@ -37,7 +37,7 @@ contract. The cross-client reference is Web D04 PR #594, head
 | 字段 / Field | 读取 / Read | 写入 / Write | 约束 / Constraint |
 |---|---|---|---|
 | `width`, `height` | 必填 / required | 总是 / always | 有限数值，宽 `80..2048`，高 `80..4096` |
-| `strokes` | 必填数组 / required array | 总是 / always | 最多 10,000 条；每条必须有非空 `points` |
+| `strokes` | 必填数组 / required array | 总是 / always | 最多 10,000 条；每条必须有非空 `points`；所有笔画点数合计 ≤ 50,000（与 Web 编辑上限一致） |
 | `strokeIds` | 可选 / optional | 总是（含空数组）/ always, including `[]` | 与 `strokes` 等长、UUID 字符串、唯一；读取时大小写规范化 |
 | `strokeStyles` | 可选 / optional | 总是（含空数组）/ always, including `[]` | 与 `strokes` 等长；每项含 `color` 与 `width` |
 | `strokes[].color` | 可选 / optional | 总是 / always | `#RRGGBB`；缺少时默认 `#263b85` |
@@ -61,8 +61,8 @@ present. Android writes `strokeIds`, `strokeStyles`, and inline `strokes[].color
 - **未知字段 / unknown fields**：不全局开启 `ignoreUnknownKeys`。Android 使用针对 ink 的解析器，
   根、笔、点及样式数组中的未知字段原样保留并回写；这不是“静默丢弃未知字段”。
 - **拒绝而非重写 / fail closed**：已知字段类型错误、数组数量不一致、重复/非法身份、非法颜色、
-  宽度/坐标/压力越界、内联样式与 `strokeStyles` 不一致时，`NoteDocument.decode` 拒绝该快照，
-  不静默补默认值或覆盖原文件。
+  宽度/坐标/压力越界、总点数超过 50,000、内联样式与 `strokeStyles` 不一致时，
+  `NoteDocument.decode` 拒绝该快照，不静默补默认值或覆盖原文件。
 - **版本 / version**：D04 字段是 schema-v1 的可选增量字段；没有新增 `schemaVersion` 2。
   删除或改变这些字段的语义需要 Android/Web 同步评审。
 

@@ -11,6 +11,7 @@
     {
       "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
       "kind": "ink",
+      "futureBlock": "keep",
       "ink": {
         "width": 320.0,
         "height": 240.0,

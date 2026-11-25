@@ -19,6 +19,7 @@ internal const val INK_WIDTH_MEDIUM = 3.4f
 internal const val INK_WIDTH_COARSE = 6f
 internal const val INK_DEFAULT_WIDTH = 2.5f
 internal const val INK_ERASER_RADIUS = 12f
+internal const val INK_MAX_POINTS = 50_000
 
 internal val InkColorOptions = listOf(INK_COLOR_INK, INK_COLOR_RED, INK_COLOR_BLUE, INK_COLOR_GREEN)
 internal val InkWidthOptions = listOf(INK_WIDTH_THIN, INK_WIDTH_MEDIUM, INK_WIDTH_COARSE)
@@ -124,6 +125,7 @@ data class InkData(
     fun validate() {
         require(width.isFinite() && height.isFinite() && width in 80f..2048f && height in 80f..4096f)
         require(strokes.size <= MAX_INK_STROKES)
+        require(strokes.sumOf { it.points.size.toLong() } <= INK_MAX_POINTS.toLong()) { "笔迹点数超过上限" }
         strokes.forEach { stroke ->
             require(stroke.width.isFinite() && stroke.width in 0.5f..24f && stroke.points.isNotEmpty())
             require(stroke.color.matches(InkColorPattern)) { "Unsupported ink color" }
@@ -226,6 +228,7 @@ private fun parseInk(ink: JsonObject): InkData {
     require(width in 80f..2048f && height in 80f..4096f) { "画布尺寸超出 schema-v1 范围" }
     val rawStrokes = ink["strokes"] as? JsonArray ?: throw IllegalArgumentException("笔画列表无效")
     require(rawStrokes.size <= 10_000) { "笔画数量无效" }
+    var pointCount = 0
 
     val rawIds = ink["strokeIds"]
     val ids = if (rawIds == null) null else {
@@ -258,6 +261,8 @@ private fun parseInk(ink: JsonObject): InkData {
         val raw = element as? JsonObject ?: throw IllegalArgumentException("笔画必须包含坐标点对象")
         val rawPoints = raw["points"] as? JsonArray ?: throw IllegalArgumentException("笔画必须包含坐标点")
         require(rawPoints.isNotEmpty()) { "笔画必须包含坐标点" }
+        pointCount += rawPoints.size
+        require(pointCount <= INK_MAX_POINTS) { "笔迹点数超过上限" }
         val inlineWidth = raw["width"]?.let {
             val value = it.asFiniteNumber("笔画宽度")
             require(value in 0.5f..24f) { "笔画宽度超出 schema-v1 范围" }

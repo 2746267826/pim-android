@@ -608,7 +608,35 @@ class NoteTaskSuggestionRepository(
         }
 
         val zone = draft.timeZoneId.trim()
-        require(zone.isNotEmpty()) { "请先填写日程的 IANA 时区" }
+        if (zone.isEmpty()) {
+            val remoteStart = suggestionEventAbsolute(item.remote.start)
+            val remoteEnd = suggestionEventAbsolute(item.remote.end)
+            require(item.remote.start == null || remoteStart != null) {
+                "服务端日程开始时间无效；请先补全 IANA 时区和起止时间"
+            }
+            require(item.remote.end == null || remoteEnd != null) {
+                "服务端日程结束时间无效；请先补全 IANA 时区和起止时间"
+            }
+            require(draft.start == suggestionEventInput(item.remote.start, null) &&
+                draft.end == suggestionEventInput(item.remote.end, null)) {
+                "请先填写日程的 IANA 时区，才能保存按当地时间输入的开始和结束时间"
+            }
+            require((remoteStart == null) == (remoteEnd == null)) {
+                "服务端日程起止时间不完整；请先补全 IANA 时区和起止时间"
+            }
+            return UpdateNoteTaskSuggestionRequest(
+                calendarId = item.remote.calendarId,
+                description = draft.description.ifBlank { null },
+                due = null,
+                end = remoteEnd,
+                expectedRevision = draft.expectedRevision,
+                priority = draft.priority,
+                start = remoteStart,
+                taskBookId = null,
+                timeZoneId = null,
+                title = title,
+            )
+        }
         require(isIanaTimeZone(zone)) { "日程时区必须是有效的 IANA 时区" }
         require(draft.start.isNotBlank() && draft.end.isNotBlank()) {
             "日程必须同时填写开始和结束时间"

@@ -412,6 +412,59 @@ class NoteTaskSuggestionRepositoryTest {
     }
 
     @Test
+    fun legacyEventTitleEditWithoutZonePreservesAbsoluteTimesAndNullZone() = runBlocking {
+        transport.item = eventSuggestion(timeZoneId = null)
+        val repository = repository()
+        repository.open(source)
+        val item = repository.state.value.items.single()
+        val scope = requireNotNull(repository.state.value.actionScope)
+
+        repository.stageDraft(
+            scope,
+            SUGGESTION_ID,
+            NoteTaskSuggestionEdit(
+                title = "只改无时区旧日程标题",
+                description = item.description,
+                priority = item.priority,
+            ),
+        )
+        repository.saveDraft(scope, SUGGESTION_ID)
+
+        val request = requireNotNull(transport.lastUpdate)
+        assertEquals("2026-11-21T11:00:00Z", request.start)
+        assertEquals("2026-11-21T12:00:00Z", request.end)
+        assertEquals(null, request.timeZoneId)
+        assertEquals(CALENDAR_ID, request.calendarId)
+        assertEquals(null, request.due)
+        assertEquals(null, request.taskBookId)
+    }
+
+    @Test
+    fun legacyEventTitleEditWithoutTimesOrZoneKeepsThemEmpty() = runBlocking {
+        transport.item = eventSuggestion(start = null, end = null, timeZoneId = null)
+        val repository = repository()
+        repository.open(source)
+        val item = repository.state.value.items.single()
+        val scope = requireNotNull(repository.state.value.actionScope)
+
+        repository.stageDraft(
+            scope,
+            SUGGESTION_ID,
+            NoteTaskSuggestionEdit(
+                title = "只改待补时间旧日程标题",
+                description = item.description,
+                priority = item.priority,
+            ),
+        )
+        repository.saveDraft(scope, SUGGESTION_ID)
+
+        val request = requireNotNull(transport.lastUpdate)
+        assertEquals(null, request.start)
+        assertEquals(null, request.end)
+        assertEquals(null, request.timeZoneId)
+    }
+
+    @Test
     fun eventTitleEditPreservesServerSubMinutePrecision() = runBlocking {
         transport.item = eventSuggestion(
             start = "2026-11-21T11:00:30Z",

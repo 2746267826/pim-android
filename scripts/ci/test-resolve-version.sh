@@ -113,6 +113,7 @@ assert_eq version "26.10.1001" $WORKDIR/rv-baseline.env
 assert_eq version_code "101001" $WORKDIR/rv-baseline.env
 assert_last_segment_gt version "$HISTORICAL_VERSION_FLOOR" $WORKDIR/rv-baseline.env
 assert_gt version_code "$HISTORICAL_VERSION_CODE_FLOOR" $WORKDIR/rv-baseline.env
+assert_eq display_version "1.0.0" $WORKDIR/rv-master.env
 assert_eq release_tag "android-v26.10.1001" $WORKDIR/rv-baseline.env
 
 # ---- composite action 必须声明脚本输出的每一个键 ----
@@ -140,6 +141,31 @@ elif [[ -n "$missing" ]]; then
   fail=1
 else
   echo "OK   action-outputs-declared ($declared_keys keys)"
+fi
+
+# ---- ci.yml 的 resolve-version job 必须把脚本输出透出去 ----
+# 少了 job outputs，`needs.resolve-version.outputs.X` 就是空串（api 仓真踩过：
+# display_version 漏映射 → 前端静默回落成 0.0.0-local）。
+CI_YML="$ROOT/.github/workflows/ci.yml"
+missing_job=""
+job_keys=0
+while IFS= read -r key; do
+  [[ -z "$key" ]] && continue
+  job_keys=$((job_keys + 1))
+  if ! grep -qE "steps\.ver\.outputs\.${key}\b" "$CI_YML"; then
+    missing_job="$missing_job $key"
+  fi
+done < <(env GITHUB_REPOSITORY=2746267826/pim-android GITHUB_REF=refs/heads/master \
+             GITHUB_RUN_NUMBER=1 GITHUB_SHA=abcdef1 GITHUB_EVENT_NAME=push \
+             bash "$SCRIPT" --date 2026-10-12 --print-env | sed 's/=.*//')
+if [[ "$job_keys" -eq 0 ]]; then
+  echo "FAIL ci.yml-job-outputs: 脚本没有输出任何键，检查本身失效"
+  fail=1
+elif [[ -n "$missing_job" ]]; then
+  echo "FAIL ci.yml 的 resolve-version job 没透出:$missing_job"
+  fail=1
+else
+  echo "OK   ci.yml-job-outputs ($job_keys keys)"
 fi
 
 if [[ "$fail" -ne 0 ]]; then

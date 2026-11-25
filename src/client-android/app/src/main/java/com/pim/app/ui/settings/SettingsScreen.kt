@@ -1,5 +1,7 @@
 package com.pim.app.ui.settings
 
+import com.pim.app.BuildConfig
+
 import androidx.compose.foundation.ExperimentalFoundationApi
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.horizontalScroll
@@ -631,10 +633,10 @@ fun SettingsScreen(
             ) {
                 Text("关于 PIM")
                 Row(verticalAlignment = Alignment.CenterVertically) {
-                    Text("${state.appVersion} (${state.versionCode})")
+                    Text("${BuildConfig.DISPLAY_VERSION} (${state.appVersion})")
                     IconButton(onClick = {
                         val cm = context.getSystemService(Context.CLIPBOARD_SERVICE) as ClipboardManager
-                        cm.setPrimaryClip(ClipData.newPlainText("PIM version", "PIM ${state.appVersion} sha=${state.gitSha}"))
+                        cm.setPrimaryClip(ClipData.newPlainText("PIM version", "PIM ${BuildConfig.DISPLAY_VERSION} / ${state.appVersion} sha=${state.gitSha}"))
                     }) {
                         Icon(Icons.Filled.ContentCopy, contentDescription = "复制版本信息")
                     }

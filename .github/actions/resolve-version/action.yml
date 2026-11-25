@@ -13,8 +13,11 @@ inputs:
     default: ''
 outputs:
   version:
-    description: Display version
+    description: Machine (CalVer) version used for update checks
     value: ${{ steps.run.outputs.version }}
+  display_version:
+    description: Human-facing version from the repo-root VERSION file (x.y.z)
+    value: ${{ steps.run.outputs.display_version }}
   version_code:
     description: Integer version code
     value: ${{ steps.run.outputs.version_code }}

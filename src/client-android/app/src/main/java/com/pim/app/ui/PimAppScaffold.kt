@@ -1,5 +1,7 @@
 package com.pim.app.ui
 
+import com.pim.app.BuildConfig
+
 import android.Manifest
 import android.app.usage.UsageStatsManager
 import android.content.Context
@@ -835,9 +837,10 @@ class MobileStatusViewModel @Inject constructor(
     private fun appVersionDisplay(): String {
         return try {
             val info = packageInfo(context.packageManager, context.packageName)
-            "${info.versionName ?: "unknown"} (${versionCode(info)})"
+            // 显示版本（仓根 VERSION，v1.0.0 这种）在前，机器号在后便于对账排障。
+            "${BuildConfig.DISPLAY_VERSION} (${info.versionName ?: "unknown"})"
         } catch (_: Exception) {
-            "unknown"
+            BuildConfig.DISPLAY_VERSION
         }
     }
 

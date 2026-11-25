@@ -1,0 +1,75 @@
+{
+  "schemaVersion": 1,
+  "id": "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa",
+  "title": "D04 Web ink compatibility",
+  "revision": 1,
+  "createdAtMillis": 1735689600000,
+  "futureRoot": {
+    "keep": true
+  },
+  "blocks": [
+    {
+      "id": "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb",
+      "kind": "ink",
+      "futureBlock": "keep",
+      "ink": {
+        "width": 320.0,
+        "height": 240.0,
+        "strokeIds": [
+          "cccccccc-cccc-4ccc-8ccc-cccccccccccc",
+          "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
+        ],
+        "strokeStyles": [
+          {
+            "color": "#b8373c",
+            "width": 1.8,
+            "futureStyle": "keep"
+          },
+          {
+            "color": "#245fba",
+            "width": 6.0
+          }
+        ],
+        "strokes": [
+          {
+            "color": "#b8373c",
+            "width": 1.8,
+            "futureStroke": "keep",
+            "points": [
+              {
+                "x": 20.0,
+                "y": 100.0,
+                "pressure": 0.2,
+                "futurePoint": "keep"
+              },
+              {
+                "x": 300.0,
+                "y": 100.0,
+                "pressure": 0.9
+              }
+            ]
+          },
+          {
+            "color": "#245fba",
+            "width": 6.0,
+            "points": [
+              {
+                "x": 20.0,
+                "y": 200.0,
+                "pressure": 0.4
+              },
+              {
+                "x": 300.0,
+                "y": 200.0,
+                "pressure": 0.5
+              }
+            ]
+          }
+        ],
+        "webInkExtension": {
+          "keep": true
+        }
+      }
+    }
+  ]
+}

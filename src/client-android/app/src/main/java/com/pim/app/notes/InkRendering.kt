@@ -4,13 +4,11 @@ import android.graphics.Bitmap
 import android.graphics.Canvas
 import android.graphics.Paint
 import android.graphics.Path
-import androidx.compose.ui.graphics.toArgb
-import com.pim.app.ui.theme.PimLightColorScheme
 
 internal object InkRendering {
-    fun stroke(canvas: Canvas, stroke: InkStroke, color: Int) {
+    fun stroke(canvas: Canvas, stroke: InkStroke) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = color; style = Paint.Style.STROKE; strokeWidth = stroke.width
+            color = inkColorInt(stroke.color); style = Paint.Style.STROKE; strokeWidth = stroke.width
             strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
         }
         val points = stroke.points
@@ -28,8 +26,11 @@ internal object InkRendering {
         ink.validate()
         return Bitmap.createBitmap(kotlin.math.ceil(ink.width.toDouble()).toInt(), kotlin.math.ceil(ink.height.toDouble()).toInt(), Bitmap.Config.ARGB_8888).also {
             val canvas = Canvas(it)
-            canvas.drawColor(PimLightColorScheme.surface.toArgb())
-            ink.strokes.forEach { stroke -> stroke(canvas, stroke, PimLightColorScheme.primary.toArgb()) }
+            canvas.drawColor(android.graphics.Color.WHITE)
+            ink.strokes.forEach { stroke -> stroke(canvas, stroke) }
         }
     }
 }
+
+internal fun inkColorInt(color: String): Int =
+    android.graphics.Color.parseColor(normalizedInkColor(color))

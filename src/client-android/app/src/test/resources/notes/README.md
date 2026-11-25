@@ -10,3 +10,10 @@ The source is API PR #561, candidate `903595b160d015a11ecbfa1f187f76c0b1e69bcb`,
 Keep these bytes unchanged. The directory's `* -text` attribute prevents line-ending conversion from invalidating the manifest digests. Regenerate through the production-builder test and review all material hashes together when updating it.
 
 `CloudNoteWebContinuationGoldenTest` consumes the fixture through the production cloud discovery, download, validation, and installation path. Missing fixture resources fail the test. The test uses a local synthetic HTTP server and does not validate a physical device, paid provider, or production deployment.
+
+`ink-web-d04-v1.json` is a synthetic note in the frozen D04 ink shape emitted by Web PR #594
+(head `12ecc55c2b9e53cf15f1f7139df6d008c1d01af6`), including `strokeIds`,
+`strokeStyles`, inline per-stroke `color`/`width`, and unknown root/stroke/point/style fields.
+`ink-legacy-v1.json` is the pre-D04 shape with default color/width and no identity arrays.
+`InkSchemaCompatibilityTest` decodes, validates, and rewrites both through the Android production
+ink parser; it is a JVM regression, not a physical-device or cross-client sync test.

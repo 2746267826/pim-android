@@ -11,6 +11,8 @@ private val DarkPrimary = Color(0xFF93B7FF)
 private val LightText = Color(0xFF14243B)
 private val DarkText = Color(0xFFE8EEF8)
 
+internal fun pimColor(argb: Int): Color = Color(argb)
+
 internal val PimLightColorScheme = lightColorScheme(
     primary = LightPrimary,
     onPrimary = Paper,

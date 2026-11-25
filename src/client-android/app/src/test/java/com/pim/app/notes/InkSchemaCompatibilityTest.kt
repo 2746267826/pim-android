@@ -37,7 +37,7 @@ class InkSchemaCompatibilityTest {
         assertEquals("keep", ink.strokes[0].extras.string("futureStroke"))
         assertEquals("keep", ink.strokes[0].points[0].extras.string("futurePoint"))
         assertEquals("keep", ink.strokes[0].styleExtras.string("futureStyle"))
-        assertEquals("keep", note.source.getValue("futureRoot").jsonObject.string("keep"))
+        assertEquals(JsonPrimitive(true), note.source.getValue("futureRoot").jsonObject.getValue("keep"))
 
         val written = withInk(block, ink)
         val writtenInk = written.getValue("ink").jsonObject
@@ -49,6 +49,13 @@ class InkSchemaCompatibilityTest {
         assertEquals(INK_COLOR_RED, writtenInk.getValue("strokes").jsonArray[0].jsonObject.string("color"))
         assertEquals(INK_WIDTH_COARSE, writtenInk.getValue("strokeStyles").jsonArray[1].jsonObject
             .getValue("width").jsonPrimitive.content.toFloat())
+        val writtenStrokes = writtenInk.getValue("strokes").jsonArray
+        writtenInk.getValue("strokeStyles").jsonArray.forEachIndexed { index, element ->
+            val style = element.jsonObject
+            val stroke = writtenStrokes[index].jsonObject
+            assertEquals(style.string("color"), stroke.string("color"))
+            assertEquals(style.getValue("width"), stroke.getValue("width"))
+        }
 
         val reopened = NoteDocument.decode(note.withBlocks(listOf(written)).source.toString())
         val reopenedInk = inkOf(reopened.blocks.single())

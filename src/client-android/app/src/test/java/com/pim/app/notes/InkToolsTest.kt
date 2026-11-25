@@ -123,6 +123,7 @@ class InkToolsTest {
         assertEquals(INK_LEGACY_COLOR, ink.strokes.single().color)
         assertEquals(null, ink.strokes.single().id)
         assertEquals("keep", reopened.source.string("futureRoot"))
+        assertEquals("body", reopened.blocks[1].string("text"))
 
         val encoded = withInk(block, ink)
         assertEquals("keep", encoded.string("futureBlock"))

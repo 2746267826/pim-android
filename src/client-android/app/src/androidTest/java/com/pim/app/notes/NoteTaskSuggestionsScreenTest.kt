@@ -552,7 +552,7 @@ class NoteTaskSuggestionsScreenTest {
             inputSha256 = suggestion.sourceInputSha256,
             manifestSha256 = suggestion.sourceManifestSha256,
         ),
-        binding = com.pim.core.network.BoundUploadSession("https://pim.example/", OWNER_ID),
+        binding = com.pim.core.network.BoundUploadSession("https://pim.example", OWNER_ID),
         identityGeneration = 9,
         screenGeneration = 12,
         sourceVerified = true,

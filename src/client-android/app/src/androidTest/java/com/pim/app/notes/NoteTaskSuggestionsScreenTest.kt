@@ -77,6 +77,7 @@ class NoteTaskSuggestionsScreenTest {
         compose.onNodeWithTag("task-suggestions-list").assertIsDisplayed()
         compose.onNodeWithTag("task-suggestion-confirm-$SUGGESTION_ID")
             .performScrollTo()
+            .assertIsDisplayed()
             .performClick()
         compose.onNodeWithTag("task-suggestion-confirm-dialog-$SUGGESTION_ID")
             .assertIsDisplayed()

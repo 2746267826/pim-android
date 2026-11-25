@@ -2,6 +2,8 @@ package com.pim.app.notes
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -296,6 +298,7 @@ private fun destinationIdentity(destination: NoteTaskSuggestionDestination): Str
 private fun NoteTaskSuggestionDestination.destinationLabel(): String =
     "$displayName · $model · 修订 ${modelRevision.take(8)}"
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NoteTaskSuggestionCard(
     item: NoteTaskSuggestionItem,
@@ -480,7 +483,10 @@ private fun NoteTaskSuggestionCard(
                     color = MaterialTheme.colorScheme.error,
                 )
                 if (draft?.dirty == true) Text("本机修订尚未保存；请先保存或明确放弃，不能直接放弃服务端建议。")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Button(onClick = { scope?.let { s -> actions.save(s, remote.id) } }, enabled = scope != null && draft?.dirty == true && !conflicted &&
                         !item.confirmationPending, modifier = Modifier.testTag("task-suggestion-save-${remote.id}")) {
                         Text("保存到服务器")

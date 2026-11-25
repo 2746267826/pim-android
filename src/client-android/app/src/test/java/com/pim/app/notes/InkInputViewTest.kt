@@ -4,6 +4,8 @@ import android.app.Application
 import android.view.MotionEvent
 import androidx.test.core.app.ApplicationProvider
 import com.pim.app.TestPimApp
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.put
 import org.junit.Assert.*
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -31,6 +33,42 @@ class InkInputViewTest {
         assertEquals(50f, points.first().x); assertEquals(60f, points.first().y)
         assertEquals(120f, points.last().x); assertEquals(140f, points.last().y)
         assertTrue(points.all { it.pressure in 0f..1f })
+        assertFalse(output!!.hasStrokeIds)
+        assertFalse(output!!.hasStrokeStyles)
+        assertNull(output!!.strokes.single().id)
+        assertNull(output!!.strokes.single().color)
+    }
+
+    @Test fun drawingIntoWebD04InkAppendsIdentityAndStyleWithoutChangingExistingStrokes() {
+        val view = view().apply { inkColor = android.graphics.Color.parseColor("#b8373c") }
+        val existing = InkStroke(
+            points = listOf(InkPoint(20f, 20f), InkPoint(80f, 80f)),
+            width = 6f,
+            color = "#245fba",
+            id = "11111111-1111-4111-8111-111111111111",
+            extensions = buildJsonObject { put("futureStroke", "keep") },
+        )
+        view.ink = InkData(
+            strokes = listOf(existing),
+            extensions = buildJsonObject { put("futureInk", "keep") },
+            hasStrokeIds = true,
+            hasStrokeStyles = true,
+        )
+        var output: InkData? = null
+        view.onInkChanged = { output = it }
+
+        touch(view, MotionEvent.ACTION_DOWN, 100f, 120f)
+        touch(view, MotionEvent.ACTION_MOVE, 200f, 240f)
+        touch(view, MotionEvent.ACTION_UP, 240f, 280f)
+
+        val next = checkNotNull(output)
+        assertEquals(2, next.strokes.size)
+        assertEquals(existing, next.strokes[0])
+        assertEquals("#b8373c", next.strokes[1].color)
+        assertEquals(2.5f, next.strokes[1].width)
+        assertNotNull(next.strokes[1].id)
+        assertNotEquals(existing.id, next.strokes[1].id)
+        assertEquals("keep", next.extensions.string("futureInk"))
     }
 
     @Test fun cancelledStrokeAndViewModeDoNotPublishInk() {

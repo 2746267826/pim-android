@@ -2,15 +2,17 @@ package com.pim.app.notes
 
 import android.graphics.Bitmap
 import android.graphics.Canvas
+import android.graphics.Color
 import android.graphics.Paint
 import android.graphics.Path
 import androidx.compose.ui.graphics.toArgb
 import com.pim.app.ui.theme.PimLightColorScheme
 
 internal object InkRendering {
-    fun stroke(canvas: Canvas, stroke: InkStroke, color: Int) {
+    fun stroke(canvas: Canvas, stroke: InkStroke, fallbackColor: Int) {
         val paint = Paint(Paint.ANTI_ALIAS_FLAG).apply {
-            this.color = color; style = Paint.Style.STROKE; strokeWidth = stroke.width
+            color = stroke.color?.let { runCatching { Color.parseColor(it) }.getOrNull() } ?: fallbackColor
+            style = Paint.Style.STROKE; strokeWidth = stroke.width
             strokeCap = Paint.Cap.ROUND; strokeJoin = Paint.Join.ROUND
         }
         val points = stroke.points

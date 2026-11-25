@@ -32,9 +32,30 @@ class RecordingRequestGateTest {
 
         assertEquals("note-a", gate.pending()?.noteId)
         assertEquals(RecordingRequestPhase.AwaitingDocument, gate.pending()?.phase)
+        assertNull(gate.claimRestoredPermissionWait())
         assertFalse(gate.complete("note-b"))
         assertEquals("note-a", gate.pending()?.noteId)
         assertTrue(gate.complete("note-a"))
+    }
+
+    @Test fun restoredPermissionWaitIsRecoveredOnceAndLaterCallbacksStayIdempotent() {
+        val gate = RecordingRequestGate()
+        gate.restore(PendingRecordingRequest("note-a", RecordingRequestPhase.AwaitingPermission))
+
+        assertEquals(
+            PendingRecordingRequest("note-a", RecordingRequestPhase.AwaitingDocument),
+            gate.claimRestoredPermissionWait(),
+        )
+        assertNull(gate.claimRestoredPermissionWait())
+        assertEquals("note-a", gate.pending()?.noteId)
+        assertEquals(RecordingRequestPhase.AwaitingDocument, gate.pending()?.phase)
+        assertEquals(
+            PendingRecordingRequest("note-a", RecordingRequestPhase.AwaitingDocument),
+            gate.onPermissionResult(),
+        )
+        assertTrue(gate.complete("note-a"))
+        assertNull(gate.onPermissionResult())
+        assertTrue(gate.begin("note-b"))
     }
 
     @Test fun cancelledRequestAllowsANewLaunch() {

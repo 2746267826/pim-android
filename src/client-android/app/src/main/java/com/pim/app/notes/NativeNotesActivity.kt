@@ -36,6 +36,7 @@ import kotlinx.coroutines.launch
 class NativeNotesActivity : ComponentActivity() {
     internal val model: NotesViewModel by viewModels()
     private val recordingRequests = RecordingRequestGate()
+    private var restoredPermissionWait = false
     private var recordingPermissions by mutableStateOf(RecordingPermissions())
     private var exportSnapshot: NoteDocument? = null
     private var player: MediaPlayer? = null
@@ -225,6 +226,7 @@ class NativeNotesActivity : ComponentActivity() {
     override fun onResume() {
         super.onResume()
         refreshRecordingPermissions()
+        recoverRestoredPermissionWait()
         attemptPendingRecording()
     }
     override fun onSaveInstanceState(outState: Bundle) {
@@ -320,6 +322,26 @@ class NativeNotesActivity : ComponentActivity() {
             ?.let { stored -> runCatching { RecordingRequestPhase.valueOf(stored) }.getOrNull() }
             ?: RecordingRequestPhase.AwaitingPermission
         recordingRequests.restore(PendingRecordingRequest(noteId, phase))
+        // A retained non-configuration instance means this is a configuration change, where the
+        // pending result is still delivered to the re-registered activity-result callback. Only
+        // process recreation loses that delivery and needs the one-time recovery path.
+        restoredPermissionWait =
+            phase == RecordingRequestPhase.AwaitingPermission && lastNonConfigurationInstance == null
+    }
+
+    private fun recoverRestoredPermissionWait() {
+        if (!restoredPermissionWait) return
+        restoredPermissionWait = false
+        when (val decision = RecordingRestorePolicy.decide(recordingRequests.pending(), recordingPermissions)) {
+            RecordingRestoreDecision.NothingToRecover -> Unit
+            RecordingRestoreDecision.RetryOnce -> {
+                if (recordingRequests.claimRestoredPermissionWait() != null) attemptPendingRecording()
+            }
+            is RecordingRestoreDecision.Discard -> {
+                recordingRequests.cancel()
+                model.tell(decision.message)
+            }
+        }
     }
 
     private fun observeNotesForPendingRecording() {

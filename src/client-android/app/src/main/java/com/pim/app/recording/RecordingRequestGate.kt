@@ -33,6 +33,19 @@ internal class RecordingRequestGate {
         return pendingValue
     }
 
+    /**
+     * A permission dialog may not survive process death, so its activity result can be missing
+     * for the recreated activity. Claim the restored wait once and move it to the document phase;
+     * duplicate claims or late callbacks then keep the same request instead of starting it twice.
+     */
+    @Synchronized
+    fun claimRestoredPermissionWait(): PendingRecordingRequest? {
+        val pending = pendingValue ?: return null
+        if (pending.phase != RecordingRequestPhase.AwaitingPermission) return null
+        pendingValue = pending.copy(phase = RecordingRequestPhase.AwaitingDocument)
+        return pendingValue
+    }
+
     @Synchronized
     fun complete(noteId: String): Boolean {
         if (pendingValue?.noteId != noteId) return false

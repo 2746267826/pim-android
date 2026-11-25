@@ -33,7 +33,7 @@ class InkSchemaCompatibilityTest {
             ),
             ink.strokes.map { it.id },
         )
-        assertEquals("keep", ink.extras.getValue("webInkExtension").jsonObject.string("keep"))
+        assertEquals(JsonPrimitive(true), ink.extras.getValue("webInkExtension").jsonObject.getValue("keep"))
         assertEquals("keep", ink.strokes[0].extras.string("futureStroke"))
         assertEquals("keep", ink.strokes[0].points[0].extras.string("futurePoint"))
         assertEquals("keep", ink.strokes[0].styleExtras.string("futureStyle"))
@@ -55,7 +55,10 @@ class InkSchemaCompatibilityTest {
         assertEquals(ink.strokes.map { it.id }, reopenedInk.strokes.map { it.id })
         assertEquals(ink.strokes.map { it.color }, reopenedInk.strokes.map { it.color })
         assertEquals(ink.strokes.map { it.width }, reopenedInk.strokes.map { it.width })
-        assertEquals("keep", reopenedInk.extras.getValue("webInkExtension").jsonObject.string("keep"))
+        assertEquals(
+            JsonPrimitive(true),
+            reopenedInk.extras.getValue("webInkExtension").jsonObject.getValue("keep"),
+        )
         assertEquals("keep", reopenedInk.strokes[0].styleExtras.string("futureStyle"))
         assertEquals("keep", reopenedInk.strokes[0].extras.string("futureStroke"))
         assertEquals("keep", reopenedInk.strokes[0].points[0].extras.string("futurePoint"))
@@ -76,7 +79,7 @@ class InkSchemaCompatibilityTest {
         assertEquals(INK_LEGACY_COLOR, legacy.color)
         assertEquals(INK_DEFAULT_WIDTH, legacy.width)
         assertNull(legacy.id)
-        assertEquals("keep", ink.extras.getValue("futureInk").jsonObject.string("keep"))
+        assertEquals(JsonPrimitive(true), ink.extras.getValue("futureInk").jsonObject.getValue("keep"))
         assertEquals("keep", legacy.extras.string("futureStroke"))
         assertEquals("keep", legacy.points[0].extras.string("futurePoint"))
         assertEquals("keep", note.source.string("futureRoot"))
@@ -91,7 +94,7 @@ class InkSchemaCompatibilityTest {
             written.getValue("ink").jsonObject.getValue("strokeIds"),
         )
         assertEquals(1, written.getValue("ink").jsonObject.getValue("strokeStyles").jsonArray.size)
-        assertEquals("keep", writtenInk.extras.getValue("futureInk").jsonObject.string("keep"))
+        assertEquals(JsonPrimitive(true), writtenInk.extras.getValue("futureInk").jsonObject.getValue("keep"))
         assertEquals("keep", writtenInk.strokes.single().extras.string("futureStroke"))
         assertEquals("keep", writtenInk.strokes.single().points[0].extras.string("futurePoint"))
     }

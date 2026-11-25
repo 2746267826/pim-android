@@ -18,7 +18,6 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.geometry.Offset
-import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.graphics.asImageBitmap
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.ContentScale
@@ -33,7 +32,9 @@ import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.semantics.selected
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.pim.app.ui.theme.PimLightColorScheme
 import com.pim.app.ui.theme.PimTheme
+import com.pim.app.ui.theme.pimColor
 import java.io.File
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
@@ -106,8 +107,8 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
     var resizing by remember { mutableStateOf<InkData?>(null) }
     val (brush, setBrush) = rememberInkPenPreference()
     val shown = resizing ?: ink
-    val gridColor = Color(0xFFD9E1ED)
-    val paperText = Color(0xFF506176)
+    val gridColor = PimLightColorScheme.outlineVariant
+    val paperText = PimLightColorScheme.onSurfaceVariant
     val density = LocalDensity.current.density
     val focus = LocalFocusManager.current
     val keyboard = LocalSoftwareKeyboardController.current
@@ -144,7 +145,7 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
                     Box {
                         Icon(Icons.Default.Brush, null, tint = if (!erase) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.onSurfaceVariant)
                         Box(Modifier.align(Alignment.BottomEnd).size(10.dp)
-                            .background(Color(inkColorInt(brush.color)), CircleShape))
+                            .background(pimColor(inkColorInt(brush.color)), CircleShape))
                     }
                 }
                 DropdownMenu(expanded = brushPanelOpen, onDismissRequest = { brushPanelOpen = false }) {
@@ -159,7 +160,7 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
                                         onClick = { setBrush(brush.copy(color = option.color)) },
                                         label = { Text(option.label) },
                                         leadingIcon = {
-                                            Box(Modifier.size(12.dp).background(Color(inkColorInt(option.color)), CircleShape))
+                                            Box(Modifier.size(12.dp).background(pimColor(inkColorInt(option.color)), CircleShape))
                                         },
                                         modifier = Modifier.testTag("ink-color-${option.key}-$id"),
                                     )
@@ -232,7 +233,7 @@ internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (Ink
             Box(Modifier.width((shown.width * scale).dp).height((shown.height * scale).dp)
                 .clip(MaterialTheme.shapes.medium)
                 .border(d.borderWidth, MaterialTheme.colorScheme.outlineVariant, MaterialTheme.shapes.medium)
-                .background(Color.White)) {
+                .background(PimLightColorScheme.surface)) {
                 Canvas(Modifier.fillMaxSize()) {
                     val step = d.inkGridSpacing.toPx()
                     var x = step

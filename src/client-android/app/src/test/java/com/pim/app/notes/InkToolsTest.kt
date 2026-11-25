@@ -245,7 +245,7 @@ class InkToolsTest {
         assertEquals(listOf(INK_COLOR_RED, INK_COLOR_BLUE), ink.strokes.map { it.color })
         assertEquals(listOf(INK_WIDTH_THIN, INK_WIDTH_COARSE), ink.strokes.map { it.width })
         assertEquals(listOf(firstId, secondId), ink.strokes.map { it.id })
-        assertEquals("keep", ink.extras.getValue("webInkExtension").jsonObject.string("keep"))
+        assertEquals(JsonPrimitive(true), ink.extras.getValue("webInkExtension").jsonObject.getValue("keep"))
         assertEquals("keep", ink.strokes.first().styleExtras.string("futureStyle"))
         val material = NoteMaterialInput(newNoteId(), 1L, note.source, emptyList())
         val materialRoundTrip = NoteJson.decodeFromString<NoteMaterialInput>(NoteJson.encodeToString(material))
@@ -265,7 +265,10 @@ class InkToolsTest {
         val undo = InkUndoStack().apply { record(ink) }
         assertEquals(ink, undo.undo())
         val reencoded = withInk(reopened.blocks.single(), ink)
-        assertEquals("keep", reencoded.getValue("ink").jsonObject.getValue("webInkExtension").jsonObject.string("keep"))
+        assertEquals(
+            JsonPrimitive(true),
+            reencoded.getValue("ink").jsonObject.getValue("webInkExtension").jsonObject.getValue("keep"),
+        )
         assertEquals(JsonArray(listOf(JsonPrimitive(firstId), JsonPrimitive(secondId))),
             reencoded.getValue("ink").jsonObject.getValue("strokeIds"))
         val encodedStyles = reencoded.getValue("ink").jsonObject.getValue("strokeStyles").jsonArray

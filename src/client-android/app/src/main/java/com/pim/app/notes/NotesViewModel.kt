@@ -101,7 +101,9 @@ class NotesViewModel @Inject constructor(
 
     @Synchronized
     fun create(): String? {
-        if (busy.value || selectedId.value != null) return null
+        if (busy.value) return null
+        val selected = selectedId.value
+        if (selected != null && notes.state.value.documents.containsKey(selected)) return null
         val id = notes.create()
         open(id)
         return id

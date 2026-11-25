@@ -64,6 +64,24 @@ class NativeNotesA01BehaviorTest {
         assertEquals(beforeArchives, model.recordings.state.value.archives.size)
     }
 
+    @Test fun missingSelectionDoesNotBlockCreatingARecoveryNote() {
+        compose.waitUntil(15_000) {
+            model.notes.state.value.loaded && model.materials.state.value.loaded
+        }
+        val missingId = java.util.UUID.randomUUID().toString()
+        assertFalse(model.notes.state.value.documents.containsKey(missingId))
+        compose.runOnUiThread { model.open(missingId) }
+        compose.waitUntil(5_000) { model.selectedId.value == missingId }
+
+        var created: String? = null
+        compose.runOnUiThread { created = model.create() }
+        compose.waitUntil(5_000) { created != null && model.selectedId.value == created }
+
+        val newId = checkNotNull(created)
+        assertNotEquals(missingId, newId)
+        assertTrue(model.notes.state.value.documents.containsKey(newId))
+    }
+
     @Test fun anotherActiveNoteOffersChoiceAndKeepsItsSessionOwnership() {
         compose.waitUntil(15_000) {
             model.notes.state.value.loaded && model.materials.state.value.loaded

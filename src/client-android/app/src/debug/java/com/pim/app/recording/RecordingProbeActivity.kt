@@ -84,7 +84,7 @@ class RecordingProbeActivity : ComponentActivity() {
                             if (!state.active) PimButton(onClick = {
                                 stopPlayback()
                                 val request = recordingPermissions.runtimePermissionsToRequest(Build.VERSION.SDK_INT)
-                                if (request.isEmpty()) RecordingController.start(this)?.let(repository::report)
+                                if (request.isEmpty()) RecordingController.start(this@RecordingProbeActivity)?.let(repository::report)
                                 else permissions.launch(request)
                             }, enabled = !state.preparing, modifier = Modifier.testTag("recording-start")) { Text("开始真实录音") }
                             if (state.preparing) Text("正在准备录音")

@@ -8,6 +8,8 @@ enum class RecordingPhase { Recording, Paused, Completed, Interrupted }
 @Serializable
 enum class RecordingProblem(val message: String) {
     Permission("未允许麦克风权限，没有开始录音"),
+    Notifications("系统通知权限或总开关已关闭，没有开始录音"),
+    NotificationChannel("录音状态通知渠道已关闭，没有开始录音"),
     Foreground("系统未允许启动前台录音，请回到页面后重试"),
     Input("音频采集中断，已保存的材料保留在本机"),
     Silenced("系统已将麦克风静音，录音已中断，请检查其他应用或权限"),

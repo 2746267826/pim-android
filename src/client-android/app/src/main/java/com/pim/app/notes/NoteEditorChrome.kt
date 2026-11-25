@@ -18,6 +18,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.pim.app.recording.*
 import com.pim.app.ui.components.PimFloatingSurface
 import com.pim.app.ui.components.PimRecordingPill
+import com.pim.app.ui.components.PimStatusBanner
+import com.pim.app.ui.components.PimStatusTone
 import com.pim.app.ui.theme.PimTheme
 
 @Composable
@@ -120,7 +122,7 @@ internal fun NoteDocumentHeading(
 
 @Composable
 internal fun NoteEditorDock(
-    recording: RecordingState, ownActive: Boolean, canRecord: Boolean, canInsert: Boolean,
+    recording: RecordingState, ownActive: Boolean, activeOtherTitle: String?, canRecord: Boolean, canInsert: Boolean,
     onRecord: () -> Unit, onPauseResume: () -> Unit, onRecordings: () -> Unit,
     onPhoto: (Boolean) -> Unit, onInk: () -> Unit, modifier: Modifier = Modifier
 ) {
@@ -136,7 +138,11 @@ internal fun NoteEditorDock(
                     modifier = Modifier.heightIn(min = d.minimumTouchTarget).testTag("note-start-recording")) {
                     Icon(Icons.Default.MicNone, null, Modifier.size(d.iconSize))
                     Spacer(Modifier.width(d.spaceSmall))
-                    Text(when { recording.preparing -> "正在开启"; recording.active -> "其他笔记录音中"; else -> "开始录音" }, maxLines = 1)
+                    Text(when {
+                        recording.preparing -> "正在开启"
+                        activeOtherTitle != null -> "《$activeOtherTitle》正在录音"
+                        else -> "开始录音"
+                    }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -156,6 +162,84 @@ internal fun NoteEditorDock(
             }
         }
     }
+}
+
+@Composable
+internal fun RecordingPermissionNotice(
+    permissions: RecordingPermissions,
+    requestEnabled: Boolean = true,
+    onRequest: () -> Unit,
+    onOpenSettings: (RecordingPermissionSetting) -> Unit,
+) {
+    val d = PimTheme.dimensions
+    Column(
+        Modifier.fillMaxWidth().testTag("recording-permission-notice"),
+        verticalArrangement = Arrangement.spacedBy(d.spaceExtraSmall),
+    ) {
+        PimStatusBanner(permissions.message, PimStatusTone.Warning)
+        if (permissions.canRequest && !requestEnabled) {
+            Text(
+                "笔记保存完成后才能请求录音权限；现在仍可先打开系统设置。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (permissions.canRequest) {
+            TextButton(
+                onClick = onRequest,
+                enabled = requestEnabled,
+                modifier = Modifier.testTag("recording-permission-request"),
+            ) {
+                Text(permissions.requestActionLabel ?: "允许录音权限")
+            }
+        }
+        if (!permissions.microphoneGranted) {
+            TextButton(
+                onClick = { onOpenSettings(RecordingPermissionSetting.AppSettings) },
+                modifier = Modifier.testTag("recording-permission-microphone-settings"),
+            ) { Text("麦克风设置") }
+        }
+        if (!permissions.notificationPermissionGranted || !permissions.notificationsEnabled) {
+            TextButton(
+                onClick = { onOpenSettings(RecordingPermissionSetting.NotificationSettings) },
+                modifier = Modifier.testTag("recording-permission-notification-settings"),
+            ) { Text("通知设置") }
+        }
+        if (!permissions.channelEnabled) {
+            TextButton(
+                onClick = { onOpenSettings(RecordingPermissionSetting.RecordingChannelSettings) },
+                modifier = Modifier.testTag("recording-permission-channel-settings"),
+            ) { Text("录音通知渠道设置") }
+        }
+    }
+}
+
+@Composable
+internal fun ActiveRecordingConflictDialog(
+    title: String,
+    canOpenRecording: Boolean,
+    onOpenRecording: () -> Unit,
+    onContinueEditing: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onContinueEditing,
+        title = { Text("另一篇笔记正在录音") },
+        text = {
+            Text("《$title》仍在录音。你可以返回原笔记，或留在这里继续编辑本篇；原录音不会被结束，也不会改归本篇。")
+        },
+        confirmButton = {
+            if (canOpenRecording) {
+                TextButton(onClick = onOpenRecording, modifier = Modifier.testTag("recording-conflict-open")) {
+                    Text("返回正在录音笔记")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onContinueEditing, modifier = Modifier.testTag("recording-conflict-continue")) {
+                Text("继续编辑本篇")
+            }
+        },
+    )
 }
 
 @Composable

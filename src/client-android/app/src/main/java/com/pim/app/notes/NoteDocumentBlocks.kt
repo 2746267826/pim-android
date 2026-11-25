@@ -92,7 +92,7 @@ private fun rememberInkPenPreference(): Pair<InkPenPreference, (InkPenPreference
 }
 
 @Composable
-@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class)
+@OptIn(androidx.compose.ui.ExperimentalComposeUiApi::class, androidx.compose.material3.ExperimentalMaterial3Api::class)
 internal fun InkCard(id: String, ink: InkData, readOnly: Boolean, onChange: (InkData) -> Unit) {
     val d = PimTheme.dimensions
     var draw by rememberSaveable(id) { mutableStateOf(false) }

@@ -33,7 +33,10 @@ class RecordingStoragePolicyTest {
 
     @Test fun lowSpaceDoesNotStartTheRecordingService() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-        shadowOf(activity.application).grantPermissions(Manifest.permission.RECORD_AUDIO)
+        shadowOf(activity.application).grantPermissions(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.POST_NOTIFICATIONS,
+        )
 
         assertEquals(
             RecordingProblem.Storage,

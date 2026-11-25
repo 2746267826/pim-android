@@ -117,8 +117,11 @@ class NativeNotesDocumentTest {
     @Test fun realRecordingRemainsOwnedByOriginalNoteDuringEditingNavigationAndRecreation() {
         create(); saved()
         val firstId = note().id
+        compose.onNodeWithTag("note-title").performTextReplacement("原录音笔记")
+        closeSoftKeyboard(); saved()
         compose.onNodeWithTag("note-start-recording").performClick()
         compose.waitUntil(10_000) { model.recordings.state.value.active && (model.recordings.state.value.session?.samples ?: 0) > 0 }
+        val sessionId = model.recordings.state.value.session!!.id
         assertEquals(firstId, model.recordings.state.value.session!!.noteId)
         edit("# Edited during capture", 5)
         saved()
@@ -132,7 +135,17 @@ class NativeNotesDocumentTest {
         val otherId = note().id
         assertNotEquals(firstId, otherId)
         assertEquals(firstId, model.recordings.state.value.session!!.noteId)
-        compose.onNodeWithTag("note-start-recording").assertIsNotEnabled()
+        compose.onNodeWithTag("note-start-recording").assertIsEnabled().assertTextContains("原录音笔记", substring = true)
+        compose.onNodeWithTag("note-start-recording").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("recording-conflict-open").fetchSemanticsNodes().size == 1 }
+        compose.onNodeWithText("《原录音笔记》仍在录音", substring = true).assertIsDisplayed()
+        compose.onNodeWithTag("recording-conflict-continue").performClick()
+        assertEquals(sessionId, model.recordings.state.value.session!!.id)
+        assertFalse(model.recordings.state.value.preparing)
+        compose.onNodeWithTag("note-start-recording").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("recording-conflict-open").fetchSemanticsNodes().size == 1 }
+        compose.onNodeWithTag("recording-conflict-open").performClick()
+        compose.waitUntil(5_000) { model.selectedId.value == firstId }
         val manager = compose.activity.getSystemService(android.app.NotificationManager::class.java)
         val notification = manager.activeNotifications.single { it.id == RecordingNotifications.ID }.notification
         notification.contentIntent.send()

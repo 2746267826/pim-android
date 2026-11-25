@@ -22,9 +22,11 @@
   + `make_latest`）。提升不重新构建，正式版资产就是过完 CI 的那份 APK。
 - 只重试提升：`-f promote_tag=android-v26.11.1234`。
 
-> 注意升级方向：正式版的 `versionCode` 来自它被构建时的 run number。若手机里装了
-> 更晚的 dev 版（versionCode 更大），系统会把正式版当成降级。测试机请只在需要时
-> 装 dev 包，或装之前手动卸载。
+> 升级方向只在一种情况下要注意：用 `promote_tag` 追发**较旧的构建**时，它的
+> `versionCode` 会小于之后合并产生的 dev 包。手机里若已装了那些更晚的 dev 版，这个正式版
+> 既不会被提示为更新（版本号更小），手动装 APK 还会被系统按降级拒掉
+> （`INSTALL_FAILED_VERSION_DOWNGRADE`）。正常走「改号 → 合并 → 提升」时，提升的就是最新
+> 那次构建、`versionCode` 最大，不存在这个问题。
 
 ## 发版前必须满足
 

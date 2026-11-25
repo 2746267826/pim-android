@@ -562,7 +562,7 @@ private fun CollectionHealthSection(
     ) {
         SectionHeader("采集健康", Icons.Filled.Shield)
         Text(
-            text = "缺失项会立即影响本机采集；点击任意一项可进入对应系统设置。",
+            text = "缺失或受限会影响对应采集能力；点击任意一项可进入对应系统设置。",
             style = MaterialTheme.typography.bodySmall,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
         )
@@ -588,12 +588,16 @@ private fun CollectionHealthSection(
                     fontWeight = FontWeight.SemiBold,
                 )
                 Text(
-                    text = if (keepAliveHealthAlert.isNullOrBlank()) "正常" else "需检查",
+                    text = when {
+                        !keepAliveHealthAlert.isNullOrBlank() -> "需检查"
+                        checking -> "检查中"
+                        else -> "正常"
+                    },
                     style = MaterialTheme.typography.bodySmall,
-                    color = if (keepAliveHealthAlert.isNullOrBlank()) {
-                        MaterialTheme.colorScheme.primary
-                    } else {
-                        MaterialTheme.colorScheme.error
+                    color = when {
+                        !keepAliveHealthAlert.isNullOrBlank() -> MaterialTheme.colorScheme.error
+                        checking -> MaterialTheme.colorScheme.onSurfaceVariant
+                        else -> MaterialTheme.colorScheme.primary
                     },
                 )
             }

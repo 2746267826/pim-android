@@ -21,13 +21,13 @@ internal object RecordingStartPolicy {
         recordingBusy: Boolean,
         permissions: RecordingPermissions,
     ): RecordingStartDecision {
-        if (selectedNoteId != requestedNoteId) {
-            return RecordingStartDecision.Stop("已切换到其他笔记，未开始此前请求的录音。")
-        }
         if (notesLoadFailed) {
             return RecordingStartDecision.Stop("本机笔记初始化失败，未开始此前请求的录音；请重新打开笔记后重试。")
         }
         if (!notesLoaded) return RecordingStartDecision.WaitForDocument
+        if (selectedNoteId != requestedNoteId) {
+            return RecordingStartDecision.Stop("已切换到其他笔记，未开始此前请求的录音。")
+        }
         if (!documentLoaded) {
             return RecordingStartDecision.Stop("未能读取此前请求的笔记，录音未开始；请返回该笔记后重试。")
         }

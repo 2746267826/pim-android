@@ -50,6 +50,17 @@ class RecordingStartPolicyTest {
         assertEquals("已切换到其他笔记，未开始此前请求的录音。", (decision as RecordingStartDecision.Stop).message)
     }
 
+    @Test fun missingSelectionWaitsForAsyncInitializationBeforeJudgingOwnership() {
+        assertEquals(
+            RecordingStartDecision.WaitForDocument,
+            decide(selectedNoteId = null, notesLoaded = false, documentLoaded = false),
+        )
+        assertTrue(
+            decide(selectedNoteId = null, notesLoaded = true, documentLoaded = false)
+                is RecordingStartDecision.Stop
+        )
+    }
+
     @Test fun loadedButMissingDocumentStopsWithVisibleMessage() {
         val decision = decide(documentLoaded = false)
         assertTrue(decision is RecordingStartDecision.Stop)

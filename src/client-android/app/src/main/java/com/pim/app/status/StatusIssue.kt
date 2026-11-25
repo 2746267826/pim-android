@@ -429,7 +429,12 @@ data class StatusIssue(
             CollectionPermissionAccess.MISSING -> missingMessage
             CollectionPermissionAccess.RESTRICTED -> {
                 val reason = restrictedReason?.takeIf { it.isNotBlank() } ?: "系统权限受限"
-                "$reason。请前往系统设置调整${kind.title}权限。"
+                val permissionName = if (kind.title.endsWith("权限")) {
+                    kind.title
+                } else {
+                    "${kind.title}权限"
+                }
+                "$reason。请前往系统设置调整$permissionName。"
             }
             CollectionPermissionAccess.CHECK_FAILED ->
                 "暂时无法读取${kind.title}状态，请前往系统设置确认。"

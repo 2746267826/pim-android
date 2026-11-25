@@ -150,6 +150,17 @@ class CollectionPermissionStatusTest {
         assertEquals("去设置", usage.actionLabel)
     }
 
+    @Test
+    fun `restricted notification copy does not repeat the permission suffix`() {
+        val issue = StatusIssue.notificationPermissionMissing(
+            access = CollectionPermissionAccess.RESTRICTED,
+            restrictedReason = "系统通知已关闭",
+        )
+
+        assertTrue(issue.message.contains("调整通知权限"))
+        assertFalse(issue.message.contains("通知权限权限"))
+    }
+
     private fun PermissionStatusSnapshot.collectionPermission(
         kind: CollectionPermissionKind,
     ): CollectionPermissionState = collectionPermissions().single { it.kind == kind }

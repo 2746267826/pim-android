@@ -74,11 +74,15 @@ class NoteDocumentTest {
             .resized(1f, 1f, 320f).validate()
     }
 
-    @Test fun eraserHitsStrokeSegmentsNotOnlyStoredVertices() {
+    @Test fun partialEraserHitsStrokeSegmentsNotOnlyStoredVerticesAndKeepsBothSides() {
         val crossed = InkStroke(listOf(InkPoint(20f, 100f), InkPoint(300f, 100f)))
         val other = InkStroke(listOf(InkPoint(20f, 200f), InkPoint(300f, 200f)))
         val ink = InkData(strokes = listOf(crossed, other))
-        assertEquals(listOf(other), ink.erasedBy(listOf(InkPoint(150f, 90f), InkPoint(150f, 110f))).strokes)
+        val erased = ink.erasedBy(listOf(InkPoint(150f, 90f), InkPoint(150f, 110f)))
+        assertEquals(3, erased.strokes.size)
+        assertTrue(erased.strokes[0].points.last().x < 150f)
+        assertTrue(erased.strokes[1].points.first().x > 150f)
+        assertEquals(other, erased.strokes[2])
     }
 
     @Test fun rejectsTraversalDuplicateIdentityAndUnsupportedVersion() {

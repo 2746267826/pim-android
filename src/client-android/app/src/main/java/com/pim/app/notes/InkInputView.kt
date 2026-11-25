@@ -10,12 +10,16 @@ class InkInputView(context: Context) : View(context) {
     var ink = InkData()
         set(value) { field = value; invalidate() }
     var drawingEnabled = false
-    var eraseEnabled = false
+    var eraserMode: InkEraserMode? = null
     var stylusOnly = false
-    var inkColor: Int = 0
-    var onInkChanged: (InkData) -> Unit = {}
+    var penColor: String = INK_COLOR_INK
+    var penWidth: Float = INK_WIDTH_MEDIUM
+    var onInkChanged: (InkData, InkData) -> Unit = { _, _ -> }
     private var pointer = -1
     private var points = mutableListOf<InkPoint>()
+    private var previewInk: InkData? = null
+    private var gestureColor = INK_COLOR_INK
+    private var gestureWidth = INK_WIDTH_MEDIUM
 
     init { contentDescription = "手写画布"; isFocusable = true; setLayerType(LAYER_TYPE_SOFTWARE, null) }
 
@@ -24,8 +28,10 @@ class InkInputView(context: Context) : View(context) {
         if (width == 0) return
         canvas.save()
         canvas.scale(width / ink.width, width / ink.width)
-        ink.strokes.forEach { InkRendering.stroke(canvas, it, inkColor) }
-        if (points.isNotEmpty()) InkRendering.stroke(canvas, InkStroke(points), inkColor)
+        (previewInk ?: ink).strokes.forEach { InkRendering.stroke(canvas, it) }
+        if (points.isNotEmpty() && eraserMode == null) {
+            InkRendering.stroke(canvas, InkStroke(points.toList(), gestureWidth, gestureColor))
+        }
         canvas.restore()
     }
 
@@ -36,26 +42,30 @@ class InkInputView(context: Context) : View(context) {
                 if (stylusOnly && event.getToolType(0) !in listOf(MotionEvent.TOOL_TYPE_STYLUS, MotionEvent.TOOL_TYPE_ERASER)) return false
                 pointer = event.getPointerId(0)
                 points.clear()
+                previewInk = null
+                gestureColor = penColor
+                gestureWidth = penWidth
                 parent?.requestDisallowInterceptTouchEvent(true)
                 addPoint(event, 0)
+                updateErasePreview()
             }
             MotionEvent.ACTION_MOVE -> {
                 val index = event.findPointerIndex(pointer)
                 if (index < 0) return false
                 for (i in 0 until event.historySize) add(event.getHistoricalX(index, i), event.getHistoricalY(index, i), event.getHistoricalPressure(index, i))
                 addPoint(event, index)
+                updateErasePreview()
             }
             MotionEvent.ACTION_UP, MotionEvent.ACTION_POINTER_UP -> {
                 if (event.getPointerId(event.actionIndex) != pointer) return true
                 addPoint(event, event.actionIndex)
-                if (points.isNotEmpty()) {
-                    val next = if (eraseEnabled) ink.erasedBy(points) else ink.copy(strokes = ink.strokes + InkStroke(points.toList()))
-                    ink = next
-                    onInkChanged(next)
-                }
+                commitGesture()
                 resetGesture(); performClick()
             }
-            MotionEvent.ACTION_CANCEL -> resetGesture()
+            MotionEvent.ACTION_CANCEL -> {
+                if (eraserMode != null) commitGesture()
+                resetGesture()
+            }
         }
         invalidate()
         return true
@@ -71,5 +81,34 @@ class InkInputView(context: Context) : View(context) {
         val last = points.lastOrNull()
         if (last == null || kotlin.math.hypot(next.x - last.x, next.y - last.y) >= 1f) points.add(next)
     }
-    private fun resetGesture() { points.clear(); pointer = -1; parent?.requestDisallowInterceptTouchEvent(false); invalidate() }
+
+    private fun updateErasePreview() {
+        if (eraserMode != null && points.isNotEmpty()) previewInk = ink.erasedBy(points, eraserMode!!)
+    }
+
+    private fun commitGesture() {
+        if (points.isEmpty()) return
+        val previous = ink
+        val next = eraserMode?.let { ink.erasedBy(points, it) } ?: run {
+            val withIds = ink.withStrokeIdentities()
+            withIds.copy(strokes = withIds.strokes + InkStroke(
+                points = points.toList(),
+                width = gestureWidth,
+                color = gestureColor,
+                id = newNoteId(),
+            ))
+        }
+        if (next != previous) {
+            ink = next
+            onInkChanged(previous, next)
+        }
+    }
+
+    private fun resetGesture() {
+        points.clear()
+        pointer = -1
+        previewInk = null
+        parent?.requestDisallowInterceptTouchEvent(false)
+        invalidate()
+    }
 }

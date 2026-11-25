@@ -23,7 +23,7 @@ class InkInputViewTest {
     @Test fun inputStoresDocumentCoordinatesAndEditablePressureNotViewportPixels() {
         val view = view()
         var output: InkData? = null
-        view.onInkChanged = { output = it }
+        view.onInkChanged = { _, next -> output = next }
         touch(view, MotionEvent.ACTION_DOWN, 100f, 120f)
         touch(view, MotionEvent.ACTION_MOVE, 200f, 240f)
         touch(view, MotionEvent.ACTION_UP, 240f, 280f)
@@ -36,7 +36,7 @@ class InkInputViewTest {
     @Test fun cancelledStrokeAndViewModeDoNotPublishInk() {
         val view = view()
         var count = 0
-        view.onInkChanged = { count++ }
+        view.onInkChanged = { _, _ -> count++ }
         touch(view, MotionEvent.ACTION_DOWN, 100f, 100f)
         touch(view, MotionEvent.ACTION_CANCEL, 100f, 100f)
         assertEquals(0, count)
@@ -48,7 +48,7 @@ class InkInputViewTest {
     @Test fun penOnlyModeDoesNotConvertFingerOrUnknownToolIntoInk() {
         val view = view().apply { stylusOnly = true }
         var count = 0
-        view.onInkChanged = { count++ }
+        view.onInkChanged = { _, _ -> count++ }
         val event = MotionEvent.obtain(1, 2, MotionEvent.ACTION_DOWN, 10f, 10f, 0)
         try { assertFalse(view.onTouchEvent(event)) } finally { event.recycle() }
         assertEquals(0, count)

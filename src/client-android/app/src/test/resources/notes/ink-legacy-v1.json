@@ -1,0 +1,40 @@
+{
+  "schemaVersion": 1,
+  "id": "eeeeeeee-eeee-4eee-8eee-eeeeeeeeeeee",
+  "title": "Legacy ink compatibility",
+  "revision": 0,
+  "createdAtMillis": 1735689600000,
+  "futureRoot": "keep",
+  "blocks": [
+    {
+      "id": "ffffffff-ffff-4fff-8fff-ffffffffffff",
+      "kind": "ink",
+      "ink": {
+        "width": 320.0,
+        "height": 240.0,
+        "futureInk": {
+          "keep": true
+        },
+        "strokes": [
+          {
+            "width": 2.5,
+            "futureStroke": "keep",
+            "points": [
+              {
+                "x": 20.0,
+                "y": 30.0,
+                "pressure": 0.4,
+                "futurePoint": "keep"
+              },
+              {
+                "x": 120.0,
+                "y": 90.0,
+                "pressure": 0.8
+              }
+            ]
+          }
+        ]
+      }
+    }
+  ]
+}

@@ -72,8 +72,10 @@ class NoteA03CleanupTest {
             }
         }
 
-        compose.onNodeWithTag("note-upload-notice-${first.id}").assertTextContains("上传未完成", substring = true)
-        compose.onNodeWithTag("note-upload-issue-${first.id}").assertIsDisplayed().performClick()
+        compose.onNodeWithTag("note-upload-notice-${first.id}", useUnmergedTree = true)
+            .assertTextContains("上传未完成", substring = true)
+        compose.onNodeWithTag("note-upload-issue-${first.id}", useUnmergedTree = true)
+            .assertIsDisplayed().performClick()
 
         compose.onNodeWithText("仅显示《项目周会》关联的上传任务").assertExists()
         compose.onNodeWithTag("note-upload-${failed.id}").assertExists()
@@ -242,7 +244,7 @@ class NoteA03CleanupTest {
         noteId = noteId,
         revision = 1,
         serverIdentity = "https://pim.example.test",
-        ownerId = "owner",
+        ownerId = "00000000-0000-0000-0000-0000000000aa",
         ownerName = "测试账号",
         inputSha256 = "a".repeat(64),
         manifestSha256 = "b".repeat(64),

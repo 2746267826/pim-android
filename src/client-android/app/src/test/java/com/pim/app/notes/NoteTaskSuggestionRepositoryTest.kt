@@ -2,10 +2,19 @@ package com.pim.app.notes
 
 import com.pim.app.TestPimApp
 import com.pim.core.contract.NoteTaskSuggestionDto
+import com.pim.core.contract.NoteTaskSuggestionKindDto
 import com.pim.core.contract.NoteTaskSuggestionStatusDto
 import com.pim.core.contract.UpdateNoteTaskSuggestionRequest
 import com.pim.core.network.BoundUploadSession
+import java.io.File
 import java.io.IOException
+import java.time.Instant
+import kotlinx.serialization.json.Json
+import kotlinx.serialization.json.buildJsonArray
+import kotlinx.serialization.json.buildJsonObject
+import kotlinx.serialization.json.jsonArray
+import kotlinx.serialization.json.jsonObject
+import kotlinx.serialization.json.put
 import kotlinx.coroutines.runBlocking
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.CoroutineStart
@@ -13,9 +22,8 @@ import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.withTimeout
 import org.junit.Assert.assertEquals
-import org.junit.Assert.assertFalse
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertThrows
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.rules.TemporaryFolder
@@ -50,10 +58,12 @@ class NoteTaskSuggestionRepositoryTest {
         repository.stageDraft(
             scope,
             SUGGESTION_ID,
-            title = "Locally edited title",
-            description = initial.description,
-            priority = initial.priority,
-            due = initial.due,
+            NoteTaskSuggestionEdit(
+                title = "Locally edited title",
+                description = initial.description,
+                priority = initial.priority,
+                due = initial.due,
+            ),
         )
 
         transport.item = suggestion(NoteTaskSuggestionStatusDto.DISMISSED)
@@ -76,10 +86,12 @@ class NoteTaskSuggestionRepositoryTest {
         repository.stageDraft(
             scope,
             SUGGESTION_ID,
-            title = "Unsaved title",
-            description = initial.description,
-            priority = initial.priority,
-            due = initial.due,
+            NoteTaskSuggestionEdit(
+                title = "Unsaved title",
+                description = initial.description,
+                priority = initial.priority,
+                due = initial.due,
+            ),
         )
 
         val rejected = runCatching { repository.dismiss(scope, SUGGESTION_ID) }.exceptionOrNull()
@@ -99,10 +111,12 @@ class NoteTaskSuggestionRepositoryTest {
         repository.stageDraft(
             scope,
             SUGGESTION_ID,
-            title = item.title,
-            description = item.description,
-            priority = item.priority,
-            due = suggestionDueInput(transport.item.due),
+            NoteTaskSuggestionEdit(
+                title = item.title,
+                description = item.description,
+                priority = item.priority,
+                due = suggestionDueInput(transport.item.due),
+            ),
         )
 
         assertEquals(null, repository.state.value.items.single().draft)
@@ -127,7 +141,11 @@ class NoteTaskSuggestionRepositoryTest {
         withTimeout(1_000) {
             assertNotNull(runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull())
             assertNotNull(runCatching {
-                repository.stageDraft(oldScope, SUGGESTION_ID, "blocked stale edit", "", 5, "")
+                repository.stageDraft(
+                    oldScope,
+                    SUGGESTION_ID,
+                    NoteTaskSuggestionEdit("blocked stale edit", "", 5, ""),
+                )
             }.exceptionOrNull())
         }
         assertEquals(0, transport.confirmCalls)
@@ -154,7 +172,11 @@ class NoteTaskSuggestionRepositoryTest {
 
         val rejectedConfirm = runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull()
         val rejectedEdit = runCatching {
-            repository.stageDraft(oldScope, SUGGESTION_ID, "wrong source", "", 5, "")
+            repository.stageDraft(
+                oldScope,
+                SUGGESTION_ID,
+                NoteTaskSuggestionEdit("wrong source", "", 5, ""),
+            )
         }.exceptionOrNull()
         assertNotNull(rejectedConfirm)
         assertNotNull(rejectedEdit)
@@ -180,7 +202,11 @@ class NoteTaskSuggestionRepositoryTest {
         withTimeout(1_000) {
             assertNotNull(runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull())
             assertNotNull(runCatching {
-                repository.stageDraft(oldScope, SUGGESTION_ID, "blocked stale owner edit", "", 5, "")
+                repository.stageDraft(
+                    oldScope,
+                    SUGGESTION_ID,
+                    NoteTaskSuggestionEdit("blocked stale owner edit", "", 5, ""),
+                )
             }.exceptionOrNull())
         }
         assertEquals(0, transport.confirmCalls)
@@ -197,7 +223,11 @@ class NoteTaskSuggestionRepositoryTest {
         withTimeout(1_000) {
             assertNotNull(runCatching { repository.confirm(oldScope, SUGGESTION_ID) }.exceptionOrNull())
             assertNotNull(runCatching {
-                repository.stageDraft(oldScope, SUGGESTION_ID, "wrong owner", "", 5, "")
+                repository.stageDraft(
+                    oldScope,
+                    SUGGESTION_ID,
+                    NoteTaskSuggestionEdit("wrong owner", "", 5, ""),
+                )
             }.exceptionOrNull())
         }
         assertEquals(0, transport.confirmCalls)
@@ -249,7 +279,11 @@ class NoteTaskSuggestionRepositoryTest {
         val repository = repository()
         repository.open(source)
         val scope = requireNotNull(repository.state.value.actionScope)
-        repository.stageDraft(scope, SUGGESTION_ID, "Edited title", "Edited body", 9, "")
+        repository.stageDraft(
+            scope,
+            SUGGESTION_ID,
+            NoteTaskSuggestionEdit("Edited title", "Edited body", 9, ""),
+        )
         transport.failUpdateOnce = true
 
         repository.saveDraft(scope, SUGGESTION_ID)
@@ -280,6 +314,227 @@ class NoteTaskSuggestionRepositoryTest {
         assertEquals("revision-3", repository.state.value.items.single().remote.revision)
     }
 
+    @Test
+    fun taskSavePreservesUnchangedCalendarBookAndDue() = runBlocking {
+        transport.item = suggestion(
+            NoteTaskSuggestionStatusDto.DRAFT,
+            due = "2026-11-21T19:00:00+08:00",
+            calendarId = CALENDAR_ID,
+            taskBookId = TASK_BOOK_ID,
+        )
+        val repository = repository()
+        repository.open(source)
+        val item = repository.state.value.items.single()
+        val scope = requireNotNull(repository.state.value.actionScope)
+
+        repository.stageDraft(
+            scope,
+            SUGGESTION_ID,
+            NoteTaskSuggestionEdit(
+                title = "只改标题",
+                description = item.description,
+                priority = item.priority,
+                due = item.due,
+            ),
+        )
+        repository.saveDraft(scope, SUGGESTION_ID)
+
+        val request = requireNotNull(transport.lastUpdate)
+        assertEquals(CALENDAR_ID, request.calendarId)
+        assertEquals(TASK_BOOK_ID, request.taskBookId)
+        assertEquals(Instant.parse("2026-11-21T19:00:00+08:00").toString(), request.due)
+        assertEquals(null, request.start)
+        assertEquals(null, request.end)
+        assertEquals(null, request.timeZoneId)
+    }
+
+    @Test
+    fun eventSavePreservesUnmodifiedTimesZoneAndCalendarWhenOnlyTheTitleChanges() = runBlocking {
+        transport.item = eventSuggestion()
+        val repository = repository()
+        repository.open(source)
+        val item = repository.state.value.items.single()
+        val scope = requireNotNull(repository.state.value.actionScope)
+
+        repository.stageDraft(
+            scope,
+            SUGGESTION_ID,
+            NoteTaskSuggestionEdit(
+                title = "只改日程标题",
+                description = item.description,
+                priority = item.priority,
+                due = "",
+                start = item.start,
+                end = item.end,
+                timeZoneId = item.timeZoneId,
+            ),
+        )
+        repository.saveDraft(scope, SUGGESTION_ID)
+
+        val request = requireNotNull(transport.lastUpdate)
+        assertEquals("2026-11-21T11:00:00Z", request.start)
+        assertEquals("2026-11-21T12:00:00Z", request.end)
+        assertEquals("Asia/Shanghai", request.timeZoneId)
+        assertEquals(CALENDAR_ID, request.calendarId)
+        assertEquals(null, request.due)
+        assertEquals(null, request.taskBookId)
+    }
+
+    @Test
+    fun eventSaveRejectsANonIanaZoneBeforeSending() = runBlocking {
+        transport.item = eventSuggestion()
+        val repository = repository()
+        repository.open(source)
+        val item = repository.state.value.items.single()
+        val scope = requireNotNull(repository.state.value.actionScope)
+
+        repository.stageDraft(
+            scope,
+            SUGGESTION_ID,
+            NoteTaskSuggestionEdit(
+                title = item.title,
+                description = item.description,
+                priority = item.priority,
+                due = "",
+                start = item.start,
+                end = item.end,
+                timeZoneId = "China Standard Time",
+            ),
+        )
+        repository.saveDraft(scope, SUGGESTION_ID)
+
+        assertEquals(0, transport.updateCalls)
+        assertTrue(repository.state.value.message.orEmpty().contains("IANA"))
+        assertEquals("China Standard Time", repository.state.value.items.single().draft?.timeZoneId)
+    }
+
+    @Test
+    fun eventEditConvertsNewWallClockWithTheDeclaredIanaZone() = runBlocking {
+        transport.item = eventSuggestion()
+        val repository = repository()
+        repository.open(source)
+        val item = repository.state.value.items.single()
+        val scope = requireNotNull(repository.state.value.actionScope)
+
+        repository.stageDraft(
+            scope,
+            SUGGESTION_ID,
+            NoteTaskSuggestionEdit(
+                title = item.title,
+                description = item.description,
+                priority = item.priority,
+                due = "",
+                start = "2026-11-22T09:00",
+                end = "2026-11-22T10:00",
+                timeZoneId = "America/New_York",
+            ),
+        )
+        repository.saveDraft(scope, SUGGESTION_ID)
+
+        val request = requireNotNull(transport.lastUpdate)
+        assertEquals("2026-11-22T14:00:00Z", request.start)
+        assertEquals("2026-11-22T15:00:00Z", request.end)
+        assertEquals("America/New_York", request.timeZoneId)
+        assertEquals(CALENDAR_ID, request.calendarId)
+    }
+
+    @Test
+    fun eventConfirmationReceiptUsesEventIdAndAllowsAMissingTaskId() = runBlocking {
+        transport.item = eventSuggestion()
+        val repository = repository()
+        repository.open(source)
+        val scope = requireNotNull(repository.state.value.actionScope)
+
+        repository.confirm(scope, SUGGESTION_ID)
+
+        val confirmed = repository.state.value.items.single().remote
+        assertEquals(NoteTaskSuggestionStatusDto.CONFIRMED, confirmed.status)
+        assertEquals(EVENT_ID, confirmed.eventId)
+        assertEquals(null, confirmed.taskId)
+        assertEquals(EVENT_ID, repository.state.value.items.single().remote.eventId)
+    }
+
+    @Test
+    fun eventConfirmRequiresACompleteRangeBeforeSending() = runBlocking {
+        transport.item = eventSuggestion(end = null)
+        val repository = repository()
+        repository.open(source)
+        val scope = requireNotNull(repository.state.value.actionScope)
+
+        assertNotNull(runCatching { repository.confirm(scope, SUGGESTION_ID) }.exceptionOrNull())
+
+        assertEquals(0, transport.confirmCalls)
+        assertEquals(null, repository.state.value.items.single().draft)
+    }
+
+    @Test
+    fun lostEventConfirmReceiptRetriesWithTheSameRequestId() = runBlocking {
+        transport.item = eventSuggestion()
+        val repository = repository()
+        repository.open(source)
+        val scope = requireNotNull(repository.state.value.actionScope)
+        transport.failConfirmOnce = true
+
+        repository.confirm(scope, SUGGESTION_ID)
+        val firstRequestId = requireNotNull(repository.state.value.items.single().draft?.confirmRequestId)
+        repository.confirm(scope, SUGGESTION_ID)
+
+        assertEquals(2, transport.confirmCalls)
+        assertEquals(listOf(firstRequestId, firstRequestId), transport.confirmRequestIds)
+        assertEquals(EVENT_ID, repository.state.value.items.single().remote.eventId)
+        assertEquals(null, repository.state.value.items.single().draft)
+    }
+
+    @Test
+    fun legacyDraftJsonWithoutEventFieldsStillReads() {
+        val store = NoteTaskSuggestionStore.at(temp.root)
+        store.putDraft(
+            source,
+            binding,
+            NoteTaskSuggestionDraft(
+                suggestionId = SUGGESTION_ID,
+                expectedRevision = "revision-1",
+                title = "旧版本草稿",
+                description = "旧版本说明",
+                priority = 5,
+                due = "2026-11-21T19:00",
+                dirty = true,
+                updatedAtMillis = 1_000,
+            ),
+        )
+        val file = requireNotNull(
+            File(temp.root, "note-task-suggestions").listFiles()
+                ?.singleOrNull { it.isFile && it.extension == "json" },
+        )
+        val record = Json.parseToJsonElement(file.readText()).jsonObject
+        val legacyDraft = buildJsonObject {
+            record.getValue("drafts").jsonArray.single().jsonObject.forEach { (key, value) ->
+                if (key !in setOf("start", "end", "timeZoneId")) put(key, value)
+            }
+        }
+        val legacyRecord = buildJsonObject {
+            record.forEach { (key, value) ->
+                if (key == "drafts") {
+                    put(
+                        "drafts",
+                        buildJsonArray {
+                            add(legacyDraft)
+                        },
+                    )
+                } else {
+                    put(key, value)
+                }
+            }
+        }
+        writeVerifiedMaterialJson(file, legacyRecord.toString())
+
+        val read = store.read(source, binding).drafts.single()
+        assertEquals("旧版本草稿", read.title)
+        assertEquals("", read.start)
+        assertEquals("", read.end)
+        assertEquals("", read.timeZoneId)
+    }
+
     private fun repository() = NoteTaskSuggestionRepository(
         store = NoteTaskSuggestionStore.at(temp.root),
         targetProvider = { target },
@@ -288,12 +543,26 @@ class NoteTaskSuggestionRepositoryTest {
 
     private fun suggestion(
         status: NoteTaskSuggestionStatusDto,
+        kind: NoteTaskSuggestionKindDto = NoteTaskSuggestionKindDto.TASK,
         selectedSource: NoteTaskSuggestionSource = source,
+        due: String? = null,
+        calendarId: String? = null,
+        taskBookId: String? = null,
+        start: String? = null,
+        end: String? = null,
+        timeZoneId: String? = null,
+        taskId: String? = null,
+        eventId: String? = null,
     ) = NoteTaskSuggestionDto(
         artifactId = ARTIFACT_ID,
+        calendarId = calendarId,
         createdAt = "2026-11-02T00:00:00Z",
+        due = due,
+        end = end,
+        eventId = eventId,
         extractionId = EXTRACTION_ID,
         id = SUGGESTION_ID,
+        kind = kind,
         noteId = NOTE_ID,
         ordinal = 0,
         priority = 5,
@@ -301,10 +570,28 @@ class NoteTaskSuggestionRepositoryTest {
         sourceContentSha256 = selectedSource.contentSha256,
         sourceInputSha256 = selectedSource.inputSha256,
         sourceManifestSha256 = selectedSource.manifestSha256,
+        start = start,
         status = status,
+        taskBookId = taskBookId,
+        taskId = taskId,
+        timeZoneId = timeZoneId,
         title = "Server title",
         updatedAt = "2026-11-02T00:00:00Z",
         versionId = selectedSource.versionId,
+    )
+
+    private fun eventSuggestion(
+        status: NoteTaskSuggestionStatusDto = NoteTaskSuggestionStatusDto.DRAFT,
+        start: String? = "2026-11-21T11:00:00Z",
+        end: String? = "2026-11-21T12:00:00Z",
+        timeZoneId: String? = "Asia/Shanghai",
+    ) = suggestion(
+        status = status,
+        kind = NoteTaskSuggestionKindDto.EVENT,
+        calendarId = CALENDAR_ID,
+        start = start,
+        end = end,
+        timeZoneId = timeZoneId,
     )
 
     private inner class FakeSuggestionTransport : NoteTaskSuggestionTransport {
@@ -312,6 +599,7 @@ class NoteTaskSuggestionRepositoryTest {
         var dismissCalls = 0
         var confirmCalls = 0
         var updateCalls = 0
+        var lastUpdate: UpdateNoteTaskSuggestionRequest? = null
         val confirmRequestIds = mutableListOf<String>()
         val expectedRevisions = mutableListOf<String>()
         var failConfirmOnce = false
@@ -332,7 +620,8 @@ class NoteTaskSuggestionRepositoryTest {
         override suspend fun destinations() = emptyList<NoteTaskSuggestionDestination>()
 
         override suspend fun list(source: NoteTaskSuggestionSource) = listOf(
-            if (item.versionId == source.versionId) item else suggestion(NoteTaskSuggestionStatusDto.DRAFT, source),
+            if (item.versionId == source.versionId) item
+            else suggestion(NoteTaskSuggestionStatusDto.DRAFT, selectedSource = source),
         )
 
         override suspend fun extraction(source: NoteTaskSuggestionSource, id: String): Nothing =
@@ -349,14 +638,21 @@ class NoteTaskSuggestionRepositoryTest {
         ): NoteTaskSuggestionDto {
             updateCalls++
             expectedRevisions += request.expectedRevision
+            lastUpdate = request
             if (failUpdateOnce) {
                 failUpdateOnce = false
                 throw IOException("simulated lost CAS response")
             }
             item = item.copy(
+                calendarId = request.calendarId,
                 description = request.description,
+                due = request.due,
+                end = request.end,
                 priority = request.priority,
                 revision = "revision-3",
+                start = request.start,
+                taskBookId = request.taskBookId,
+                timeZoneId = request.timeZoneId,
                 title = request.title,
             )
             return item
@@ -377,12 +673,21 @@ class NoteTaskSuggestionRepositoryTest {
         ): NoteTaskSuggestionDto {
             confirmCalls++
             confirmRequestIds += requestId
+            val confirmed = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                item.copy(
+                    status = NoteTaskSuggestionStatusDto.CONFIRMED,
+                    taskId = null,
+                    eventId = EVENT_ID,
+                )
+            } else {
+                item.copy(status = NoteTaskSuggestionStatusDto.CONFIRMED, taskId = TASK_ID)
+            }
             if (failConfirmOnce) {
                 failConfirmOnce = false
-                this.item = item.copy(status = NoteTaskSuggestionStatusDto.CONFIRMED, taskId = TASK_ID)
+                this.item = confirmed
                 throw IOException("simulated lost confirmation receipt")
             }
-            this.item = item.copy(status = NoteTaskSuggestionStatusDto.CONFIRMED, taskId = TASK_ID)
+            this.item = confirmed
             return this.item
         }
     }
@@ -398,5 +703,8 @@ class NoteTaskSuggestionRepositoryTest {
         const val SUGGESTION_ID = "77777777-7777-4777-8777-777777777777"
         const val OTHER_VERSION_ID = "99999999-9999-4999-8999-999999999999"
         const val TASK_ID = "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa"
+        const val EVENT_ID = "bbbbbbbb-bbbb-4bbb-8bbb-bbbbbbbbbbbb"
+        const val CALENDAR_ID = "cccccccc-cccc-4ccc-8ccc-cccccccccccc"
+        const val TASK_BOOK_ID = "dddddddd-dddd-4ddd-8ddd-dddddddddddd"
     }
 }

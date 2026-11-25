@@ -7,6 +7,7 @@ import com.pim.core.contract.NoteDerivedVersionDtoApiResponse
 import com.pim.core.contract.NoteTaskSuggestionDto
 import com.pim.core.contract.NoteTaskSuggestionExtractionDto
 import com.pim.core.contract.NoteTaskSuggestionExtractionDtoApiResponse
+import com.pim.core.contract.NoteTaskSuggestionKindDto
 import com.pim.core.contract.NoteTaskSuggestionListDtoApiResponse
 import com.pim.core.contract.NoteTaskSuggestionStatusDto
 import com.pim.core.contract.StartNoteTaskSuggestionExtractionRequest
@@ -124,8 +125,7 @@ class NoteTaskSuggestionClient(
         )),
     ).also {
         it.requireSource(source)
-        require(it.id == item.id && it.status == NoteTaskSuggestionStatusDto.CONFIRMED &&
-            !it.taskId.isNullOrBlank()) { "确认回执未包含已创建的任务" }
+        requireConfirmationReceipt(item, it)
     }
 
     private fun NoteTaskSuggestionDto.requireSource(source: NoteTaskSuggestionSource) {
@@ -202,3 +202,24 @@ class NoteTaskSuggestionClient(
 }
 
 class NoteTaskSuggestionRequestRejectedException(message: String) : IOException(message)
+
+/**
+ * Event confirmations create an event and legitimately leave taskId null.
+ * Validate the identifier that belongs to the confirmed kind instead of
+ * requiring a task receipt for both kinds.
+ */
+internal fun requireConfirmationReceipt(
+    submitted: NoteTaskSuggestionDto,
+    confirmed: NoteTaskSuggestionDto,
+) {
+    require(confirmed.id == submitted.id && confirmed.status == NoteTaskSuggestionStatusDto.CONFIRMED &&
+        confirmed.kind == submitted.kind) { "确认回执与提交的建议不匹配" }
+    when (confirmed.kind) {
+        NoteTaskSuggestionKindDto.TASK -> require(!confirmed.taskId.isNullOrBlank()) {
+            "确认回执未包含已创建的任务"
+        }
+        NoteTaskSuggestionKindDto.EVENT -> require(!confirmed.eventId.isNullOrBlank()) {
+            "确认回执未包含已创建的日程"
+        }
+    }
+}

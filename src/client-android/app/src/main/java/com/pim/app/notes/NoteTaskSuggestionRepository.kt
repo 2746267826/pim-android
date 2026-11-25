@@ -1,9 +1,11 @@
 package com.pim.app.notes
 
 import com.pim.core.contract.NoteTaskSuggestionStatusDto
+import com.pim.core.contract.NoteTaskSuggestionKindDto
 import com.pim.core.contract.StartNoteTaskSuggestionExtractionRequest
 import com.pim.core.contract.UpdateNoteTaskSuggestionRequest
 import java.io.IOException
+import java.time.Instant
 import java.util.UUID
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.Dispatchers
@@ -290,10 +292,7 @@ class NoteTaskSuggestionRepository(
     suspend fun stageDraft(
         scope: NoteTaskSuggestionActionScope,
         suggestionId: String,
-        title: String,
-        description: String,
-        priority: Int,
-        due: String,
+        edit: NoteTaskSuggestionEdit,
     ) = withContext(Dispatchers.IO) {
         requireActionContext(scope)
         mutex.withLock {
@@ -308,20 +307,62 @@ class NoteTaskSuggestionRepository(
                 title = item.remote.title,
                 description = item.remote.description.orEmpty(),
                 priority = item.remote.priority,
-                due = suggestionDueInput(item.remote.due),
+                due = if (item.kind == NoteTaskSuggestionKindDto.TASK) {
+                    suggestionDueInput(item.remote.due)
+                } else {
+                    ""
+                },
                 dirty = false,
                 updatedAtMillis = System.currentTimeMillis(),
+                start = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                    suggestionEventInput(item.remote.start, item.remote.timeZoneId)
+                } else {
+                    ""
+                },
+                end = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                    suggestionEventInput(item.remote.end, item.remote.timeZoneId)
+                } else {
+                    ""
+                },
+                timeZoneId = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                    item.remote.timeZoneId.orEmpty()
+                } else {
+                    ""
+                },
             )
             check(baseline.expectedRevision == item.remote.revision) {
                 "服务端修订已变化；本机稿保留，刷新后手动处理冲突"
             }
+            val normalized = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                edit.copy(
+                    due = "",
+                    timeZoneId = edit.timeZoneId.trim(),
+                )
+            } else {
+                edit.copy(start = "", end = "", timeZoneId = "")
+            }
+            val dirty = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                normalized.title != item.remote.title ||
+                    normalized.description != item.remote.description.orEmpty() ||
+                    normalized.priority != item.remote.priority ||
+                    normalized.start != suggestionEventInput(item.remote.start, item.remote.timeZoneId) ||
+                    normalized.end != suggestionEventInput(item.remote.end, item.remote.timeZoneId) ||
+                    normalized.timeZoneId != item.remote.timeZoneId.orEmpty().trim()
+            } else {
+                normalized.title != item.remote.title ||
+                    normalized.description != item.remote.description.orEmpty() ||
+                    normalized.priority != item.remote.priority ||
+                    normalized.due != suggestionDueInput(item.remote.due)
+            }
             val staged = baseline.copy(
-                title = title,
-                description = description,
-                priority = priority,
-                due = due,
-                dirty = title != item.remote.title || description != item.remote.description.orEmpty() ||
-                    priority != item.remote.priority || due != suggestionDueInput(item.remote.due),
+                title = normalized.title,
+                description = normalized.description,
+                priority = normalized.priority,
+                due = normalized.due,
+                start = normalized.start,
+                end = normalized.end,
+                timeZoneId = normalized.timeZoneId,
+                dirty = dirty,
                 updatedAtMillis = System.currentTimeMillis(),
             )
             val publishedDraft = if (staged.dirty) {
@@ -349,18 +390,11 @@ class NoteTaskSuggestionRepository(
                 !item.confirmationPending && !item.hasConflict) { "草稿状态或修订基线已变化" }
             try {
                 ensureActionContext(source, target)
+                val request = updateRequest(item, draft)
                 val updated = factory.create(target).update(
                     source,
                     suggestionId,
-                    UpdateNoteTaskSuggestionRequest(
-                        calendarId = item.remote.calendarId,
-                        description = draft.description.ifBlank { null },
-                        due = suggestionDueWire(draft.due),
-                        expectedRevision = draft.expectedRevision,
-                        priority = draft.priority,
-                        taskBookId = item.remote.taskBookId,
-                        title = draft.title.trim(),
-                    ),
+                    request,
                 )
                 ensureActionContext(source, target)
                 store.recordSavedDraft(source, target.binding, draft, draft.copy(
@@ -368,7 +402,26 @@ class NoteTaskSuggestionRepository(
                     title = updated.title,
                     description = updated.description.orEmpty(),
                     priority = updated.priority,
-                    due = suggestionDueInput(updated.due),
+                    due = if (item.kind == NoteTaskSuggestionKindDto.TASK) {
+                        suggestionDueInput(updated.due)
+                    } else {
+                        ""
+                    },
+                    start = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                        suggestionEventInput(updated.start, updated.timeZoneId)
+                    } else {
+                        ""
+                    },
+                    end = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                        suggestionEventInput(updated.end, updated.timeZoneId)
+                    } else {
+                        ""
+                    },
+                    timeZoneId = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                        updated.timeZoneId.orEmpty()
+                    } else {
+                        ""
+                    },
                     dirty = false,
                     confirmRequestId = null,
                     confirmRevision = null,
@@ -400,7 +453,7 @@ class NoteTaskSuggestionRepository(
                 if (isCurrentScope(source, target)) refreshCurrentLocked(source)
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
-                publishMessage(source, target, "${describe(error, "放弃任务建议")}；服务器状态未标记成功。")
+                publishMessage(source, target, "${describe(error, "放弃建议")}；服务器状态未标记成功。")
             }
         }
     }
@@ -414,7 +467,10 @@ class NoteTaskSuggestionRepository(
             val (source, target) = requireActionContext(scope)
             val item = requireDraftItem(suggestionId, source)
             check(item.remote.status == NoteTaskSuggestionStatusDto.DRAFT && item.draft?.dirty != true) {
-                "请先保存或放弃本机编辑，再确认创建任务"
+                "请先保存或放弃本机编辑，再确认创建"
+            }
+            if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                check(item.eventReady) { item.eventHint ?: "日程时间或时区无效，不能确认创建" }
             }
             val current = item.draft
             if (item.confirmationPending) {
@@ -428,11 +484,30 @@ class NoteTaskSuggestionRepository(
                 title = item.remote.title,
                 description = item.remote.description.orEmpty(),
                 priority = item.remote.priority,
-                due = suggestionDueInput(item.remote.due),
+                due = if (item.kind == NoteTaskSuggestionKindDto.TASK) {
+                    suggestionDueInput(item.remote.due)
+                } else {
+                    ""
+                },
                 dirty = false,
                 confirmRequestId = UUID.randomUUID().toString(),
                 confirmRevision = item.remote.revision,
                 updatedAtMillis = System.currentTimeMillis(),
+                start = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                    suggestionEventInput(item.remote.start, item.remote.timeZoneId)
+                } else {
+                    ""
+                },
+                end = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                    suggestionEventInput(item.remote.end, item.remote.timeZoneId)
+                } else {
+                    ""
+                },
+                timeZoneId = if (item.kind == NoteTaskSuggestionKindDto.EVENT) {
+                    item.remote.timeZoneId.orEmpty()
+                } else {
+                    ""
+                },
             )
             val prepared = store.putDraft(source, target.binding, frozen)
                 .drafts.single { it.suggestionId == suggestionId }
@@ -444,7 +519,8 @@ class NoteTaskSuggestionRepository(
                 if (isCurrentScope(source, target)) refreshCurrentLocked(source)
             } catch (error: CancellationException) { throw error }
             catch (error: Exception) {
-                publishMessage(source, target, "${describe(error, "确认创建任务")}；冻结的确认标识会在重试时复用。")
+                val action = if (item.kind == NoteTaskSuggestionKindDto.EVENT) "确认创建日程" else "确认创建任务"
+                publishMessage(source, target, "${describe(error, action)}；冻结的确认标识会在重试时复用。")
             }
         }
     }
@@ -507,6 +583,49 @@ class NoteTaskSuggestionRepository(
                 remote.sourceManifestSha256.equals(source.manifestSha256, true) &&
                 remote.sourceGenerationTaskId == source.generationTaskId
         } ?: error("当前账号、笔记、派生版本或来源摘要没有此建议")
+
+    private fun updateRequest(
+        item: NoteTaskSuggestionItem,
+        draft: NoteTaskSuggestionDraft,
+    ): UpdateNoteTaskSuggestionRequest {
+        val title = draft.title.trim()
+        require(title.isNotEmpty()) { "建议标题不能为空" }
+        if (item.kind == NoteTaskSuggestionKindDto.TASK) {
+            return UpdateNoteTaskSuggestionRequest(
+                calendarId = item.remote.calendarId,
+                description = draft.description.ifBlank { null },
+                due = suggestionDueWire(draft.due),
+                expectedRevision = draft.expectedRevision,
+                priority = draft.priority,
+                taskBookId = item.remote.taskBookId,
+                title = title,
+            )
+        }
+
+        val zone = draft.timeZoneId.trim()
+        require(zone.isNotEmpty()) { "请先填写日程的 IANA 时区" }
+        require(isIanaTimeZone(zone)) { "日程时区必须是有效的 IANA 时区" }
+        require(draft.start.isNotBlank() && draft.end.isNotBlank()) {
+            "日程必须同时填写开始和结束时间"
+        }
+        val start = suggestionEventWire(draft.start, zone) ?: error("日程开始时间无效")
+        val end = suggestionEventWire(draft.end, zone) ?: error("日程结束时间无效")
+        require(Instant.parse(end).isAfter(Instant.parse(start))) {
+            "日程结束时间必须晚于开始时间"
+        }
+        return UpdateNoteTaskSuggestionRequest(
+            calendarId = item.remote.calendarId,
+            description = draft.description.ifBlank { null },
+            due = null,
+            end = end,
+            expectedRevision = draft.expectedRevision,
+            priority = draft.priority,
+            start = start,
+            taskBookId = null,
+            timeZoneId = zone,
+            title = title,
+        )
+    }
 
     private fun requireActionContext(
         scope: NoteTaskSuggestionActionScope,
@@ -590,6 +709,7 @@ class NoteTaskSuggestionRepository(
         error is HttpException && error.code() == 404 -> "$action 未找到固定版本或建议"
         error is HttpException && error.code() == 409 -> "$action 的服务端修订已变化；本机稿保留，请刷新核对"
         error is NoteTaskSuggestionRequestRejectedException -> error.message ?: "$action 被服务端拒绝"
+        error is IllegalArgumentException -> error.message ?: "$action 输入无效"
         error is IOException -> "$action 网络或回执未确认"
         else -> "$action 未确认"
     }

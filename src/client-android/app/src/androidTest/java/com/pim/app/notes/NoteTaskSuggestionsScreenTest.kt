@@ -20,8 +20,10 @@ import androidx.compose.runtime.mutableStateOf
 import androidx.test.ext.junit.runners.AndroidJUnit4
 import com.pim.app.ui.theme.PimTheme
 import com.pim.core.contract.NoteTaskSuggestionDto
+import com.pim.core.contract.NoteTaskSuggestionKindDto
 import com.pim.core.contract.NoteTaskSuggestionStatusDto
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -95,14 +97,14 @@ class NoteTaskSuggestionsScreenTest {
                     NoteTaskSuggestionsScreen(
                         state = renderedState.value,
                         actions = NoteTaskSuggestionsActions(
-                            edit = { _, _, title, description, priority, _ ->
-                                edits += Triple(title, description, priority)
+                            edit = { _, _, edit ->
+                                edits += Triple(edit.title, edit.description, edit.priority)
                                 val draft = NoteTaskSuggestionDraft(
                                     suggestionId = SUGGESTION_ID,
                                     expectedRevision = suggestion.revision,
-                                    title = title,
-                                    description = description,
-                                    priority = priority,
+                                    title = edit.title,
+                                    description = edit.description,
+                                    priority = edit.priority,
                                     due = "",
                                     dirty = true,
                                     updatedAtMillis = edits.size.toLong(),
@@ -158,7 +160,7 @@ class NoteTaskSuggestionsScreenTest {
                     NoteTaskSuggestionsScreen(
                         state = renderedState.value,
                         actions = NoteTaskSuggestionsActions(
-                            edit = { _, _, _, _, _, _ -> },
+                            edit = { _, _, _ -> },
                             discard = { _, id ->
                                 discarded += id
                                 renderedState.value = renderedState.value.copy(
@@ -416,11 +418,105 @@ class NoteTaskSuggestionsScreenTest {
         assertEquals(listOf(SUGGESTION_ID), discarded)
     }
 
+    @Test
+    fun eventSuggestionShowsIanaFieldsAndConfirmsThroughTheEventDialog() {
+        val suggestion = eventSuggestion()
+        var confirmed = false
+        compose.setContent {
+            PimTheme {
+                Box(Modifier.size(width = 360.dp, height = 800.dp)) {
+                    NoteTaskSuggestionsScreen(
+                        state = stateFor(suggestion),
+                        actions = NoteTaskSuggestionsActions(
+                            confirm = { _, id ->
+                                assertEquals(SUGGESTION_ID, id)
+                                confirmed = true
+                            },
+                        ),
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithTag("task-suggestion-kind-$SUGGESTION_ID")
+            .assertTextContains("日程", substring = true)
+        compose.onNodeWithTag("task-suggestion-range-$SUGGESTION_ID")
+            .assertTextContains("2026-11-21 19:00–20:00 · Asia/Shanghai", substring = true)
+        compose.onNodeWithTag("task-suggestion-timezone-$SUGGESTION_ID")
+            .performScrollTo()
+            .assertTextEquals("Asia/Shanghai")
+        compose.onNodeWithTag("task-suggestion-start-$SUGGESTION_ID")
+            .performScrollTo()
+            .assertTextEquals("2026-11-21T19:00")
+        compose.onNodeWithTag("task-suggestion-end-$SUGGESTION_ID")
+            .performScrollTo()
+            .assertTextEquals("2026-11-21T20:00")
+
+        compose.onNodeWithTag("task-suggestion-confirm-$SUGGESTION_ID")
+            .performScrollTo()
+            .performClick()
+        compose.onNodeWithText("创建日历日程？").assertIsDisplayed()
+        compose.onNodeWithTag("task-suggestion-confirm-dialog-$SUGGESTION_ID")
+            .performClick()
+
+        assertTrue(confirmed)
+    }
+
+    @Test
+    fun confirmedEventShowsTheEventIdWhenTaskIdIsNull() {
+        val suggestion = eventSuggestion().copy(
+            status = NoteTaskSuggestionStatusDto.CONFIRMED,
+            taskId = null,
+            eventId = EVENT_ID,
+        )
+        compose.setContent {
+            PimTheme {
+                Box(Modifier.size(width = 320.dp, height = 640.dp)) {
+                    NoteTaskSuggestionsScreen(state = stateFor(suggestion))
+                }
+            }
+        }
+
+        compose.onNodeWithText(
+            "已确认创建日程 ${EVENT_ID.take(8)}",
+            substring = true,
+        ).assertIsDisplayed()
+    }
+
+    @Test
+    fun typingAnIanaZoneBackfillsLegacyEventTimesFromServerAbsoluteValues() {
+        val suggestion = eventSuggestion().copy(timeZoneId = null)
+        var lastEdit: NoteTaskSuggestionEdit? = null
+        compose.setContent {
+            PimTheme {
+                Box(Modifier.size(width = 360.dp, height = 800.dp)) {
+                    NoteTaskSuggestionsScreen(
+                        state = stateFor(suggestion),
+                        actions = NoteTaskSuggestionsActions(
+                            edit = { _, _, edit -> lastEdit = edit },
+                        ),
+                    )
+                }
+            }
+        }
+
+        compose.onNodeWithTag("task-suggestion-timezone-$SUGGESTION_ID")
+            .performScrollTo()
+            .performTextReplacement("America/New_York")
+        compose.waitForIdle()
+
+        val edit = requireNotNull(lastEdit)
+        assertEquals("America/New_York", edit.timeZoneId)
+        assertEquals("2026-11-21T06:00", edit.start)
+        assertEquals("2026-11-21T07:00", edit.end)
+    }
+
     private fun suggestion() = NoteTaskSuggestionDto(
         artifactId = ARTIFACT_ID,
         createdAt = "2026-11-02T00:00:00Z",
         extractionId = EXTRACTION_ID,
         id = SUGGESTION_ID,
+        kind = NoteTaskSuggestionKindDto.TASK,
         noteId = NOTE_ID,
         ordinal = 0,
         priority = 5,
@@ -432,6 +528,14 @@ class NoteTaskSuggestionsScreenTest {
         title = "建议任务",
         updatedAt = "2026-11-02T00:00:00Z",
         versionId = VERSION_ID,
+    )
+
+    private fun eventSuggestion() = suggestion().copy(
+        kind = NoteTaskSuggestionKindDto.EVENT,
+        start = "2026-11-21T11:00:00Z",
+        end = "2026-11-21T12:00:00Z",
+        timeZoneId = "Asia/Shanghai",
+        title = "建议日程",
     )
 
     private fun stateFor(
@@ -481,5 +585,6 @@ class NoteTaskSuggestionsScreenTest {
         const val VERSION_ID = "44444444-4444-4444-8444-444444444444"
         const val EXTRACTION_ID = "55555555-5555-4555-8555-555555555555"
         const val SUGGESTION_ID = "66666666-6666-4666-8666-666666666666"
+        const val EVENT_ID = "77777777-7777-4777-8777-777777777777"
     }
 }

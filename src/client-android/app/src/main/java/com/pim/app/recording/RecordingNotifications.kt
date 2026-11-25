@@ -15,7 +15,7 @@ import com.pim.app.notes.NativeNotesActivity
 
 internal object RecordingNotifications {
     const val ID = 8201
-    private const val CHANNEL = "pim_recording_v1"
+    internal const val CHANNEL = "pim_recording_v1"
     const val PROBE_ACTIVITY = "com.pim.app.recording.RecordingProbeActivity"
 
     fun createChannel(context: Context) {

@@ -38,8 +38,8 @@ class RecordingService : Service() {
         val action = intent?.action
         if (!started) {
             if (action != RecordingController.START) { stopSelf(); return START_NOT_STICKY }
-            if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-                repository.report(RecordingProblem.Permission); stopSelf(); return START_NOT_STICKY
+            RecordingPermissionsInspector.inspect(this).startProblem()?.let {
+                repository.report(it); stopSelf(); return START_NOT_STICKY
             }
             if (!RecordingStoragePolicy.canStart(noBackupFilesDir.usableSpace)) {
                 repository.report(RecordingProblem.Storage); stopSelf(); return START_NOT_STICKY

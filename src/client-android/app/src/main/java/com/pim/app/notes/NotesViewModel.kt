@@ -98,7 +98,21 @@ class NotesViewModel @Inject constructor(
     }
 
     fun open(id: String?) { if (!busy.value) { saved["noteId"] = id; mutableMessage.value = null; dismissCompletion() } }
-    fun create() { open(notes.create()) }
+
+    @Synchronized
+    fun create(): String? {
+        if (busy.value || selectedId.value != null) return null
+        val id = notes.create()
+        open(id)
+        return id
+    }
+
+    @Synchronized
+    fun createForLibraryLaunch(): String? {
+        if (busy.value) return null
+        return notes.create()
+    }
+
     fun openLegacyQuickNoteMigration() { viewModelScope.launch { legacyQuickNoteMigration.open() } }
     fun refreshLegacyQuickNoteMigration() {
         viewModelScope.launch { legacyQuickNoteMigration.open(legacyQuickNoteMigration.state.value.page) }

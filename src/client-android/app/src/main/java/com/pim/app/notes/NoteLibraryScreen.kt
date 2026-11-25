@@ -95,14 +95,17 @@ internal fun NoteLibraryScreen(
             if (state.loadFailed) item { PimStatusBanner("本地记录读取失败，原文件保留。请重新打开页面。", PimStatusTone.Error) }
             if (selectedId != null) item { PimStatusBanner("该记录仍在加载或无法读取，不会用空白文档覆盖它。", PimStatusTone.Warning) }
             recording.session?.takeIf { it.active && it.noteId != null }?.let { session ->
+                val title = session.noteId?.let { noteDisplayTitle(state, it) } ?: "未命名记录"
                 item {
                     OutlinedCard(onClick = { onOpen(session.noteId) }, modifier = Modifier.fillMaxWidth()) {
                         Row(Modifier.padding(d.spaceLarge), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(d.spaceMedium)) {
                             Icon(Icons.Default.GraphicEq, null, tint = MaterialTheme.colorScheme.primary)
                             Column(Modifier.weight(1f)) {
-                                Text("返回正在录音的笔记", style = MaterialTheme.typography.titleSmall)
-                                Text("离开编辑页不会结束录音", style = MaterialTheme.typography.bodySmall)
+                                Text("正在录音：$title", style = MaterialTheme.typography.titleSmall, maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis)
+                                Text("点按返回原笔记，或继续在列表中浏览；离开编辑页不会结束录音",
+                                    style = MaterialTheme.typography.bodySmall)
                             }
                             Icon(Icons.Default.ChevronRight, null)
                         }
@@ -228,3 +231,8 @@ internal fun NoteLibraryScreen(
 internal fun noteDate(note: NoteDocument): String = (note.source["createdAtMillis"] as? JsonPrimitive)?.longOrNull?.let {
     SimpleDateFormat("M月d日 HH:mm", Locale.SIMPLIFIED_CHINESE).format(Date(it))
 }.orEmpty()
+
+internal fun noteDisplayTitle(state: NotesState, id: String): String =
+    state.documents[id]?.title?.takeIf { it.isNotBlank() }
+        ?: state.entries.firstOrNull { it.id == id }?.title?.takeIf { it.isNotBlank() }
+        ?: "未命名记录"

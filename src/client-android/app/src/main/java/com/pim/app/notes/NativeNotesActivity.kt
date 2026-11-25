@@ -5,11 +5,11 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
 import android.os.Bundle
+import android.provider.Settings
 import androidx.activity.ComponentActivity
 import androidx.activity.compose.setContent
 import androidx.activity.result.contract.ActivityResultContracts
@@ -21,7 +21,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.toArgb
-import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -33,17 +32,19 @@ import java.io.File
 @AndroidEntryPoint
 class NativeNotesActivity : ComponentActivity() {
     internal val model: NotesViewModel by viewModels()
-    private var permissionNote: String? = null
+    private val recordingRequests = RecordingRequestGate()
+    private var recordingPermissions by mutableStateOf(RecordingPermissions())
     private var exportSnapshot: NoteDocument? = null
     private var player: MediaPlayer? = null
     private var playing by mutableStateOf<String?>(null)
     private var cameraUri: Uri? = null
-    private var notificationsVisible by mutableStateOf(true)
 
     private val permissions = registerForActivityResult(ActivityResultContracts.RequestMultiplePermissions()) {
-        val id = permissionNote
-        permissionNote = null
-        if (id != null && model.selectedId.value == id) startRecording(id)
+        val id = recordingRequests.consume()
+        refreshRecordingPermissions()
+        if (id == null || model.selectedId.value != id) return@registerForActivityResult
+        val current = recordingPermissions
+        if (current.canStart) startRecording(id) else model.tell(current.message)
     }
     private val gallery = registerForActivityResult(ActivityResultContracts.GetContent()) { uri ->
         if (uri == null) { model.cancelMaterial(); model.tell("已取消插入照片") }
@@ -85,6 +86,8 @@ class NativeNotesActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        savedInstanceState?.getString(PENDING_PERMISSION_NOTE)?.let(recordingRequests::restore)
+        refreshRecordingPermissions()
         if (savedInstanceState == null) openFromIntent(intent)
         setContent {
             val notes by model.notes.state.collectAsStateWithLifecycle()
@@ -137,8 +140,8 @@ class NativeNotesActivity : ComponentActivity() {
                         isAppearanceLightNavigationBars = true
                     }
                 }
-                NativeNotesScreen(notes, selected, recording, busy, message, playing, notificationsVisible, materials,
-                    onCreate = model::create, onOpen = { id ->
+                NativeNotesScreen(notes, selected, recording, busy, message, playing, recordingPermissions, materials,
+                    onCreate = { model.create() }, onOpen = { id ->
                         if (id == null && intent.getBooleanExtra(FROM_LIBRARY, false)) finish() else model.open(id)
                     },
                     readDocument = { model.notes.state.value.documents[it] }, onProblem = model::tell,
@@ -150,13 +153,7 @@ class NativeNotesActivity : ComponentActivity() {
                             catch (_: Exception) { model.cancelMaterial(); model.tell("无法保存插入位置或没有可用的照片选择器，原材料保留") }
                         }
                     },
-                    onRecord = { id ->
-                        stopPlayback()
-                        permissionNote = id
-                        permissions.launch(if (Build.VERSION.SDK_INT >= 33)
-                            arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
-                        else arrayOf(Manifest.permission.RECORD_AUDIO))
-                    },
+                    onRecord = { id -> stopPlayback(); requestRecording(id) },
                     onPauseResume = {
                         recording.session?.let {
                             val error = if (it.phase == RecordingPhase.Paused) RecordingController.resume(this, it.id)
@@ -198,6 +195,8 @@ class NativeNotesActivity : ComponentActivity() {
                     processing = processing, onRefreshProcessing = model::refreshProcessing,
                     legacyMigration = legacyMigration,
                     legacyMigrationActions = legacyMigrationActions,
+                    onRequestRecordingPermissions = { model.selectedId.value?.let(::requestRecording) },
+                    onOpenRecordingSettings = ::openRecordingSettings,
                     artifactOverlay = {
                         artifactEntry?.let { entry ->
                             NoteArtifactOverlay(
@@ -223,9 +222,11 @@ class NativeNotesActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); openFromIntent(intent) }
     override fun onResume() {
         super.onResume()
-        val manager = getSystemService(android.app.NotificationManager::class.java)
-        notificationsVisible = androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled() &&
-            manager.getNotificationChannel("pim_recording_v1")?.importance != android.app.NotificationManager.IMPORTANCE_NONE
+        refreshRecordingPermissions()
+    }
+    override fun onSaveInstanceState(outState: Bundle) {
+        outState.putString(PENDING_PERMISSION_NOTE, recordingRequests.pendingNoteId())
+        super.onSaveInstanceState(outState)
     }
     override fun onStop() { stopPlayback(); super.onStop() }
     private fun openFromIntent(intent: Intent) { intent.getStringExtra(NOTE_ID)?.takeIf(::validNoteId)?.let(model::open) }
@@ -243,14 +244,69 @@ class NativeNotesActivity : ComponentActivity() {
     }
     private fun cameraFile(token: String): File { require(validNoteId(token)); return File(cacheDir, "note-camera/$token.jpg") }
 
+    private fun requestRecording(id: String) {
+        if (model.notes.state.value.savedRevisions[id] != model.notes.state.value.documents[id]?.revision) {
+            model.tell("请先等待本地保存完成，再开始录音")
+            return
+        }
+        val currentRecording = model.recordings.state.value
+        if (currentRecording.active || currentRecording.preparing) {
+            model.tell("已有录音正在开启或进行中，请先返回原笔记或结束该段录音")
+            return
+        }
+        refreshRecordingPermissions()
+        val current = recordingPermissions
+        if (current.canStart) {
+            startRecording(id)
+            return
+        }
+        if (!current.canRequest) {
+            model.tell(current.message)
+            return
+        }
+        if (!recordingRequests.begin(id)) return
+        try {
+            permissions.launch(if (Build.VERSION.SDK_INT >= 33)
+                arrayOf(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+            else arrayOf(Manifest.permission.RECORD_AUDIO))
+        } catch (_: Exception) {
+            recordingRequests.cancel()
+            model.tell("系统没有打开权限请求；请从上方提示打开应用设置后重试")
+        }
+    }
+
     private fun startRecording(id: String) {
+        if (model.selectedId.value != id) return
         val note = model.notes.state.value.documents[id] ?: return
         if (model.notes.state.value.savedRevisions[id] != note.revision) { model.tell("请先等待本地保存完成，再开始录音"); return }
-        if (model.recordings.state.value.active) { model.tell("已有录音正在进行，请先结束该段"); return }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            model.tell(RecordingProblem.Permission.message); return
+        val currentRecording = model.recordings.state.value
+        if (currentRecording.active || currentRecording.preparing) {
+            model.tell("已有录音正在开启或进行中，请先返回原笔记或结束该段录音")
+            return
         }
+        val current = RecordingPermissionsInspector.inspect(this)
+        recordingPermissions = current
+        if (!current.canStart) { model.tell(current.message); return }
         RecordingController.start(this, id)?.let { model.tell(it.message) }
+    }
+
+    private fun refreshRecordingPermissions() {
+        recordingPermissions = RecordingPermissionsInspector.inspect(this)
+    }
+
+    private fun openRecordingSettings(setting: RecordingPermissionSetting) {
+        val intent = when (setting) {
+            RecordingPermissionSetting.AppSettings ->
+                Intent(Settings.ACTION_APPLICATION_DETAILS_SETTINGS, Uri.fromParts("package", packageName, null))
+            RecordingPermissionSetting.NotificationSettings ->
+                Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS).putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            RecordingPermissionSetting.RecordingChannelSettings ->
+                Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    .putExtra(Settings.EXTRA_CHANNEL_ID, RecordingNotifications.CHANNEL)
+        }
+        try { startActivity(intent) }
+        catch (_: Exception) { model.tell("没有可用的系统设置页面；请从系统设置打开 PIM 的权限和通知") }
     }
 
     private fun playSegment(session: RecordingSession, segment: Int) {
@@ -278,6 +334,7 @@ class NativeNotesActivity : ComponentActivity() {
     companion object {
         private const val NOTE_ID = "native_note_id"
         private const val FROM_LIBRARY = "native_note_from_library"
+        private const val PENDING_PERMISSION_NOTE = "native_note_pending_permission"
         fun intent(context: Context, id: String? = null, fromLibrary: Boolean = false) = Intent(context, NativeNotesActivity::class.java)
             .putExtra(NOTE_ID, id).putExtra(FROM_LIBRARY, fromLibrary).apply {
             if (id != null) data = Uri.Builder().scheme("pim-note").authority("local").appendPath(id).build()

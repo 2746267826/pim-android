@@ -37,6 +37,15 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
     }
     val target = rememberUploadTarget(model.uploads)
     var showAsr by remember { mutableStateOf(false) }
+    var launchingNote by remember { mutableStateOf(false) }
+    val lifecycle = androidx.compose.ui.platform.LocalLifecycleOwner.current.lifecycle
+    DisposableEffect(lifecycle) {
+        val observer = androidx.lifecycle.LifecycleEventObserver { _, event ->
+            if (event == androidx.lifecycle.Lifecycle.Event.ON_RESUME) launchingNote = false
+        }
+        lifecycle.addObserver(observer)
+        onDispose { lifecycle.removeObserver(observer) }
+    }
     val asrActions = remember(model) {
         NoteAsrActions(
             refresh = model::refreshAsr,
@@ -58,7 +67,18 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
     Surface(modifier) {
       Box(Modifier.fillMaxSize()) {
         NoteLibraryScreen(notes, null, recordings, busy,
-            onCreate = { context.startActivity(NativeNotesActivity.intent(context, model.notes.create(), true)) },
+            onCreate = {
+                if (!launchingNote) {
+                    model.createForLibraryLaunch()?.let { id ->
+                        launchingNote = true
+                        try { context.startActivity(NativeNotesActivity.intent(context, id, true)) }
+                        catch (_: Exception) {
+                            launchingNote = false
+                            model.tell("无法打开笔记编辑页，笔记已保存在本机")
+                        }
+                    }
+                }
+            },
             onOpen = { id -> if (id != null) context.startActivity(NativeNotesActivity.intent(context, id, true)) },
             onExit = null, uploads = uploads, currentTarget = target, autoSubmitAuthorization = autoSubmitAuthorization,
             onEnableAutoSubmit = model::enableAutoSubmit, onRevokeAutoSubmit = model::revokeAutoSubmit,

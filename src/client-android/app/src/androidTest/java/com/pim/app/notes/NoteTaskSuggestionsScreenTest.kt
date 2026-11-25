@@ -455,7 +455,9 @@ class NoteTaskSuggestionsScreenTest {
         compose.onNodeWithTag("task-suggestion-confirm-$SUGGESTION_ID")
             .performScrollTo()
             .performClick()
-        compose.onNodeWithText("创建日历日程？").assertIsDisplayed()
+        compose.waitForIdle()
+        compose.onNodeWithText("将使用当前保存版本创建日程：建议日程", substring = true)
+            .assertIsDisplayed()
         compose.onNodeWithTag("task-suggestion-confirm-dialog-$SUGGESTION_ID")
             .performClick()
 

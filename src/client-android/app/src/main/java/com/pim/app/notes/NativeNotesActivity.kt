@@ -274,8 +274,14 @@ class NativeNotesActivity : ComponentActivity() {
             return
         }
         if (!recordingRequests.begin(id)) return
+        val runtimePermissions = current.runtimePermissionsToRequest(Build.VERSION.SDK_INT)
+        if (runtimePermissions.isEmpty()) {
+            recordingRequests.cancel()
+            model.tell(current.message)
+            return
+        }
         try {
-            permissions.launch(current.runtimePermissionsToRequest(Build.VERSION.SDK_INT))
+            permissions.launch(runtimePermissions)
         } catch (_: Exception) {
             recordingRequests.cancel()
             model.tell("系统没有打开权限请求；请从上方提示打开应用设置后重试")

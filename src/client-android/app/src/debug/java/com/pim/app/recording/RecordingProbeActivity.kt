@@ -55,6 +55,7 @@ class RecordingProbeActivity : ComponentActivity() {
 
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
+        refreshRecordingPermissions()
         lifecycleScope.launch(Dispatchers.IO) {
             try { repository.initialize() } catch (_: Exception) { repository.report(RecordingProblem.Storage) }
         }

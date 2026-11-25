@@ -37,6 +37,89 @@ class StatusPermissionNavigatorTest {
     }
 
     @Test
+    fun grantedBatteryOptimizationOpensTheReadOnlySettingsList() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val intent = StatusPermissionNavigator.intentFor(
+            context = context,
+            issueCode = "battery-optimization-missing",
+            access = CollectionPermissionAccess.GRANTED,
+        )
+
+        assertEquals(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS, intent.action)
+    }
+
+    @Test
+    fun batteryRequestFailureFallsBackToOptimizationSettings() {
+        val context = SecurityRecordingContext(
+            ApplicationProvider.getApplicationContext(),
+            failuresBeforeSuccess = 1,
+        )
+
+        val opened = StatusPermissionNavigator.open(
+            context = context,
+            issueCode = "battery-optimization-missing",
+            access = CollectionPermissionAccess.RESTRICTED,
+        )
+
+        assertTrue(opened)
+        assertEquals(
+            listOf(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+            ),
+            context.actions,
+        )
+    }
+
+    @Test
+    fun batteryRequestFailureEventuallyFallsBackToAppDetails() {
+        val context = SecurityRecordingContext(
+            ApplicationProvider.getApplicationContext(),
+            failuresBeforeSuccess = 2,
+        )
+
+        val opened = StatusPermissionNavigator.open(
+            context = context,
+            issueCode = "battery-optimization-missing",
+            access = CollectionPermissionAccess.MISSING,
+        )
+
+        assertTrue(opened)
+        assertEquals(
+            listOf(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            ),
+            context.actions,
+        )
+    }
+
+    @Test
+    fun failedBatteryOptimizationFallbacksReportFalseWithoutCrashing() {
+        val context = SecurityRecordingContext(
+            ApplicationProvider.getApplicationContext(),
+            failuresBeforeSuccess = Int.MAX_VALUE,
+        )
+
+        val opened = StatusPermissionNavigator.open(
+            context = context,
+            issueCode = "battery-optimization-missing",
+            access = CollectionPermissionAccess.CHECK_FAILED,
+        )
+
+        assertFalse(opened)
+        assertEquals(
+            listOf(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            ),
+            context.actions,
+        )
+    }
+
+    @Test
     fun foregroundLocationIssueNavigatesToAppDetails() {
         val context = ApplicationProvider.getApplicationContext<Application>()
         val issue = StatusIssue.foregroundLocationMissing()

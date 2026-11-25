@@ -2,6 +2,7 @@ package com.pim.app.permissions
 
 import android.Manifest
 import android.app.Application
+import android.app.NotificationManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.os.PowerManager
@@ -10,7 +11,10 @@ import com.pim.app.TestPimApp
 import com.pim.app.mobile.usage.UsageAccessChecker
 import com.pim.app.status.CollectionPermissionAccess
 import com.pim.app.status.CollectionPermissionKind
+import com.pim.app.status.accessOf
+import com.pim.app.status.blockingCollectionPermissions
 import com.pim.app.status.collectionPermissions
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertFalse
 import org.junit.Assert.assertTrue
 import org.junit.Test
@@ -40,6 +44,86 @@ class PermissionStatusRepositoryTest {
         val snapshot = repo.snapshot()
 
         assertTrue(snapshot.batteryOptimizationGranted)
+    }
+
+    @Test
+    fun batteryOptimizationCheckFailureIsNotReportedAsDenied() {
+        val base = ApplicationProvider.getApplicationContext<Application>()
+        val context = object : ContextWrapper(base) {
+            override fun getSystemService(name: String): Any? =
+                if (name == Context.POWER_SERVICE) {
+                    throw SecurityException("power service restricted")
+                } else {
+                    super.getSystemService(name)
+                }
+        }
+
+        val snapshot = PermissionStatusRepository(context, UsageAccessChecker(context)).snapshot()
+
+        assertEquals(
+            CollectionPermissionAccess.CHECK_FAILED,
+            snapshot.accessOf(CollectionPermissionKind.BATTERY_OPTIMIZATION),
+        )
+        assertTrue(CollectionPermissionKind.BATTERY_OPTIMIZATION in snapshot.failedPermissionChecks)
+    }
+
+    @Test
+    fun missingPowerManagerIsACheckFailure() {
+        val base = ApplicationProvider.getApplicationContext<Application>()
+        val context = object : ContextWrapper(base) {
+            override fun getSystemService(name: String): Any? =
+                if (name == Context.POWER_SERVICE) null else super.getSystemService(name)
+        }
+
+        val snapshot = PermissionStatusRepository(context, UsageAccessChecker(context)).snapshot()
+
+        assertEquals(
+            CollectionPermissionAccess.CHECK_FAILED,
+            snapshot.accessOf(CollectionPermissionKind.BATTERY_OPTIMIZATION),
+        )
+    }
+
+    @Test
+    fun notificationMasterSwitchOffMarksGrantedPermissionAsRestricted() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(context).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val notificationManager = context.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        shadowOf(notificationManager).setNotificationsEnabled(false)
+
+        val snapshot = PermissionStatusRepository(context, UsageAccessChecker(context)).snapshot()
+
+        assertTrue("runtime permission itself is still granted", snapshot.notificationGranted)
+        assertEquals(
+            CollectionPermissionAccess.RESTRICTED,
+            snapshot.accessOf(CollectionPermissionKind.NOTIFICATION),
+        )
+        assertEquals("系统通知已关闭", snapshot.restrictedPermissions[CollectionPermissionKind.NOTIFICATION])
+        assertTrue(
+            snapshot.blockingCollectionPermissions()
+                .any { it.kind == CollectionPermissionKind.NOTIFICATION }
+        )
+    }
+
+    @Test
+    fun notificationStateReadFailureIsARequiredPermissionCheckFailure() {
+        val base = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(base).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val context = object : ContextWrapper(base) {
+            override fun getSystemService(name: String): Any? =
+                if (name == Context.NOTIFICATION_SERVICE) null else super.getSystemService(name)
+        }
+
+        val snapshot = PermissionStatusRepository(context, UsageAccessChecker(context)).snapshot()
+
+        assertEquals(
+            CollectionPermissionAccess.CHECK_FAILED,
+            snapshot.accessOf(CollectionPermissionKind.NOTIFICATION),
+        )
+        assertTrue(CollectionPermissionKind.NOTIFICATION in snapshot.failedPermissionChecks)
+        assertTrue(
+            snapshot.blockingCollectionPermissions()
+                .any { it.kind == CollectionPermissionKind.NOTIFICATION }
+        )
     }
 
     @Test

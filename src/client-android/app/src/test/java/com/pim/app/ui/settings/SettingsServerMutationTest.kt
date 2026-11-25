@@ -2,6 +2,7 @@ package com.pim.app.ui.settings
 
 import android.Manifest
 import android.app.Application
+import android.app.NotificationManager
 import android.content.Context
 import android.content.ContextWrapper
 import android.content.SharedPreferences
@@ -16,6 +17,9 @@ import com.pim.app.schedule.ScheduleCacheStore
 import com.pim.app.schedule.ScheduleCacheWindow
 import com.pim.app.schedule.ScheduleCacheDocument
 import com.pim.app.status.PermissionStatusSnapshot
+import com.pim.app.status.CollectionPermissionAccess
+import com.pim.app.status.CollectionPermissionKind
+import com.pim.app.status.collectionPermissions
 import com.pim.app.mobile.sync.MobileSyncScheduler
 import com.pim.app.mobile.usage.UsageAccessChecker
 import com.pim.app.permissions.PermissionStatusRepository
@@ -789,6 +793,73 @@ class SettingsServerMutationTest {
     }
 
     @Test
+    fun notificationMasterSwitchOffBlocksContinuousCollectionStart() {
+        val fixture = fixture()
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        fixture.viewModel.setContinuousCollectionEnabled(false)
+        shadowOf(application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val notificationManager =
+            application.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        shadowOf(notificationManager).setNotificationsEnabled(false)
+        drainStartedServices(application)
+
+        fixture.viewModel.setContinuousCollectionEnabled(true)
+
+        val state = fixture.viewModel.state.value
+        val notification = state.permissions.collectionPermissions()
+            .single { it.kind == CollectionPermissionKind.NOTIFICATION }
+        assertEquals(CollectionPermissionAccess.RESTRICTED, notification.access)
+        assertTrue(state.collectionStatus.orEmpty().contains("通知"))
+        assertTrue(state.collectionStatus.orEmpty().contains("受限"))
+        assertNull("notification master off must block service start", shadowOf(application).nextStartedService)
+    }
+
+    @Test
+    fun notificationMasterSwitchOffBlocksPresetReloadOfRunningCollection() {
+        val fixture = fixture()
+        val application = ApplicationProvider.getApplicationContext<Application>()
+        val notificationManager =
+            application.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        shadowOf(notificationManager).setNotificationsEnabled(false)
+        drainStartedServices(application)
+
+        fixture.viewModel.applyTrackingPreset("standard")
+
+        val state = fixture.viewModel.state.value
+        val notification = state.permissions.collectionPermissions()
+            .single { it.kind == CollectionPermissionKind.NOTIFICATION }
+        assertEquals(CollectionPermissionAccess.RESTRICTED, notification.access)
+        assertTrue(state.collectionStatus.orEmpty().contains("受限"))
+        assertNull("preset reload must not bypass notification restriction", shadowOf(application).nextStartedService)
+    }
+
+    @Test
+    fun notificationCheckFailureBlocksContinuousCollectionStart() {
+        val base = ApplicationProvider.getApplicationContext<Application>()
+        shadowOf(base).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        val failingContext = object : ContextWrapper(base) {
+            override fun getSystemService(name: String): Any? =
+                if (name == Context.NOTIFICATION_SERVICE) null else super.getSystemService(name)
+        }
+        val permissionRepository = PermissionStatusRepository(
+            failingContext,
+            UsageAccessChecker(failingContext),
+        )
+        val fixture = fixture(permissionStatusRepository = permissionRepository)
+        fixture.viewModel.setContinuousCollectionEnabled(false)
+        drainStartedServices(base)
+
+        fixture.viewModel.setContinuousCollectionEnabled(true)
+
+        val state = fixture.viewModel.state.value
+        val notification = state.permissions.collectionPermissions()
+            .single { it.kind == CollectionPermissionKind.NOTIFICATION }
+        assertEquals(CollectionPermissionAccess.CHECK_FAILED, notification.access)
+        assertTrue(state.collectionStatus.orEmpty().contains("检查失败"))
+        assertNull("check failure must block service start", shadowOf(base).nextStartedService)
+    }
+
+    @Test
     fun missingRecommendedPermissionDoesNotBlockCollection() {
         val fixture = fixture()
         val application = ApplicationProvider.getApplicationContext<Application>()
@@ -1064,7 +1135,8 @@ class SettingsServerMutationTest {
         onEnsureRunningState: () -> Unit = {},
         isServiceRunning: () -> Boolean = { ForegroundLocationService.isRunning() },
         cleanerThrows: Boolean = false,
-        loginTransport: ServerBoundLoginTransport? = null
+        loginTransport: ServerBoundLoginTransport? = null,
+        permissionStatusRepository: PermissionStatusRepository? = null,
     ): Fixture {
         val cacheDir = File(context.filesDir, "settings-cache-test-" + System.nanoTime())
         cacheDir.mkdirs()
@@ -1112,7 +1184,7 @@ class SettingsServerMutationTest {
             monotonicNanos = { 0L }
         )
         val mobileSyncScheduler = MobileSyncScheduler(context, trackingSettings)
-        val permissionStatusRepository = PermissionStatusRepository(
+        val permissionRepository = permissionStatusRepository ?: PermissionStatusRepository(
             context,
             UsageAccessChecker(context)
         )
@@ -1126,7 +1198,7 @@ class SettingsServerMutationTest {
         ) { System.currentTimeMillis() }
         val runningStateRestorer = RunningStateRestorer(
             trackingSettingsStore = trackingSettings,
-            permissionStatusRepository = permissionStatusRepository,
+            permissionStatusRepository = permissionRepository,
             structuredLogRepository = structuredLogRepository,
             cancelLegacySyncWork = {},
             ensurePeriodicSync = {
@@ -1185,7 +1257,7 @@ class SettingsServerMutationTest {
             serverBoundLoginCoordinator = coordinator,
             trackingSettingsStore = trackingSettings,
             foregroundLocationController = foregroundLocationController,
-            permissionStatusRepository = permissionStatusRepository,
+            permissionStatusRepository = permissionRepository,
             connectionProbeService = probeService,
             connectionProbeStore = probeStore,
             mobileSyncScheduler = mobileSyncScheduler,
@@ -1213,7 +1285,7 @@ class SettingsServerMutationTest {
             trackingSettings = trackingSettings,
             serverPreferences = serverPreferences,
             mobileSyncScheduler = mobileSyncScheduler,
-            permissionStatusRepository = permissionStatusRepository,
+            permissionStatusRepository = permissionRepository,
             probeStore = probeStore,
             diagnosticOperations = diagnosticOperations,
             webViewSiteDataCleaner = siteDataCleaner,

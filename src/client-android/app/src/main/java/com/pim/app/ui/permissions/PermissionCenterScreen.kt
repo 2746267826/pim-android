@@ -95,7 +95,9 @@ fun PermissionCenterScreen(
                 row = row,
                 statusText = statusText,
                 statusColor = statusColor,
-                onClick = { StatusPermissionNavigator.open(context, row.issueCode) }
+                onClick = {
+                    StatusPermissionNavigator.open(context, row.issueCode, collectionState?.access)
+                }
             )
         }
 

@@ -42,8 +42,16 @@ data class KeepAliveSectionState(
     val lastWakeAtUtcMillis: Long?,
     val healthAlert: String?,
     /** 台账里的登记状态文案（AC-22.2：界面显示「已关闭」）。 */
-    val scheduleStatusText: String
+    val scheduleStatusText: String,
+    /** 首帧和读取失败不能复用旧值或伪装成「已关闭」。 */
+    val readState: KeepAliveSectionReadState = KeepAliveSectionReadState.Loaded
 )
+
+enum class KeepAliveSectionReadState {
+    Loading,
+    Loaded,
+    Failed,
+}
 
 /**
  * 「保活与诊断」分区（REQ-22 AC-22.1）。
@@ -72,7 +80,12 @@ fun KeepAliveSection(
             Column(Modifier.weight(1f)) {
                 Text("保活总开关")
                 Text(
-                    text = if (state.enabled) "已开启：按下方节奏登记精确闹钟" else "已关闭：不登记任何闹钟",
+                    text = when (state.readState) {
+                        KeepAliveSectionReadState.Loading -> "读取中…"
+                        KeepAliveSectionReadState.Failed -> "状态暂时无法读取"
+                        KeepAliveSectionReadState.Loaded ->
+                            if (state.enabled) "已开启：按下方节奏登记精确闹钟" else "已关闭：不登记任何闹钟"
+                    },
                     style = MaterialTheme.typography.bodySmall,
                     color = MaterialTheme.colorScheme.onSurfaceVariant,
                     modifier = Modifier.testTag("keepalive-enabled-text")
@@ -81,6 +94,7 @@ fun KeepAliveSection(
             Switch(
                 checked = state.enabled,
                 onCheckedChange = onToggleEnabled,
+                enabled = state.readState == KeepAliveSectionReadState.Loaded,
                 modifier = Modifier.testTag("keepalive-enabled-switch")
             )
         }
@@ -89,12 +103,16 @@ fun KeepAliveSection(
         Column(Modifier.fillMaxWidth()) {
             Text("叫醒节奏")
             Text(
-                text = "每 ${state.configuredIntervalMinutes} 分钟" +
-                    if (state.effectiveIntervalMinutes != state.configuredIntervalMinutes) {
-                        "（当前生效 ${state.effectiveIntervalMinutes} 分钟）"
-                    } else {
-                        ""
-                    },
+                text = when (state.readState) {
+                    KeepAliveSectionReadState.Loading -> "读取中…"
+                    KeepAliveSectionReadState.Failed -> "无法读取"
+                    KeepAliveSectionReadState.Loaded -> "每 ${state.configuredIntervalMinutes} 分钟" +
+                        if (state.effectiveIntervalMinutes != state.configuredIntervalMinutes) {
+                            "（当前生效 ${state.effectiveIntervalMinutes} 分钟）"
+                        } else {
+                            ""
+                        }
+                },
                 style = MaterialTheme.typography.bodyMedium,
                 modifier = Modifier.testTag("keepalive-interval-text")
             )
@@ -105,7 +123,7 @@ fun KeepAliveSection(
                     AlarmSuppressionPolicy.MAX_INTERVAL_MINUTES.toFloat(),
                 steps = (AlarmSuppressionPolicy.MAX_INTERVAL_MINUTES -
                     AlarmSuppressionPolicy.MIN_INTERVAL_MINUTES) / 10 - 1,
-                enabled = state.enabled,
+                enabled = state.readState == KeepAliveSectionReadState.Loaded && state.enabled,
                 modifier = Modifier.testTag("keepalive-interval-slider")
             )
             Text(
@@ -118,7 +136,7 @@ fun KeepAliveSection(
         }
 
         // AC-17.2 / AC-17.3：降频中要给出提示；复位后提示消失（由 state 决定）。
-        state.backoffHint?.let { hint ->
+        state.backoffHint?.takeIf { state.readState == KeepAliveSectionReadState.Loaded }?.let { hint ->
             Text(
                 text = hint,
                 style = MaterialTheme.typography.bodySmall,
@@ -134,38 +152,59 @@ fun KeepAliveSection(
 
         StatusRow(
             label = "登记状态",
-            value = state.scheduleStatusText,
+            value = when (state.readState) {
+                KeepAliveSectionReadState.Loading -> "读取中…"
+                KeepAliveSectionReadState.Failed -> "无法读取"
+                KeepAliveSectionReadState.Loaded -> state.scheduleStatusText
+            },
             tag = "keepalive-status-schedule"
         )
         StatusRow(
             label = "闹钟和提醒权限",
-            value = when (state.exactAlarmGranted) {
-                true -> "已授权"
-                false -> "未授权"
-                null -> "本设备不适用"
-            },
+            value = statusValue(
+                state = state,
+                value = state.exactAlarmGranted,
+                grantedText = "已授权",
+                deniedText = "未授权",
+                unknownText = "本设备不适用",
+            ),
             tag = "keepalive-status-permission",
-            emphasise = state.exactAlarmGranted == false,
-            onClick = if (state.exactAlarmGranted == false) onOpenExactAlarmSettings else null
+            emphasise = state.readState == KeepAliveSectionReadState.Loaded && state.exactAlarmGranted == false,
+            onClick = if (state.readState == KeepAliveSectionReadState.Loaded && state.exactAlarmGranted == false) {
+                onOpenExactAlarmSettings
+            } else {
+                null
+            }
         )
         StatusRow(
             label = "待机分区",
-            value = state.standbyBucketLabel,
+            value = when (state.readState) {
+                KeepAliveSectionReadState.Loading -> "读取中…"
+                KeepAliveSectionReadState.Failed -> "无法读取"
+                KeepAliveSectionReadState.Loaded -> state.standbyBucketLabel
+            },
             tag = "keepalive-status-bucket"
         )
         StatusRow(
             label = "电池优化",
-            value = when (state.ignoresBatteryOptimizations) {
-                true -> "已排除（不优化）"
-                false -> "未排除（系统可能限制后台）"
-                null -> "无法读取"
-            },
+            value = statusValue(
+                state = state,
+                value = state.ignoresBatteryOptimizations,
+                grantedText = "已排除（不优化）",
+                deniedText = "未排除（系统可能限制后台）",
+                unknownText = "无法读取",
+            ),
             tag = "keepalive-status-battery"
         )
         StatusRow(
             label = "最近一次叫醒",
-            value = state.lastWakeAtUtcMillis?.let { "距今 ${formatAge(System.currentTimeMillis() - it)}" }
-                ?: "无记录",
+            value = when (state.readState) {
+                KeepAliveSectionReadState.Loading -> "读取中…"
+                KeepAliveSectionReadState.Failed -> "无法读取"
+                KeepAliveSectionReadState.Loaded -> state.lastWakeAtUtcMillis?.let {
+                    "距今 ${formatAge(System.currentTimeMillis() - it)}"
+                } ?: "无记录"
+            },
             tag = "keepalive-status-last-wake"
         )
 
@@ -204,6 +243,22 @@ fun KeepAliveSection(
                 tint = MaterialTheme.colorScheme.onSurfaceVariant
             )
         }
+    }
+}
+
+private fun statusValue(
+    state: KeepAliveSectionState,
+    value: Boolean?,
+    grantedText: String,
+    deniedText: String,
+    unknownText: String,
+): String = when (state.readState) {
+    KeepAliveSectionReadState.Loading -> "读取中…"
+    KeepAliveSectionReadState.Failed -> "无法读取"
+    KeepAliveSectionReadState.Loaded -> when {
+        value == true -> grantedText
+        value == false -> deniedText
+        else -> unknownText
     }
 }
 

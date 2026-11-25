@@ -210,7 +210,7 @@ class AndroidV2LoginFlowContractTest {
         )
         val collectionSave = settings.sectionBetween(
             "fun setContinuousCollectionEnabled(enabled: Boolean)",
-            "private fun missingCollectionPermissions()"
+            "private fun blockingCollectionPermissions("
         )
         val legacySave = legacy.sectionBetween(
             "fun saveServerUrl(value: String)",

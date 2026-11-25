@@ -81,7 +81,8 @@ class KeepAliveViewModel @Inject constructor(
                     ignoresBatteryOptimizations = guidanceDetector.ignoresBatteryOptimizations(),
                     lastWakeAtUtcMillis = lastWake,
                     healthAlert = health.summaryText(),
-                    scheduleStatusText = scheduleStatusText(settings)
+                    scheduleStatusText = scheduleStatusText(settings),
+                    readState = KeepAliveSectionReadState.Loaded,
                 )
 
                 _guidanceState.value = GuidanceScreenState(
@@ -97,9 +98,7 @@ class KeepAliveViewModel @Inject constructor(
                 logs.error("keepalive", "读取保活设置失败：${ex.message ?: ""}", ex)
                 val failureText = keepAliveReadFailureText()
                 _healthAlert.value = failureText
-                _sectionState.value = _sectionState.value.copy(
-                    healthAlert = failureText
-                )
+                _sectionState.value = failedKeepAliveSectionState(failureText)
             }
         }
     }
@@ -221,7 +220,22 @@ private fun emptyKeepAliveSectionState(): KeepAliveSectionState = KeepAliveSecti
     ignoresBatteryOptimizations = null,
     lastWakeAtUtcMillis = null,
     healthAlert = null,
-    scheduleStatusText = "读取中…"
+    scheduleStatusText = "读取中…",
+    readState = KeepAliveSectionReadState.Loading,
+)
+
+private fun failedKeepAliveSectionState(failureText: String): KeepAliveSectionState = KeepAliveSectionState(
+    enabled = false,
+    configuredIntervalMinutes = AlarmSuppressionPolicy.DEFAULT_INTERVAL_MINUTES,
+    effectiveIntervalMinutes = AlarmSuppressionPolicy.DEFAULT_INTERVAL_MINUTES,
+    backoffHint = null,
+    exactAlarmGranted = null,
+    standbyBucketLabel = "无法读取",
+    ignoresBatteryOptimizations = null,
+    lastWakeAtUtcMillis = null,
+    healthAlert = failureText,
+    scheduleStatusText = "无法读取",
+    readState = KeepAliveSectionReadState.Failed,
 )
 
 /** 保活取数失败的用户可见文案；不拼接异常信息，避免泄露路径或内部字段。 */

@@ -23,9 +23,12 @@ import com.pim.app.mobile.diagnostics.DiagnosticOperations
 import com.pim.app.recovery.CollectionState
 import com.pim.app.recovery.RunningStateRestorer
 import com.pim.app.schedule.ScheduleCacheStore
+import com.pim.app.status.CollectionPermissionKind
+import com.pim.app.status.CollectionPermissionState
 import com.pim.app.status.PermissionStatusSnapshot
 import com.pim.app.status.PolicyTransitionHistorySource
 import com.pim.app.status.PolicyTransitionSnapshot
+import com.pim.app.status.blockingCollectionPermissions
 import com.pim.core.contract.ClientShellLatestResponse
 import com.pim.core.network.ApiService
 import com.pim.core.settings.PimServerEndpoints
@@ -361,15 +364,17 @@ class SettingsViewModel @Inject constructor(
 
                 trackingSettingsStore.setContinuousCollectionEnabled(true)
 
-                val missingPermissions = missingCollectionPermissions()
-                if (missingPermissions.isNotEmpty()) {
+                val permissionSnapshot = permissionStatusRepository.snapshot()
+                val blockedPermissions = blockingCollectionPermissions(permissionSnapshot)
+                if (blockedPermissions.isNotEmpty()) {
                     _state.update {
                         it.copy(
                             apiAddress = normalized,
                             apiWarnings = validation.warnings,
                             apiError = null,
                             continuousCollectionEnabled = true,
-                            collectionStatus = "缺少权限：${missingPermissions.joinToString("、")}。"
+                            permissions = permissionSnapshot,
+                            collectionStatus = blockedCollectionStatus(blockedPermissions)
                         )
                     }
                     return
@@ -381,6 +386,7 @@ class SettingsViewModel @Inject constructor(
                         apiWarnings = validation.warnings,
                         apiError = null,
                         continuousCollectionEnabled = true,
+                        permissions = permissionSnapshot,
                         collectionStatus = "正在启动前台定位服务。"
                     )
                 }
@@ -793,13 +799,27 @@ class SettingsViewModel @Inject constructor(
         return runCatching { PimServerEndpoints.from(url).trustedOrigin }.getOrNull()
     }
 
-    private fun missingCollectionPermissions(snapshot: PermissionStatusSnapshot? = null): List<String> {
+    private fun blockingCollectionPermissions(
+        snapshot: PermissionStatusSnapshot? = null
+    ): List<CollectionPermissionState> {
         val permissions = snapshot ?: permissionStatusRepository.snapshot()
-        return buildList {
-            if (!permissions.notificationGranted) add("通知")
-            if (!permissions.preciseLocationGranted) add("精确定位")
-            if (!permissions.backgroundLocationGranted) add("后台定位")
+        return permissions.blockingCollectionPermissions()
+    }
+
+    private fun blockedCollectionStatus(blocked: List<CollectionPermissionState>): String {
+        val names = blocked.joinToString("、") { permission ->
+            "${permissionDisplayName(permission.kind)}（${permission.statusText}）"
         }
+        return "缺少权限：$names。"
+    }
+
+    private fun permissionDisplayName(kind: CollectionPermissionKind): String = when (kind) {
+        CollectionPermissionKind.NOTIFICATION -> "通知"
+        CollectionPermissionKind.PRECISE_LOCATION -> "精确定位"
+        CollectionPermissionKind.BACKGROUND_LOCATION -> "后台定位"
+        CollectionPermissionKind.USAGE_ACCESS -> "使用情况"
+        CollectionPermissionKind.ACTIVITY_RECOGNITION -> "运动识别"
+        CollectionPermissionKind.BATTERY_OPTIMIZATION -> "电池优化"
     }
 
     private fun keepCollectionOff(
@@ -865,6 +885,17 @@ class SettingsViewModel @Inject constructor(
 
     private fun reloadForegroundCollectionIfEnabled() {
         if (!trackingSettingsStore.read().continuousCollectionEnabled) return
+        val permissionSnapshot = permissionStatusRepository.snapshot()
+        val blocked = blockingCollectionPermissions(permissionSnapshot)
+        if (blocked.isNotEmpty()) {
+            _state.update {
+                it.copy(
+                    permissions = permissionSnapshot,
+                    collectionStatus = blockedCollectionStatus(blocked)
+                )
+            }
+            return
+        }
         runCatching {
             foregroundLocationController.start()
         }.onFailure {

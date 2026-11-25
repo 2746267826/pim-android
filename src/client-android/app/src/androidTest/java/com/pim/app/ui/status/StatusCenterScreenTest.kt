@@ -22,6 +22,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import com.pim.app.status.ApiConnectionSnapshot
 import com.pim.app.status.ConnectionProbeOutcome
 import com.pim.app.status.ConnectionProbeResult
@@ -64,6 +67,43 @@ class StatusCenterScreenTest {
         composeTestRule.onNodeWithTag("status-loading").assertIsDisplayed()
         composeTestRule.onNodeWithText("正在读取状态").assertIsDisplayed()
         composeTestRule.onNodeWithTag("status-sync-button").assertIsNotEnabled()
+    }
+
+    @Test
+    fun statusCenterResumeRefreshesPermissionSnapshotAndLocalStatus() {
+        val lifecycleOwner = TestLifecycleOwner()
+        var permissions = PermissionStatusSnapshot(
+            notificationGranted = false,
+            preciseLocationGranted = true,
+            backgroundLocationGranted = true,
+            usageAccessGranted = true,
+            activityRecognitionGranted = true,
+            batteryOptimizationGranted = true,
+        )
+        var localRefreshCount = 0
+
+        composeTestRule.setContent {
+            PimTheme {
+                StatusCenterResumeRefresh(
+                    lifecycleOwner = lifecycleOwner,
+                    refreshPermissions = {
+                        permissions = permissions.copy(notificationGranted = true)
+                    },
+                    refreshLocalStatus = {
+                        localRefreshCount++
+                    },
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        composeTestRule.waitForIdle()
+
+        assertTrue("resume must re-read the permission snapshot", permissions.notificationGranted)
+        assertEquals("resume must refresh local status", 1, localRefreshCount)
     }
 
     @Test
@@ -890,6 +930,7 @@ class StatusCenterScreenTest {
     @Test
     fun collectionHealthShowsRestrictedAndFailedStatesAndRoutesPermissionActions() {
         var openedCode: String? = null
+        var openedAccess: com.pim.app.status.CollectionPermissionAccess? = null
         val permissions = PermissionStatusSnapshot(
             notificationGranted = true,
             preciseLocationGranted = false,
@@ -912,7 +953,10 @@ class StatusCenterScreenTest {
                 StatusCenterContent(
                     sprintSummary = sprintSummaryForTest(),
                     state = state,
-                    onPermissionAction = { openedCode = it },
+                    onPermissionAction = { code, access ->
+                        openedCode = code
+                        openedAccess = access
+                    },
                 )
             }
         }
@@ -932,10 +976,17 @@ class StatusCenterScreenTest {
             "battery-optimization" to "battery-optimization-missing",
         ).forEach { (tagSuffix, issueCode) ->
             openedCode = null
+            openedAccess = null
             composeTestRule.onNodeWithTag("status-permission-$tagSuffix")
                 .performScrollTo()
                 .performClick()
             assertEquals(issueCode, openedCode)
+            if (issueCode == "battery-optimization-missing") {
+                assertEquals(
+                    com.pim.app.status.CollectionPermissionAccess.GRANTED,
+                    openedAccess,
+                )
+            }
         }
     }
 
@@ -991,5 +1042,10 @@ class StatusCenterScreenTest {
             syncPhase = syncPhase,
             snapshot = StatusCenterState.empty().snapshot
         )
+    }
+
+    private class TestLifecycleOwner : LifecycleOwner {
+        val registry = LifecycleRegistry.createUnsafe(this)
+        override val lifecycle: Lifecycle = registry
     }
 }

@@ -71,8 +71,11 @@ import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.compose.material3.ExperimentalMaterial3Api
 import com.pim.app.settings.TrackingPresetCatalog
+import com.pim.app.status.CollectionPermissionAccess
+import com.pim.app.status.PermissionStatusSnapshot
 import com.pim.app.status.PolicyTransitionDisplay
 import com.pim.app.status.StatusPermissionNavigator
+import com.pim.app.status.collectionPermissions
 import com.pim.app.ui.permissions.DND_ACCESS_ISSUE_CODE
 import com.pim.app.ui.status.formatPolicyTransition
 import com.pim.app.keepalive.ui.ColorOsGuidanceScreen
@@ -578,39 +581,12 @@ fun SettingsScreen(
             onRefreshPlan = eventMuteViewModel::refreshPlan
         )
 
-        PimSection("权限") {
-            val rows = permissionSettingRows(state.permissions)
-            rows.forEachIndexed { index, row ->
-                Row(
-                    modifier = Modifier
-                        .fillMaxWidth()
-                        .clickable { StatusPermissionNavigator.open(context, row.issueCode) }
-                        .padding(vertical = 10.dp),
-                    verticalAlignment = Alignment.CenterVertically
-                ) {
-                    Column(Modifier.weight(1f)) {
-                        Text(row.title)
-                        Text(
-                            text = if (row.isHardBlock) "采集必需" else "建议",
-                            style = MaterialTheme.typography.bodySmall,
-                            color = MaterialTheme.colorScheme.onSurfaceVariant
-                        )
-                    }
-                    Text(
-                        text = if (row.granted) "已授权" else "未授权",
-                        color = if (row.granted) MaterialTheme.colorScheme.primary else MaterialTheme.colorScheme.error
-                    )
-                    Icon(
-                        Icons.Default.KeyboardArrowRight,
-                        contentDescription = null,
-                        tint = MaterialTheme.colorScheme.onSurfaceVariant
-                    )
-                }
-                if (index < rows.lastIndex) {
-                    Divider()
-                }
+        SettingsPermissionSection(
+            permissions = state.permissions,
+            onOpenPermission = { issueCode, access ->
+                StatusPermissionNavigator.open(context, issueCode, access)
             }
-        }
+        )
 
         PimSection("恢复默认") {
             OutlinedButton(
@@ -689,6 +665,63 @@ fun SettingsScreen(
                     }) { Text("去下载") }
                 }
             ) { Text("发现新版 v${state.latestVersion}") }
+        }
+    }
+}
+
+@Composable
+internal fun SettingsPermissionSection(
+    permissions: PermissionStatusSnapshot,
+    onOpenPermission: (String, CollectionPermissionAccess?) -> Unit,
+) {
+    PimSection("权限") {
+        val rows = permissionSettingRows(permissions)
+        val collectionStates = permissions.collectionPermissions().associateBy { it.kind.issueCode }
+        rows.forEachIndexed { index, row ->
+            val collectionState = collectionStates[row.issueCode]
+            val statusText = collectionState?.statusText
+                ?: if (row.granted) "已授权" else "未授权"
+            val statusColor = when (collectionState?.access) {
+                CollectionPermissionAccess.GRANTED -> MaterialTheme.colorScheme.primary
+                CollectionPermissionAccess.RESTRICTED -> MaterialTheme.colorScheme.tertiary
+                CollectionPermissionAccess.MISSING,
+                CollectionPermissionAccess.CHECK_FAILED -> MaterialTheme.colorScheme.error
+                null -> if (row.granted) {
+                    MaterialTheme.colorScheme.primary
+                } else {
+                    MaterialTheme.colorScheme.error
+                }
+            }
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clickable { onOpenPermission(row.issueCode, collectionState?.access) }
+                    .padding(vertical = 10.dp)
+                    .testTag("settings-permission-row-${row.issueCode}"),
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(Modifier.weight(1f)) {
+                    Text(row.title)
+                    Text(
+                        text = if (row.isHardBlock) "采集必需" else "建议",
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+                Text(
+                    text = statusText,
+                    modifier = Modifier.testTag("settings-permission-status-${row.issueCode}"),
+                    color = statusColor
+                )
+                Icon(
+                    Icons.Default.KeyboardArrowRight,
+                    contentDescription = null,
+                    tint = MaterialTheme.colorScheme.onSurfaceVariant
+                )
+            }
+            if (index < rows.lastIndex) {
+                Divider()
+            }
         }
     }
 }

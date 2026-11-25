@@ -8,6 +8,10 @@ import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.performClick
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
+import com.pim.app.status.PermissionStatusSnapshot
 import com.pim.app.status.QueueStatusSnapshot
 import com.pim.app.status.StatusCenterSnapshot
 import com.pim.app.status.StatusCenterState
@@ -101,5 +105,63 @@ class TodayScreenTest {
             .performClick()
 
         assertEquals("今日页采集状态入口必须可进入状态中心", 1, openCount)
+    }
+
+    @Test
+    fun todayResumeRefreshesPermissionSnapshotAndLocalStatus() {
+        val lifecycleOwner = TestLifecycleOwner()
+        var permissions = allGranted(notificationGranted = false)
+        var localStatus = summaryFor(permissions)
+        var refreshCount = 0
+
+        composeTestRule.setContent {
+            PimTheme {
+                TodayResumeRefresh(
+                    lifecycleOwner = lifecycleOwner,
+                    refreshPermissions = {
+                        refreshCount++
+                        permissions = allGranted(notificationGranted = true)
+                    },
+                    refreshLocalStatus = {
+                        localStatus = summaryFor(permissions)
+                    },
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        assertEquals(1, localStatus.pendingCount)
+        lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        composeTestRule.waitForIdle()
+
+        assertEquals(1, refreshCount)
+        assertEquals(0, localStatus.pendingCount)
+    }
+
+    private fun summaryFor(permissions: PermissionStatusSnapshot): TodayLocalStatusSummary {
+        val base = StatusCenterState.empty()
+        return TodayLocalStatusSummary.from(
+            base.copy(
+                isLoading = false,
+                snapshot = base.snapshot.copy(permissions = permissions),
+            ),
+            keepAliveAlert = null,
+        )
+    }
+
+    private fun allGranted(notificationGranted: Boolean) = PermissionStatusSnapshot(
+        notificationGranted = notificationGranted,
+        preciseLocationGranted = true,
+        backgroundLocationGranted = true,
+        usageAccessGranted = true,
+        activityRecognitionGranted = true,
+        batteryOptimizationGranted = true,
+    )
+
+    private class TestLifecycleOwner : LifecycleOwner {
+        val registry = LifecycleRegistry.createUnsafe(this)
+        override val lifecycle: Lifecycle = registry
     }
 }

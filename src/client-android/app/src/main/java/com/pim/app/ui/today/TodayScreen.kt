@@ -24,7 +24,6 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -38,13 +37,13 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.LifecycleOwner
 import com.pim.app.keepalive.ui.KeepAliveViewModel
 import com.pim.app.ui.components.PimButton
 import com.pim.app.ui.components.PimFactChip
 import com.pim.app.ui.components.LegacyOutboxClaimDialog
+import com.pim.app.ui.components.OnResumeRefresh
 import com.pim.app.ui.shell.PimWebViewScreen
 import com.pim.app.ui.theme.PimTheme
 import com.pim.app.nativework.NativeWorkbenchTodaySection
@@ -69,16 +68,11 @@ fun TodayScreen(
     val workbenchViewModel: NativeWorkbenchViewModel = hiltViewModel()
     var showLegacyToday by rememberSaveable { mutableStateOf(false) }
 
-    DisposableEffect(lifecycleOwner, viewModel, keepAliveViewModel) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshOnResume()
-                keepAliveViewModel.refresh()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
+    TodayResumeRefresh(
+        lifecycleOwner = lifecycleOwner,
+        refreshPermissions = viewModel::refreshOnResume,
+        refreshLocalStatus = keepAliveViewModel::refresh,
+    )
 
     LaunchedEffect(workbenchViewModel) {
         workbenchViewModel.enterToday()
@@ -142,6 +136,18 @@ fun TodayScreen(
             onConfirm = viewModel::confirmLegacyOutboxClaim,
             onDismiss = viewModel::dismissLegacyOutboxClaim
         )
+    }
+}
+
+@Composable
+internal fun TodayResumeRefresh(
+    lifecycleOwner: LifecycleOwner,
+    refreshPermissions: () -> Unit,
+    refreshLocalStatus: () -> Unit,
+) {
+    OnResumeRefresh(lifecycleOwner) {
+        refreshPermissions()
+        refreshLocalStatus()
     }
 }
 

@@ -46,6 +46,20 @@ class UsageAccessCheckerTest {
     }
 
     @Test
+    fun defaultAppOpIsDenied() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val appOps = context.getSystemService(Context.APP_OPS_SERVICE) as AppOpsManager
+        shadowOf(appOps).setMode(
+            AppOpsManager.OPSTR_GET_USAGE_STATS,
+            Process.myUid(),
+            context.packageName,
+            AppOpsManager.MODE_DEFAULT,
+        )
+
+        assertEquals(UsageAccessState.Denied, UsageAccessChecker(context).checkAccess())
+    }
+
+    @Test
     fun unavailableAppOpsServiceIsACheckFailure() {
         val base = ApplicationProvider.getApplicationContext<Application>()
         val context = object : ContextWrapper(base) {

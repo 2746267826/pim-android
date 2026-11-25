@@ -111,3 +111,7 @@ fun PermissionStatusSnapshot.collectionPermissions(): List<CollectionPermissionS
 
 fun PermissionStatusSnapshot.unreadyCollectionPermissionCount(): Int =
     collectionPermissions().count { !it.isReady }
+
+/** 持续采集硬门控只接受 GRANTED；受限与检查失败都不能启动前台采集。 */
+fun PermissionStatusSnapshot.blockingCollectionPermissions(): List<CollectionPermissionState> =
+    collectionPermissions().filter { it.kind.required && !it.isReady }

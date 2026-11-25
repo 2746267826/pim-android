@@ -43,7 +43,6 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
-import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -62,8 +61,7 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
-import androidx.lifecycle.Lifecycle
-import androidx.lifecycle.LifecycleEventObserver
+import androidx.lifecycle.LifecycleOwner
 import com.pim.app.forensics.LivenessUiSnapshot
 import com.pim.app.status.CollectionPermissionAccess
 import com.pim.app.status.CollectionPermissionState
@@ -88,6 +86,7 @@ import com.pim.app.status.actionableStatusIssues
 import com.pim.app.status.collectionPermissions
 import com.pim.app.status.informationalStatusIssues
 import com.pim.app.ui.components.LegacyOutboxClaimDialog
+import com.pim.app.ui.components.OnResumeRefresh
 import java.time.Instant
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
@@ -128,19 +127,17 @@ fun StatusCenterScreen(
     LaunchedEffect(lifecycleOwner) {
         keepAliveViewModel.refresh()
     }
-    DisposableEffect(lifecycleOwner, viewModel, keepAliveViewModel) {
-        val observer = LifecycleEventObserver { _, event ->
-            if (event == Lifecycle.Event.ON_RESUME) {
-                viewModel.refreshOnResume()
-                keepAliveViewModel.refresh()
-            }
-        }
-        lifecycleOwner.lifecycle.addObserver(observer)
-        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
-    }
+    StatusCenterResumeRefresh(
+        lifecycleOwner = lifecycleOwner,
+        refreshPermissions = viewModel::refreshOnResume,
+        refreshLocalStatus = keepAliveViewModel::refresh,
+    )
 
-    fun openPermissionSettings(issueCode: String) {
-        val opened = StatusPermissionNavigator.open(context, issueCode)
+    fun openPermissionSettings(
+        issueCode: String,
+        access: CollectionPermissionAccess? = null,
+    ) {
+        val opened = StatusPermissionNavigator.open(context, issueCode, access)
         permissionActionMessage = if (opened) null else PERMISSION_SETTINGS_UNAVAILABLE_TEXT
     }
 
@@ -224,6 +221,18 @@ fun StatusCenterScreen(
 }
 
 @Composable
+internal fun StatusCenterResumeRefresh(
+    lifecycleOwner: LifecycleOwner,
+    refreshPermissions: () -> Unit,
+    refreshLocalStatus: () -> Unit,
+) {
+    OnResumeRefresh(lifecycleOwner) {
+        refreshPermissions()
+        refreshLocalStatus()
+    }
+}
+
+@Composable
 internal fun StatusCenterContent(
     state: StatusCenterState,
     /**
@@ -238,7 +247,7 @@ internal fun StatusCenterContent(
     keepAliveHealthAlert: String? = null,
     onOpenDroppedReasons: () -> Unit = {},
     onOpenGuidance: () -> Unit = {},
-    onPermissionAction: (String) -> Unit = {},
+    onPermissionAction: (String, CollectionPermissionAccess?) -> Unit = { _, _ -> },
     permissionActionMessage: String? = null,
     modifier: Modifier = Modifier,
     onIssueAction: (StatusIssue) -> Unit = {},
@@ -553,7 +562,7 @@ private fun CollectionHealthSection(
     checking: Boolean,
     keepAliveHealthAlert: String?,
     onOpenGuidance: () -> Unit,
-    onPermissionAction: (String) -> Unit,
+    onPermissionAction: (String, CollectionPermissionAccess?) -> Unit,
     permissionActionMessage: String?,
 ) {
     Column(
@@ -571,7 +580,7 @@ private fun CollectionHealthSection(
             CollectionPermissionRow(
                 permission = permission,
                 checking = checking,
-                onClick = { onPermissionAction(permission.kind.issueCode) },
+                onClick = { onPermissionAction(permission.kind.issueCode, permission.access) },
             )
         }
 

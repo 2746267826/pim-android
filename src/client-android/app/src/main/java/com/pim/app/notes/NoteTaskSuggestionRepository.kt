@@ -591,10 +591,15 @@ class NoteTaskSuggestionRepository(
         val title = draft.title.trim()
         require(title.isNotEmpty()) { "建议标题不能为空" }
         if (item.kind == NoteTaskSuggestionKindDto.TASK) {
+            val due = if (draft.due == suggestionDueInput(item.remote.due)) {
+                suggestionDueAbsolute(item.remote.due)
+            } else {
+                suggestionDueWire(draft.due)
+            }
             return UpdateNoteTaskSuggestionRequest(
                 calendarId = item.remote.calendarId,
                 description = draft.description.ifBlank { null },
-                due = suggestionDueWire(draft.due),
+                due = due,
                 expectedRevision = draft.expectedRevision,
                 priority = draft.priority,
                 taskBookId = item.remote.taskBookId,
@@ -608,8 +613,16 @@ class NoteTaskSuggestionRepository(
         require(draft.start.isNotBlank() && draft.end.isNotBlank()) {
             "日程必须同时填写开始和结束时间"
         }
-        val start = suggestionEventWire(draft.start, zone) ?: error("日程开始时间无效")
-        val end = suggestionEventWire(draft.end, zone) ?: error("日程结束时间无效")
+        val start = if (draft.start == suggestionEventInput(item.remote.start, zone)) {
+            suggestionEventAbsolute(item.remote.start)
+        } else {
+            suggestionEventWire(draft.start, zone)
+        } ?: error("日程开始时间无效")
+        val end = if (draft.end == suggestionEventInput(item.remote.end, zone)) {
+            suggestionEventAbsolute(item.remote.end)
+        } else {
+            suggestionEventWire(draft.end, zone)
+        } ?: error("日程结束时间无效")
         require(Instant.parse(end).isAfter(Instant.parse(start))) {
             "日程结束时间必须晚于开始时间"
         }

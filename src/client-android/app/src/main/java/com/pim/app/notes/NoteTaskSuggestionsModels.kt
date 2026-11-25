@@ -198,6 +198,15 @@ internal fun suggestionDueInput(value: String?): String {
         .format(instant.atZone(ZoneId.systemDefault()))
 }
 
+/** Keeps an unchanged server due value exact instead of truncating it to the minute input. */
+internal fun suggestionDueAbsolute(value: String?): String? {
+    if (value.isNullOrBlank()) return null
+    return runCatching { OffsetDateTime.parse(value).toInstant() }
+        .recoverCatching { Instant.parse(value) }
+        .getOrNull()
+        ?.toString()
+}
+
 internal fun suggestionDueWire(value: String): String? {
     if (value.isBlank()) return null
     val local = LocalDateTime.parse(value, DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm"))

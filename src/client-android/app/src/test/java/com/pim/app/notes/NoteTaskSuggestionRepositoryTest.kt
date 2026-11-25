@@ -349,6 +349,37 @@ class NoteTaskSuggestionRepositoryTest {
     }
 
     @Test
+    fun taskTitleEditPreservesServerSubMinuteDuePrecision() = runBlocking {
+        transport.item = suggestion(
+            NoteTaskSuggestionStatusDto.DRAFT,
+            due = "2026-11-21T19:00:30+08:00",
+            calendarId = CALENDAR_ID,
+            taskBookId = TASK_BOOK_ID,
+        )
+        val repository = repository()
+        repository.open(source)
+        val item = repository.state.value.items.single()
+        val scope = requireNotNull(repository.state.value.actionScope)
+
+        repository.stageDraft(
+            scope,
+            SUGGESTION_ID,
+            NoteTaskSuggestionEdit(
+                title = "只改任务标题（保留秒）",
+                description = item.description,
+                priority = item.priority,
+                due = item.due,
+            ),
+        )
+        repository.saveDraft(scope, SUGGESTION_ID)
+
+        val request = requireNotNull(transport.lastUpdate)
+        assertEquals("2026-11-21T11:00:30Z", request.due)
+        assertEquals(CALENDAR_ID, request.calendarId)
+        assertEquals(TASK_BOOK_ID, request.taskBookId)
+    }
+
+    @Test
     fun eventSavePreservesUnmodifiedTimesZoneAndCalendarWhenOnlyTheTitleChanges() = runBlocking {
         transport.item = eventSuggestion()
         val repository = repository()
@@ -378,6 +409,37 @@ class NoteTaskSuggestionRepositoryTest {
         assertEquals(CALENDAR_ID, request.calendarId)
         assertEquals(null, request.due)
         assertEquals(null, request.taskBookId)
+    }
+
+    @Test
+    fun eventTitleEditPreservesServerSubMinutePrecision() = runBlocking {
+        transport.item = eventSuggestion(
+            start = "2026-11-21T11:00:30Z",
+            end = "2026-11-21T12:00:45Z",
+        )
+        val repository = repository()
+        repository.open(source)
+        val item = repository.state.value.items.single()
+        val scope = requireNotNull(repository.state.value.actionScope)
+
+        repository.stageDraft(
+            scope,
+            SUGGESTION_ID,
+            NoteTaskSuggestionEdit(
+                title = "只改日程标题（保留秒）",
+                description = item.description,
+                priority = item.priority,
+                start = item.start,
+                end = item.end,
+                timeZoneId = item.timeZoneId,
+            ),
+        )
+        repository.saveDraft(scope, SUGGESTION_ID)
+
+        val request = requireNotNull(transport.lastUpdate)
+        assertEquals("2026-11-21T11:00:30Z", request.start)
+        assertEquals("2026-11-21T12:00:45Z", request.end)
+        assertEquals("Asia/Shanghai", request.timeZoneId)
     }
 
     @Test

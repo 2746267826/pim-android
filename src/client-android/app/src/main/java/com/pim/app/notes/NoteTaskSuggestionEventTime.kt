@@ -39,6 +39,10 @@ internal fun suggestionEventInput(value: String?, timeZoneId: String?): String {
     return eventInputFormatter.format(instant.atZone(ZoneId.of(zone)))
 }
 
+/** Normalizes an already absolute server value without applying the wall-clock input truncation. */
+internal fun suggestionEventAbsolute(value: String?): String? =
+    parseEventInstant(value)?.toString()
+
 /**
  * Converts a wall-clock input in the declared IANA zone to UTC ISO.
  * DST gaps and ambiguous wall-clock values fail closed instead of picking one offset.

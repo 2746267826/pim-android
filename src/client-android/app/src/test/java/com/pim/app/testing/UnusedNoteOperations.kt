@@ -10,7 +10,7 @@ internal interface UnusedNoteOperations : ApiService {
         inbox: Boolean?,
         search: String?,
         calendarId: String?,
-        status: String?,
+        status: List<String>?,
         priority: Int?,
         plannedFrom: String?,
         plannedTo: String?,

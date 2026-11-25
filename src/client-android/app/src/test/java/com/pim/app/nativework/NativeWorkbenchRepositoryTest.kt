@@ -60,6 +60,53 @@ class NativeWorkbenchRepositoryTest {
     }
 
     @Test
+    fun taskListSendsRepeatedStatusValuesAsOneOrSet() = runBlocking {
+        val calls = mutableListOf<List<Any?>>()
+        val api = fakeApi { method, args ->
+            when (method) {
+                "getTasksPaged" -> {
+                    calls += args.dropLast(1)
+                    taskPage()
+                }
+                else -> error("Unexpected $method")
+            }
+        }
+
+        NativeWorkbenchRepository(api).loadTasks(
+            search = "设计",
+            statuses = listOf("IN-PROCESS", "COMPLETED", "IN-PROCESS"),
+        )
+
+        assertEquals(
+            listOf(null, "设计", null, listOf("IN-PROCESS", "COMPLETED"), null, null, null, null, null, 1, 100),
+            calls.single(),
+        )
+    }
+
+    @Test
+    fun taskListOmitsStatusForNoSelectionAndRejectsInvalidSelection() = runBlocking {
+        val calls = mutableListOf<List<Any?>>()
+        val api = fakeApi { method, args ->
+            when (method) {
+                "getTasksPaged" -> {
+                    calls += args.dropLast(1)
+                    taskPage()
+                }
+                else -> error("Unexpected $method")
+            }
+        }
+        val repository = NativeWorkbenchRepository(api)
+
+        repository.loadTasks(statuses = listOf(" ", ""))
+        assertNull(calls.single()[3])
+
+        assertThrows(NativeTaskStatusFilterException::class.java) {
+            runBlocking { repository.loadTasks(statuses = listOf("NEEDS-ACTION,IN-PROCESS")) }
+        }
+        assertEquals("invalid selection must not reach the API", 1, calls.size)
+    }
+
+    @Test
     fun createTaskSendsExplicitNeedsActionAndTrimsOptionalFields() = runBlocking {
         var request: CreateTaskRequest? = null
         val api = fakeApi { method, args ->

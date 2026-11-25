@@ -380,7 +380,7 @@ interface ApiService {
         @Query("inbox") inbox: Boolean? = null,
         @Query("search") search: String? = null,
         @Query("calendarId") calendarId: String? = null,
-        @Query("status") status: String? = null,
+        @Query("status") status: List<String>? = null,
         @Query("priority") priority: Int? = null,
         @Query("plannedFrom") plannedFrom: String? = null,
         @Query("plannedTo") plannedTo: String? = null,

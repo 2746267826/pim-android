@@ -198,9 +198,14 @@ class NativeWorkbenchRepository @Inject constructor(
     fun boundTo(boundApi: ApiService): NativeWorkbenchRepository =
         NativeWorkbenchRepository(boundApi)
 
-    suspend fun loadTasks(search: String? = null): NativeTaskPage {
+    suspend fun loadTasks(
+        search: String? = null,
+        statuses: Iterable<String> = emptyList(),
+    ): NativeTaskPage {
+        val statusFilter = NativeTaskStatusFilter.normalize(statuses)
         val result = api.getTasksPaged(
             search = search?.trim()?.takeIf { it.isNotEmpty() },
+            status = statusFilter.takeIf { it.isNotEmpty() },
             page = 1,
             pageSize = 100,
         )

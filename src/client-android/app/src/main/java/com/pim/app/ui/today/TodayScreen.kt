@@ -13,8 +13,10 @@ import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.material.icons.Icons
+import androidx.compose.material.icons.filled.Security
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Sync
+import androidx.compose.material3.AssistChip
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.CircularProgressIndicator
 import androidx.compose.material3.Icon
@@ -22,6 +24,7 @@ import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
@@ -29,12 +32,16 @@ import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import com.pim.app.keepalive.ui.KeepAliveViewModel
 import com.pim.app.ui.components.PimButton
 import com.pim.app.ui.components.PimFactChip
 import com.pim.app.ui.components.LegacyOutboxClaimDialog
@@ -48,14 +55,30 @@ fun TodayScreen(
     modifier: Modifier = Modifier,
     onOpenSettings: () -> Unit = {},
     onOpenWorkbench: () -> Unit = {},
-    viewModel: TodayViewModel = hiltViewModel()
+    onOpenStatusCenter: () -> Unit = {},
+    viewModel: TodayViewModel = hiltViewModel(),
+    keepAliveViewModel: KeepAliveViewModel = hiltViewModel(),
 ) {
     val state by viewModel.state.collectAsStateWithLifecycle()
     val syncFeedback by viewModel.syncFeedback.collectAsStateWithLifecycle()
     val legacyOutboxClaimPrompt by viewModel.legacyOutboxClaimPrompt.collectAsStateWithLifecycle()
     val refreshVersion by viewModel.refreshVersion.collectAsStateWithLifecycle()
+    val keepAliveAlert by keepAliveViewModel.healthAlert.collectAsStateWithLifecycle()
+    val localStatus = TodayLocalStatusSummary.from(state, keepAliveAlert)
+    val lifecycleOwner = LocalLifecycleOwner.current
     val workbenchViewModel: NativeWorkbenchViewModel = hiltViewModel()
     var showLegacyToday by rememberSaveable { mutableStateOf(false) }
+
+    DisposableEffect(lifecycleOwner, viewModel, keepAliveViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshOnResume()
+                keepAliveViewModel.refresh()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
 
     LaunchedEffect(workbenchViewModel) {
         workbenchViewModel.enterToday()
@@ -65,7 +88,9 @@ fun TodayScreen(
         TodayStatusBar(
             state = state,
             syncFeedback = syncFeedback,
-            onSyncNow = { viewModel.syncNow() }
+            onSyncNow = { viewModel.syncNow() },
+            localStatus = localStatus,
+            onOpenStatusCenter = onOpenStatusCenter,
         )
 
         Row(
@@ -124,7 +149,9 @@ fun TodayScreen(
 internal fun TodayStatusBar(
     state: TodayUiState,
     syncFeedback: String?,
-    onSyncNow: () -> Unit
+    onSyncNow: () -> Unit,
+    localStatus: TodayLocalStatusSummary = TodayLocalStatusSummary(),
+    onOpenStatusCenter: () -> Unit = {},
 ) {
     val dimensions = PimTheme.dimensions
     val busy = state.isSyncButtonDisabled
@@ -202,6 +229,23 @@ internal fun TodayStatusBar(
                 .horizontalScroll(rememberScrollState()),
             horizontalArrangement = Arrangement.spacedBy(dimensions.spaceSmall)
         ) {
+            AssistChip(
+                onClick = onOpenStatusCenter,
+                modifier = Modifier.testTag("today-local-status"),
+                label = {
+                    Text(
+                        text = localStatus.label,
+                        style = MaterialTheme.typography.labelSmall,
+                    )
+                },
+                leadingIcon = {
+                    Icon(
+                        imageVector = Icons.Filled.Security,
+                        contentDescription = null,
+                        modifier = Modifier.size(16.dp),
+                    )
+                },
+            )
             FactChip("待传总数", state.pendingCount.toString(), "today-pending-total")
             FactChip("定位待传", state.pendingLocationPoints.toString(), "today-pending-location")
             FactChip(

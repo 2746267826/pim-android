@@ -10,6 +10,7 @@ import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.layout.width
 import androidx.compose.foundation.layout.widthIn
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.rememberScrollState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.verticalScroll
@@ -42,6 +43,7 @@ import androidx.compose.material3.Switch
 import androidx.compose.material3.Text
 import androidx.compose.material3.TextButton
 import androidx.compose.runtime.Composable
+import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
@@ -60,7 +62,11 @@ import androidx.compose.ui.semantics.Role
 import androidx.compose.ui.unit.dp
 import androidx.hilt.navigation.compose.hiltViewModel
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleEventObserver
 import com.pim.app.forensics.LivenessUiSnapshot
+import com.pim.app.status.CollectionPermissionAccess
+import com.pim.app.status.CollectionPermissionState
 import com.pim.app.status.ConnectionProbeResult
 import com.pim.app.status.DiagnosticSnapshot
 import com.pim.app.status.NetworkAvailability
@@ -79,6 +85,7 @@ import com.pim.app.status.StatusPermissionNavigator
 import com.pim.app.status.StatusSeverity
 import com.pim.app.status.SyncPhase
 import com.pim.app.status.actionableStatusIssues
+import com.pim.app.status.collectionPermissions
 import com.pim.app.status.informationalStatusIssues
 import com.pim.app.ui.components.LegacyOutboxClaimDialog
 import java.time.Instant
@@ -115,11 +122,28 @@ fun StatusCenterScreen(
     val showMeteredSyncConfirmation by viewModel.showMeteredSyncConfirmation.collectAsStateWithLifecycle()
     val legacyOutboxClaimPrompt by viewModel.legacyOutboxClaimPrompt.collectAsStateWithLifecycle()
     var showGuidance by rememberSaveable { mutableStateOf(false) }
+    var permissionActionMessage by rememberSaveable { mutableStateOf<String?>(null) }
     // REQ-21：红点状态取自持久化设置（进程重启后仍在），进入状态页时刷新一次。
     val keepAliveAlert by keepAliveViewModel.healthAlert.collectAsStateWithLifecycle()
     LaunchedEffect(lifecycleOwner) {
         keepAliveViewModel.refresh()
     }
+    DisposableEffect(lifecycleOwner, viewModel, keepAliveViewModel) {
+        val observer = LifecycleEventObserver { _, event ->
+            if (event == Lifecycle.Event.ON_RESUME) {
+                viewModel.refreshOnResume()
+                keepAliveViewModel.refresh()
+            }
+        }
+        lifecycleOwner.lifecycle.addObserver(observer)
+        onDispose { lifecycleOwner.lifecycle.removeObserver(observer) }
+    }
+
+    fun openPermissionSettings(issueCode: String) {
+        val opened = StatusPermissionNavigator.open(context, issueCode)
+        permissionActionMessage = if (opened) null else PERMISSION_SETTINGS_UNAVAILABLE_TEXT
+    }
+
     if (showDroppedReasons) {
         DroppedReasonScreen(
             state = droppedReasons,
@@ -154,6 +178,8 @@ fun StatusCenterScreen(
         keepAliveHealthAlert = keepAliveAlert,
         onOpenDroppedReasons = { viewModel.openDroppedReasons() },
         onOpenGuidance = { showGuidance = true },
+        onPermissionAction = ::openPermissionSettings,
+        permissionActionMessage = permissionActionMessage,
         modifier = modifier,
         onIssueAction = { issue ->
             when (StatusActionRouter.route(viewModel.onIssueAction(issue))) {
@@ -164,7 +190,7 @@ fun StatusCenterScreen(
                     } else {
                         onOpenSettings()
                     }
-                StatusActionRoute.OpenPermissions -> StatusPermissionNavigator.open(context, issue)
+                StatusActionRoute.OpenPermissions -> openPermissionSettings(issue.code)
                 StatusActionRoute.TriggerSync -> viewModel.syncNow()
                 StatusActionRoute.OpenNetworkSettings -> {
                     NetworkSettingsNavigator.open(context)
@@ -212,6 +238,8 @@ internal fun StatusCenterContent(
     keepAliveHealthAlert: String? = null,
     onOpenDroppedReasons: () -> Unit = {},
     onOpenGuidance: () -> Unit = {},
+    onPermissionAction: (String) -> Unit = {},
+    permissionActionMessage: String? = null,
     modifier: Modifier = Modifier,
     onIssueAction: (StatusIssue) -> Unit = {},
     onSyncNow: () -> Unit = {},
@@ -246,6 +274,17 @@ internal fun StatusCenterContent(
         )
 
         OverallStatusSurface(state)
+
+        CollectionHealthSection(
+            permissions = snapshot.permissions,
+            checking = state.isLoading,
+            keepAliveHealthAlert = keepAliveHealthAlert,
+            onOpenGuidance = onOpenGuidance,
+            onPermissionAction = onPermissionAction,
+            permissionActionMessage = permissionActionMessage,
+        )
+
+        Divider()
 
         // 存活区块放在最顶部（REQ-8）：先回答"设备活没活"，再回答既有权限/同步状态。
         LivenessSection(
@@ -501,6 +540,145 @@ private fun OverallStatusSurface(state: StatusCenterState) {
     }
 }
 
+/**
+ * P04：把六项持续采集权限与保活健康放在状态中心顶部，用户无需先读问题列表。
+ *
+ * 每一行都是完整可点击目标；GRANTED 也保留「查看设置」，这样系统里被关闭后
+ * 用户仍有稳定入口。RESTRICTED 与 CHECK_FAILED 不复用「未就绪」文案，避免把
+ * 系统限制或读取失败误报成用户拒绝授权。
+ */
+@Composable
+private fun CollectionHealthSection(
+    permissions: PermissionStatusSnapshot,
+    checking: Boolean,
+    keepAliveHealthAlert: String?,
+    onOpenGuidance: () -> Unit,
+    onPermissionAction: (String) -> Unit,
+    permissionActionMessage: String?,
+) {
+    Column(
+        modifier = Modifier.testTag("status-collection-health"),
+        verticalArrangement = Arrangement.spacedBy(6.dp),
+    ) {
+        SectionHeader("采集健康", Icons.Filled.Shield)
+        Text(
+            text = "缺失项会立即影响本机采集；点击任意一项可进入对应系统设置。",
+            style = MaterialTheme.typography.bodySmall,
+            color = MaterialTheme.colorScheme.onSurfaceVariant,
+        )
+
+        permissions.collectionPermissions().forEach { permission ->
+            CollectionPermissionRow(
+                permission = permission,
+                checking = checking,
+                onClick = { onPermissionAction(permission.kind.issueCode) },
+            )
+        }
+
+        Row(
+            modifier = Modifier
+                .fillMaxWidth()
+                .testTag("status-keepalive-summary"),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = "保活健康",
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = if (keepAliveHealthAlert.isNullOrBlank()) "正常" else "需检查",
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (keepAliveHealthAlert.isNullOrBlank()) {
+                        MaterialTheme.colorScheme.primary
+                    } else {
+                        MaterialTheme.colorScheme.error
+                    },
+                )
+            }
+            TextButton(
+                onClick = onOpenGuidance,
+                modifier = Modifier.testTag("status-keepalive-action"),
+            ) {
+                Text("查看引导")
+            }
+        }
+
+        if (!permissionActionMessage.isNullOrBlank()) {
+            Surface(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .testTag("status-permission-action-feedback"),
+                shape = RoundedCornerShape(8.dp),
+                color = MaterialTheme.colorScheme.errorContainer,
+                tonalElevation = 2.dp,
+            ) {
+                Text(
+                    text = permissionActionMessage,
+                    modifier = Modifier.padding(12.dp),
+                    style = MaterialTheme.typography.bodySmall,
+                    color = MaterialTheme.colorScheme.onErrorContainer,
+                )
+            }
+        }
+    }
+}
+
+@Composable
+private fun CollectionPermissionRow(
+    permission: CollectionPermissionState,
+    checking: Boolean,
+    onClick: () -> Unit,
+) {
+    Surface(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("status-permission-${permission.kind.tagSuffix}")
+            .clickable(onClick = onClick),
+        shape = RoundedCornerShape(8.dp),
+        color = MaterialTheme.colorScheme.surfaceVariant,
+        tonalElevation = 1.dp,
+    ) {
+        Row(
+            modifier = Modifier.padding(horizontal = 12.dp, vertical = 10.dp),
+            verticalAlignment = Alignment.CenterVertically,
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text(
+                    text = permission.kind.title,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold,
+                )
+                Text(
+                    text = if (permission.kind.required) "采集必需" else "建议开启",
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.onSurfaceVariant,
+                )
+            }
+            Column(horizontalAlignment = Alignment.End) {
+                Text(
+                    text = if (checking) "检查中" else permission.statusText,
+                    style = MaterialTheme.typography.bodySmall,
+                    color = if (checking) {
+                        MaterialTheme.colorScheme.onSurfaceVariant
+                    } else when (permission.access) {
+                        CollectionPermissionAccess.GRANTED -> MaterialTheme.colorScheme.primary
+                        CollectionPermissionAccess.RESTRICTED -> MaterialTheme.colorScheme.tertiary
+                        CollectionPermissionAccess.MISSING,
+                        CollectionPermissionAccess.CHECK_FAILED -> MaterialTheme.colorScheme.error
+                    },
+                )
+                Text(
+                    text = if (checking) "查看设置" else permission.actionLabel,
+                    style = MaterialTheme.typography.labelSmall,
+                    color = MaterialTheme.colorScheme.primary,
+                )
+            }
+        }
+    }
+}
+
 private fun summaryText(state: StatusCenterState): String {
     val parts = mutableListOf<String>()
     val criticalCount = state.issues.count { it.severity == StatusSeverity.Critical }
@@ -669,8 +847,6 @@ private fun CollectionAndConnectionSection(state: StatusCenterState) {
 
         ScheduleFactsSection(snap.schedule, snap.latestPolicyTransition)
 
-        PermissionsSection(snap.permissions)
-
         FactRow("系统网络", when (state.networkAvailability) {
             NetworkAvailability.Unavailable -> "不可用"
             NetworkAvailability.Restricted -> "受限"
@@ -679,21 +855,6 @@ private fun CollectionAndConnectionSection(state: StatusCenterState) {
 
         ProbeSection(state.lastProbeResult, state.lastProbeCheckedAtMillis)
     }
-}
-
-@Composable
-private fun PermissionsSection(permissions: PermissionStatusSnapshot) {
-    PermissionRow("通知", permissions.notificationGranted, "status-permission-notification")
-    PermissionRow("精确定位", permissions.preciseLocationGranted, "status-permission-precise-location")
-    PermissionRow("后台定位", permissions.backgroundLocationGranted, "status-permission-background-location")
-    PermissionRow("使用情况", permissions.usageAccessGranted, "status-permission-usage-access")
-    PermissionRow("运动识别", permissions.activityRecognitionGranted, "status-permission-activity-recognition")
-    PermissionRow("电池优化", permissions.batteryOptimizationGranted, "status-permission-battery-optimization")
-}
-
-@Composable
-private fun PermissionRow(label: String, granted: Boolean, tag: String) {
-    FactRow("权限 $label", if (granted) "已就绪" else "未就绪", tag)
 }
 
 @Composable
@@ -1145,3 +1306,7 @@ private fun formatRecordedTime(value: String?): String {
 }
 
 private val STATUS_TIME_FORMATTER: DateTimeFormatter = DateTimeFormatter.ofPattern("MM-dd HH:mm")
+
+/** 设置跳转失败时只展示固定安全文案，不拼接 Intent/异常详情。 */
+internal const val PERMISSION_SETTINGS_UNAVAILABLE_TEXT =
+    "无法打开系统设置，请手动前往系统设置授予权限。"

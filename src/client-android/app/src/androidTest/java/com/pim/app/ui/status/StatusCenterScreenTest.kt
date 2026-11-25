@@ -39,6 +39,7 @@ import com.pim.app.status.StatusSeverity
 import com.pim.app.status.SyncPhase
 import com.pim.app.ui.theme.PimTheme
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -71,7 +72,9 @@ class StatusCenterScreenTest {
             PimTheme { StatusCenterContent(sprintSummary = sprintSummaryForTest(), state = normalState(syncPhase = SyncPhase.Idle)) }
         }
         composeTestRule.onNodeWithTag("status-overall").assertIsDisplayed()
-        composeTestRule.onNodeWithText("正常").assertIsDisplayed()
+        composeTestRule.onNode(
+            hasTestTag("status-overall") and hasAnyDescendant(hasText("正常"))
+        ).assertIsDisplayed()
     }
 
     @Test
@@ -881,6 +884,103 @@ class StatusCenterScreenTest {
         // 并且仍然只有两行状态切换信息。
         composeTestRule.onAllNodesWithTag("status-current-state").assertCountEquals(1)
         composeTestRule.onAllNodesWithTag("status-policy-transition-last").assertCountEquals(1)
+    }
+
+    @Test
+    fun collectionHealthShowsRestrictedAndFailedStatesAndRoutesPermissionActions() {
+        var openedCode: String? = null
+        val permissions = PermissionStatusSnapshot(
+            notificationGranted = true,
+            preciseLocationGranted = false,
+            backgroundLocationGranted = false,
+            usageAccessGranted = false,
+            activityRecognitionGranted = true,
+            batteryOptimizationGranted = true,
+            restrictedPermissions = mapOf(
+                com.pim.app.status.CollectionPermissionKind.PRECISE_LOCATION to "仅允许大致位置",
+            ),
+            failedPermissionChecks = setOf(
+                com.pim.app.status.CollectionPermissionKind.USAGE_ACCESS,
+            ),
+        )
+        val state = normalState().copy(
+            snapshot = normalState().snapshot.copy(permissions = permissions),
+        )
+        composeTestRule.setContent {
+            PimTheme {
+                StatusCenterContent(
+                    sprintSummary = sprintSummaryForTest(),
+                    state = state,
+                    onPermissionAction = { openedCode = it },
+                )
+            }
+        }
+
+        composeTestRule.onNode(
+            hasTestTag("status-permission-precise-location") and
+                hasAnyDescendant(hasText("受限：仅允许大致位置"))
+        ).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNode(
+            hasTestTag("status-permission-usage-access") and
+                hasAnyDescendant(hasText("检查失败"))
+        ).performScrollTo().assertIsDisplayed()
+        listOf(
+            "notification" to "notification-permission-missing",
+            "precise-location" to "foreground-location-missing",
+            "background-location" to "background-location-missing",
+            "usage-access" to "usage-access-missing",
+            "activity-recognition" to "activity-recognition-missing",
+            "battery-optimization" to "battery-optimization-missing",
+        ).forEach { (tagSuffix, issueCode) ->
+            openedCode = null
+            composeTestRule.onNodeWithTag("status-permission-$tagSuffix")
+                .performScrollTo()
+                .performClick()
+            assertEquals(issueCode, openedCode)
+        }
+    }
+
+    @Test
+    fun collectionHealthShowsKeepaliveHealthAndAlwaysHasAGuidanceEntry() {
+        var guidanceOpened = 0
+        composeTestRule.setContent {
+            PimTheme {
+                StatusCenterContent(
+                    sprintSummary = sprintSummaryForTest(),
+                    state = normalState(),
+                    keepAliveHealthAlert = null,
+                    onOpenGuidance = { guidanceOpened++ },
+                )
+            }
+        }
+
+        composeTestRule.onNode(
+            hasTestTag("status-keepalive-summary") and hasAnyDescendant(hasText("正常"))
+        ).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-keepalive-action")
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(1, guidanceOpened)
+    }
+
+    @Test
+    fun permissionSettingsLaunchFailureShowsSafeActionableMessage() {
+        composeTestRule.setContent {
+            PimTheme {
+                StatusCenterContent(
+                    sprintSummary = sprintSummaryForTest(),
+                    state = normalState(),
+                    permissionActionMessage = "无法打开系统设置，请手动前往系统设置授予权限。",
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("status-permission-action-feedback")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithText("无法打开系统设置，请手动前往系统设置授予权限。")
+            .assertExists()
     }
 
     private fun normalState(

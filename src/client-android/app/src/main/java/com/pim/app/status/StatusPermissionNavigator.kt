@@ -14,13 +14,14 @@ object StatusPermissionNavigator {
     fun open(context: Context, issueCode: String) =
         tryStartActivity(context, intentFor(context, issueCode))
 
-    private fun tryStartActivity(context: Context, intent: Intent) {
-        if (tryOpen(context, intent)) return
+    private fun tryStartActivity(context: Context, intent: Intent): Boolean {
+        if (tryOpen(context, intent)) return true
 
         val fallback = appDetailsIntent(context)
         if (intent.action != fallback.action || intent.data != fallback.data) {
-            tryOpen(context, fallback)
+            return tryOpen(context, fallback)
         }
+        return false
     }
 
     private fun tryOpen(context: Context, intent: Intent): Boolean = try {
@@ -29,6 +30,8 @@ object StatusPermissionNavigator {
     } catch (_: ActivityNotFoundException) {
         false
     } catch (_: SecurityException) {
+        false
+    } catch (_: Exception) {
         false
     }
 

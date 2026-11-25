@@ -136,57 +136,129 @@ data class StatusIssue(
             target = StatusActionTarget.Login
         )
 
-        fun notificationPermissionMissing(): StatusIssue = StatusIssue(
+        fun notificationPermissionMissing(
+            access: CollectionPermissionAccess = CollectionPermissionAccess.MISSING,
+            restrictedReason: String? = null,
+        ): StatusIssue = StatusIssue(
             code = "notification-permission-missing",
             severity = StatusSeverity.Warning,
-            title = "通知未授权",
-            message = "持续采集需要显示包含采集状态的常驻通知。",
-            actionLabel = "去设置",
+            title = permissionIssueTitle(
+                kind = CollectionPermissionKind.NOTIFICATION,
+                missingTitle = "通知未授权",
+                access = access,
+            ),
+            message = permissionIssueMessage(
+                kind = CollectionPermissionKind.NOTIFICATION,
+                missingMessage = "持续采集需要显示包含采集状态的常驻通知。",
+                access = access,
+                restrictedReason = restrictedReason,
+            ),
+            actionLabel = permissionIssueActionLabel("去设置", access),
             target = StatusActionTarget.Permissions
         )
 
-        fun foregroundLocationMissing(): StatusIssue = StatusIssue(
+        fun foregroundLocationMissing(
+            access: CollectionPermissionAccess = CollectionPermissionAccess.MISSING,
+            restrictedReason: String? = null,
+        ): StatusIssue = StatusIssue(
             code = "foreground-location-missing",
             severity = StatusSeverity.Critical,
-            title = "前台定位未授权",
-            message = "缺少精确定位权限，无法采集符合精度要求的位置。",
-            actionLabel = "去授权",
+            title = permissionIssueTitle(
+                kind = CollectionPermissionKind.PRECISE_LOCATION,
+                missingTitle = "前台定位未授权",
+                access = access,
+            ),
+            message = permissionIssueMessage(
+                kind = CollectionPermissionKind.PRECISE_LOCATION,
+                missingMessage = "缺少精确定位权限，无法采集符合精度要求的位置。",
+                access = access,
+                restrictedReason = restrictedReason,
+            ),
+            actionLabel = permissionIssueActionLabel("去授权", access),
             target = StatusActionTarget.Permissions
         )
 
-        fun backgroundLocationMissing(): StatusIssue = StatusIssue(
+        fun backgroundLocationMissing(
+            access: CollectionPermissionAccess = CollectionPermissionAccess.MISSING,
+            restrictedReason: String? = null,
+        ): StatusIssue = StatusIssue(
             code = "background-location-missing",
             severity = StatusSeverity.Critical,
-            title = "后台定位未授权",
-            message = "持续采集需要“始终允许”定位权限。",
-            actionLabel = "去设置",
+            title = permissionIssueTitle(
+                kind = CollectionPermissionKind.BACKGROUND_LOCATION,
+                missingTitle = "后台定位未授权",
+                access = access,
+            ),
+            message = permissionIssueMessage(
+                kind = CollectionPermissionKind.BACKGROUND_LOCATION,
+                missingMessage = "持续采集需要“始终允许”定位权限。",
+                access = access,
+                restrictedReason = restrictedReason,
+            ),
+            actionLabel = permissionIssueActionLabel("去设置", access),
             target = StatusActionTarget.Permissions
         )
 
-        fun usageAccessMissing(): StatusIssue = StatusIssue(
+        fun usageAccessMissing(
+            access: CollectionPermissionAccess = CollectionPermissionAccess.MISSING,
+            restrictedReason: String? = null,
+        ): StatusIssue = StatusIssue(
             code = "usage-access-missing",
             severity = StatusSeverity.Warning,
-            title = "使用情况权限未授权",
-            message = "缺少使用情况访问权限，手机使用摘要将无法同步。",
-            actionLabel = "去授权",
+            title = permissionIssueTitle(
+                kind = CollectionPermissionKind.USAGE_ACCESS,
+                missingTitle = "使用情况权限未授权",
+                access = access,
+            ),
+            message = permissionIssueMessage(
+                kind = CollectionPermissionKind.USAGE_ACCESS,
+                missingMessage = "缺少使用情况访问权限，手机使用摘要将无法同步。",
+                access = access,
+                restrictedReason = restrictedReason,
+            ),
+            actionLabel = permissionIssueActionLabel("去授权", access),
             target = StatusActionTarget.Permissions
         )
 
-        fun activityRecognitionMissing(): StatusIssue = StatusIssue(
+        fun activityRecognitionMissing(
+            access: CollectionPermissionAccess = CollectionPermissionAccess.MISSING,
+            restrictedReason: String? = null,
+        ): StatusIssue = StatusIssue(
             code = "activity-recognition-missing",
             severity = StatusSeverity.Warning,
-            title = "运动识别未授权",
-            message = "缺少运动识别权限，移动恢复只能依赖位置变化。",
-            actionLabel = "去授权",
+            title = permissionIssueTitle(
+                kind = CollectionPermissionKind.ACTIVITY_RECOGNITION,
+                missingTitle = "运动识别未授权",
+                access = access,
+            ),
+            message = permissionIssueMessage(
+                kind = CollectionPermissionKind.ACTIVITY_RECOGNITION,
+                missingMessage = "缺少运动识别权限，移动恢复只能依赖位置变化。",
+                access = access,
+                restrictedReason = restrictedReason,
+            ),
+            actionLabel = permissionIssueActionLabel("去授权", access),
             target = StatusActionTarget.Permissions
         )
 
-        fun batteryOptimizationMissing(): StatusIssue = StatusIssue(
+        fun batteryOptimizationMissing(
+            access: CollectionPermissionAccess = CollectionPermissionAccess.MISSING,
+            restrictedReason: String? = null,
+        ): StatusIssue = StatusIssue(
             code = "battery-optimization-missing",
             severity = StatusSeverity.Warning,
-            title = "电池优化未豁免",
-            message = "电池优化会影响持续采集。",
-            actionLabel = "去授权",
+            title = permissionIssueTitle(
+                kind = CollectionPermissionKind.BATTERY_OPTIMIZATION,
+                missingTitle = "电池优化未豁免",
+                access = access,
+            ),
+            message = permissionIssueMessage(
+                kind = CollectionPermissionKind.BATTERY_OPTIMIZATION,
+                missingMessage = "电池优化会影响持续采集。",
+                access = access,
+                restrictedReason = restrictedReason,
+            ),
+            actionLabel = permissionIssueActionLabel("去授权", access),
             target = StatusActionTarget.Permissions
         )
 
@@ -336,6 +408,42 @@ data class StatusIssue(
             actionLabel = "查看历史",
             target = StatusActionTarget.PolicyTransitionHistory
         )
+
+        private fun permissionIssueTitle(
+            kind: CollectionPermissionKind,
+            missingTitle: String,
+            access: CollectionPermissionAccess,
+        ): String = when (access) {
+            CollectionPermissionAccess.MISSING -> missingTitle
+            CollectionPermissionAccess.RESTRICTED -> "${kind.title}受限"
+            CollectionPermissionAccess.CHECK_FAILED -> "${kind.title}检查失败"
+            CollectionPermissionAccess.GRANTED -> "${kind.title}已就绪"
+        }
+
+        private fun permissionIssueMessage(
+            kind: CollectionPermissionKind,
+            missingMessage: String,
+            access: CollectionPermissionAccess,
+            restrictedReason: String?,
+        ): String = when (access) {
+            CollectionPermissionAccess.MISSING -> missingMessage
+            CollectionPermissionAccess.RESTRICTED -> {
+                val reason = restrictedReason?.takeIf { it.isNotBlank() } ?: "系统权限受限"
+                "$reason。请前往系统设置调整${kind.title}权限。"
+            }
+            CollectionPermissionAccess.CHECK_FAILED ->
+                "暂时无法读取${kind.title}状态，请前往系统设置确认。"
+            CollectionPermissionAccess.GRANTED -> "当前${kind.title}已就绪。"
+        }
+
+        private fun permissionIssueActionLabel(
+            missingAction: String,
+            access: CollectionPermissionAccess,
+        ): String = if (access == CollectionPermissionAccess.CHECK_FAILED) {
+            "去设置"
+        } else {
+            missingAction
+        }
     }
 }
 
@@ -354,7 +462,11 @@ data class PermissionStatusSnapshot(
     val activityRecognitionGranted: Boolean,
     val batteryOptimizationGranted: Boolean,
     /** 工单 04：勿扰访问权限（日程静音用）。默认 false 保持既有构造点不变。 */
-    val doNotDisturbAccessGranted: Boolean = false
+    val doNotDisturbAccessGranted: Boolean = false,
+    /** P04：权限存在但被系统限制时的用户可读原因，例如仅允许大致位置。 */
+    val restrictedPermissions: Map<CollectionPermissionKind, String> = emptyMap(),
+    /** P04：系统权限查询本身失败；不能把它伪装成“未授权”。 */
+    val failedPermissionChecks: Set<CollectionPermissionKind> = emptySet()
 )
 
 data class ApiConnectionSnapshot(
@@ -522,23 +634,23 @@ object StatusIssuePlanner {
             issues += StatusIssue.loginExpired()
         }
 
-        if (!snapshot.permissions.notificationGranted) {
-            issues += StatusIssue.notificationPermissionMissing()
-        }
-        if (!snapshot.permissions.preciseLocationGranted) {
-            issues += StatusIssue.foregroundLocationMissing()
-        }
-        if (!snapshot.permissions.backgroundLocationGranted) {
-            issues += StatusIssue.backgroundLocationMissing()
-        }
-        if (!snapshot.permissions.usageAccessGranted) {
-            issues += StatusIssue.usageAccessMissing()
-        }
-        if (!snapshot.permissions.activityRecognitionGranted) {
-            issues += StatusIssue.activityRecognitionMissing()
-        }
-        if (!snapshot.permissions.batteryOptimizationGranted) {
-            issues += StatusIssue.batteryOptimizationMissing()
+        snapshot.permissions.collectionPermissions().forEach { permission ->
+            if (permission.isReady) return@forEach
+            val reason = permission.restrictedReason
+            issues += when (permission.kind) {
+                CollectionPermissionKind.NOTIFICATION ->
+                    StatusIssue.notificationPermissionMissing(permission.access, reason)
+                CollectionPermissionKind.PRECISE_LOCATION ->
+                    StatusIssue.foregroundLocationMissing(permission.access, reason)
+                CollectionPermissionKind.BACKGROUND_LOCATION ->
+                    StatusIssue.backgroundLocationMissing(permission.access, reason)
+                CollectionPermissionKind.USAGE_ACCESS ->
+                    StatusIssue.usageAccessMissing(permission.access, reason)
+                CollectionPermissionKind.ACTIVITY_RECOGNITION ->
+                    StatusIssue.activityRecognitionMissing(permission.access, reason)
+                CollectionPermissionKind.BATTERY_OPTIMIZATION ->
+                    StatusIssue.batteryOptimizationMissing(permission.access, reason)
+            }
         }
 
         if (snapshot.service.continuousCollectionEnabled && !snapshot.service.serviceRunning) {

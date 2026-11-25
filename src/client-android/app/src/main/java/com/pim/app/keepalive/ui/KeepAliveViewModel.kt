@@ -95,8 +95,10 @@ class KeepAliveViewModel @Inject constructor(
             } catch (ex: Exception) {
                 // REQ-28：取数失败必须有可见出口。
                 logs.error("keepalive", "读取保活设置失败：${ex.message ?: ""}", ex)
+                val failureText = keepAliveReadFailureText()
+                _healthAlert.value = failureText
                 _sectionState.value = _sectionState.value.copy(
-                    healthAlert = "读取保活设置失败：${ex.message ?: "未知错误"}"
+                    healthAlert = failureText
                 )
             }
         }
@@ -221,3 +223,6 @@ private fun emptyKeepAliveSectionState(): KeepAliveSectionState = KeepAliveSecti
     healthAlert = null,
     scheduleStatusText = "读取中…"
 )
+
+/** 保活取数失败的用户可见文案；不拼接异常信息，避免泄露路径或内部字段。 */
+internal fun keepAliveReadFailureText(): String = "保活状态暂时无法读取，请稍后重试"

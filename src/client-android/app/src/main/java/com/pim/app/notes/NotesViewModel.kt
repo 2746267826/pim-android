@@ -438,13 +438,10 @@ class NotesViewModel @Inject constructor(
     fun editTaskSuggestion(
         scope: NoteTaskSuggestionActionScope,
         suggestionId: String,
-        title: String,
-        description: String,
-        priority: Int,
-        due: String,
+        edit: NoteTaskSuggestionEdit,
     ) {
         viewModelScope.launch {
-            taskSuggestions.stageDraft(scope, suggestionId, title, description, priority, due)
+            taskSuggestions.stageDraft(scope, suggestionId, edit)
         }
     }
 

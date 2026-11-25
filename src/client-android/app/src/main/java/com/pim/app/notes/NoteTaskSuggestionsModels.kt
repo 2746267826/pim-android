@@ -3,10 +3,12 @@ package com.pim.app.notes
 import com.pim.core.contract.NoteDerivedGenerationConsent
 import com.pim.core.contract.NoteTaskSuggestionDto
 import com.pim.core.contract.NoteTaskSuggestionExtractionDto
+import com.pim.core.contract.NoteTaskSuggestionKindDto
 import com.pim.core.contract.StartNoteTaskSuggestionExtractionRequest
 import com.pim.core.network.BoundUploadSession
 import java.time.Instant
 import java.time.LocalDateTime
+import java.time.OffsetDateTime
 import java.time.ZoneId
 import java.time.format.DateTimeFormatter
 import kotlinx.serialization.Serializable
@@ -37,20 +39,68 @@ data class NoteTaskSuggestionDestination(
     val endpoint: String,
 )
 
+data class NoteTaskSuggestionEdit(
+    val title: String,
+    val description: String,
+    val priority: Int,
+    val due: String = "",
+    val start: String = "",
+    val end: String = "",
+    val timeZoneId: String = "",
+)
+
 data class NoteTaskSuggestionItem(
     val remote: NoteTaskSuggestionDto,
     val draft: NoteTaskSuggestionDraft? = null,
 ) {
+    val kind: NoteTaskSuggestionKindDto get() = remote.kind
     val hasConflict: Boolean
         get() = draft != null && draft.expectedRevision != remote.revision
     val title: String get() = draft?.title ?: remote.title
     val description: String get() = draft?.description ?: remote.description.orEmpty()
     val priority: Int get() = draft?.priority ?: remote.priority
     val due: String get() = draft?.due ?: suggestionDueInput(remote.due)
+    val start: String get() = draft?.start ?: suggestionEventInput(remote.start, remote.timeZoneId)
+    val end: String get() = draft?.end ?: suggestionEventInput(remote.end, remote.timeZoneId)
+    val timeZoneId: String get() = draft?.timeZoneId ?: remote.timeZoneId.orEmpty()
     val dirty: Boolean get() = draft?.dirty == true
     val confirmationPending: Boolean get() = draft?.confirmRequestId != null
     val confirmationBlocked: Boolean
         get() = confirmationPending && draft?.confirmRevision != remote.revision
+    val eventReady: Boolean
+        get() {
+            if (kind != NoteTaskSuggestionKindDto.EVENT) return true
+            val zone = timeZoneId.trim()
+            if ((draft == null || draft.confirmRequestId != null) &&
+                remote.start != null && remote.end != null
+            ) {
+                return zone.isBlank() || isIanaTimeZone(zone)
+            }
+            if (!isIanaTimeZone(zone) || start.isBlank() || end.isBlank()) return false
+            return runCatching { eventRangeIsOrdered(start, end, zone) }.getOrDefault(false)
+        }
+    val eventHint: String?
+        get() {
+            if (kind != NoteTaskSuggestionKindDto.EVENT) return null
+            val zone = timeZoneId.trim()
+            if ((draft == null || draft.confirmRequestId != null) &&
+                remote.start != null && remote.end != null
+            ) {
+                return if (zone.isBlank()) {
+                    "日程未提供 IANA 时区，将按服务端已保存的绝对时间创建；如需按当地时间修改，请先补全时区与起止时间。"
+                } else if (!isIanaTimeZone(zone)) {
+                    "日程时区无效。请编辑为有效的 IANA 时区后再确认创建。"
+                } else {
+                    null
+                }
+            }
+            if (zone.isBlank()) return "请填写日程的 IANA 时区，并按该时区补全开始和结束时间。"
+            if (!isIanaTimeZone(zone)) return "日程时区必须是有效的 IANA 时区。"
+            if (start.isBlank() || end.isBlank()) return "日程开始和结束时间必须同时完整，才能确认创建。"
+            return runCatching {
+                if (!eventRangeIsOrdered(start, end, zone)) "日程结束时间必须晚于开始时间。" else null
+            }.getOrElse { it.message ?: "日程时间无效。" }
+        }
 }
 
 data class NoteTaskSuggestionsState(
@@ -98,6 +148,9 @@ data class NoteTaskSuggestionDraft(
     val confirmRequestId: String? = null,
     val confirmRevision: String? = null,
     val updatedAtMillis: Long,
+    val start: String = "",
+    val end: String = "",
+    val timeZoneId: String = "",
 )
 
 @Serializable
@@ -138,8 +191,20 @@ internal fun NoteTaskSuggestionDestination.toWire() = NoteDerivedGenerationConse
 
 internal fun suggestionDueInput(value: String?): String {
     if (value.isNullOrBlank()) return ""
+    val instant = runCatching { OffsetDateTime.parse(value).toInstant() }
+        .recoverCatching { Instant.parse(value) }
+        .getOrNull() ?: return ""
     return DateTimeFormatter.ofPattern("yyyy-MM-dd'T'HH:mm")
-        .format(Instant.parse(value).atZone(ZoneId.systemDefault()))
+        .format(instant.atZone(ZoneId.systemDefault()))
+}
+
+/** Keeps an unchanged server due value exact instead of truncating it to the minute input. */
+internal fun suggestionDueAbsolute(value: String?): String? {
+    if (value.isNullOrBlank()) return null
+    return runCatching { OffsetDateTime.parse(value).toInstant() }
+        .recoverCatching { Instant.parse(value) }
+        .getOrNull()
+        ?.toString()
 }
 
 internal fun suggestionDueWire(value: String): String? {

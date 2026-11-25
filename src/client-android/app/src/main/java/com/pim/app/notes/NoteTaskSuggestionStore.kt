@@ -184,7 +184,9 @@ class NoteTaskSuggestionStore(private val root: File) {
             require(validNoteId(draft.suggestionId) && draft.expectedRevision.isNotBlank() &&
                 draft.expectedRevision.length <= 512 && draft.title.length <= MAX_TITLE_CHARS &&
                 draft.description.length <= MAX_DESCRIPTION_CHARS && draft.priority in PRIORITIES &&
-                draft.due.length <= MAX_DUE_CHARS && draft.updatedAtMillis >= 0)
+                draft.due.length <= MAX_DUE_CHARS && draft.start.length <= MAX_EVENT_INPUT_CHARS &&
+                draft.end.length <= MAX_EVENT_INPUT_CHARS &&
+                draft.timeZoneId.length <= MAX_TIME_ZONE_CHARS && draft.updatedAtMillis >= 0)
             require((draft.confirmRequestId == null) == (draft.confirmRevision == null))
             draft.confirmRequestId?.let { require(validNoteId(it) && draft.confirmRevision == draft.expectedRevision) }
         }
@@ -224,6 +226,8 @@ class NoteTaskSuggestionStore(private val root: File) {
         const val MAX_TITLE_CHARS = 255
         const val MAX_DESCRIPTION_CHARS = 20_000
         const val MAX_DUE_CHARS = 100
+        const val MAX_EVENT_INPUT_CHARS = 100
+        const val MAX_TIME_ZONE_CHARS = 100
         const val MIN_PRIORITY = 1
         const val MAX_PRIORITY = 9
         private val PRIORITIES = setOf(MIN_PRIORITY, 5, MAX_PRIORITY)

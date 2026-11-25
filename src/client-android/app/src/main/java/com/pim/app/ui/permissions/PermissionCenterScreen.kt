@@ -29,6 +29,7 @@ import androidx.lifecycle.LifecycleEventObserver
 import com.pim.app.mobile.usage.UsageAccessChecker
 import com.pim.app.permissions.PermissionStatusRepository
 import com.pim.app.status.CollectionPermissionAccess
+import com.pim.app.status.PermissionStatusSnapshot
 import com.pim.app.status.StatusPermissionNavigator
 import com.pim.app.status.collectionPermissions
 
@@ -36,18 +37,20 @@ import com.pim.app.status.collectionPermissions
 fun PermissionCenterScreen(
     modifier: Modifier = Modifier,
     uploadQueueCount: Int = 0,
-    collectionQuality: String = "collection quality: waiting"
+    collectionQuality: String = "collection quality: waiting",
+    snapshotProvider: (() -> PermissionStatusSnapshot)? = null,
 ) {
     val context = LocalContext.current
     val appContext = context.applicationContext
     val repo = remember(appContext) { PermissionStatusRepository(appContext, UsageAccessChecker(appContext)) }
-    var snapshot by remember { mutableStateOf(repo.snapshot()) }
+    val readSnapshot = remember(repo, snapshotProvider) { snapshotProvider ?: repo::snapshot }
+    var snapshot by remember(readSnapshot) { mutableStateOf(readSnapshot()) }
     val lifecycleOwner = LocalLifecycleOwner.current
 
-    DisposableEffect(lifecycleOwner) {
+    DisposableEffect(lifecycleOwner, readSnapshot) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_RESUME) {
-                snapshot = repo.snapshot()
+                snapshot = readSnapshot()
             }
         }
         lifecycleOwner.lifecycle.addObserver(observer)

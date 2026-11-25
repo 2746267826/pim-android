@@ -1,16 +1,13 @@
 package com.pim.app.ui.permissions
 
-import android.Manifest
-import android.os.Build
 import androidx.activity.ComponentActivity
 import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.lifecycle.Lifecycle
 import androidx.test.ext.junit.runners.AndroidJUnit4
-import androidx.test.platform.app.InstrumentationRegistry
+import com.pim.app.status.PermissionStatusSnapshot
 import com.pim.app.ui.theme.PimTheme
-import org.junit.Assume.assumeTrue
 import org.junit.Rule
 import org.junit.Test
 import org.junit.runner.RunWith
@@ -21,28 +18,18 @@ class PermissionCenterScreenTest {
     val composeTestRule = createAndroidComposeRule<ComponentActivity>()
 
     @Test
-    fun notificationPermissionRefreshAfterReturningFromSettings() {
-        assumeTrue(Build.VERSION.SDK_INT >= Build.VERSION_CODES.TIRAMISU)
-        val instrumentation = InstrumentationRegistry.getInstrumentation()
-        val packageName = instrumentation.targetContext.packageName
-        runCatching {
-            instrumentation.uiAutomation.revokeRuntimePermission(
-                packageName,
-                Manifest.permission.POST_NOTIFICATIONS,
-            )
-        }
+    fun notificationStatusRefreshesAfterReturningFromSettings() {
+        var snapshot = allGranted(notificationGranted = false)
+        val provider = { snapshot }
 
         composeTestRule.setContent {
-            PimTheme { PermissionCenterScreen() }
+            PimTheme { PermissionCenterScreen(snapshotProvider = provider) }
         }
 
         composeTestRule.onNodeWithTag("permission-center-status-notification-permission-missing")
             .assertTextContains("未授权")
 
-        instrumentation.uiAutomation.grantRuntimePermission(
-            packageName,
-            Manifest.permission.POST_NOTIFICATIONS,
-        )
+        snapshot = allGranted(notificationGranted = true)
         composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
         composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         composeTestRule.waitForIdle()
@@ -50,4 +37,14 @@ class PermissionCenterScreenTest {
         composeTestRule.onNodeWithTag("permission-center-status-notification-permission-missing")
             .assertTextContains("已授权")
     }
+
+    private fun allGranted(notificationGranted: Boolean) = PermissionStatusSnapshot(
+        notificationGranted = notificationGranted,
+        preciseLocationGranted = true,
+        backgroundLocationGranted = true,
+        usageAccessGranted = true,
+        activityRecognitionGranted = true,
+        batteryOptimizationGranted = true,
+        doNotDisturbAccessGranted = true,
+    )
 }

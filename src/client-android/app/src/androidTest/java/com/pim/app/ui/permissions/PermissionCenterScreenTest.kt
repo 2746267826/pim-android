@@ -26,7 +26,10 @@ class PermissionCenterScreenTest {
             PimTheme { PermissionCenterScreen(snapshotProvider = provider) }
         }
 
-        composeTestRule.onNodeWithTag("permission-center-status-notification-permission-missing")
+        composeTestRule.onNodeWithTag(
+            "permission-center-status-notification-permission-missing",
+            useUnmergedTree = true,
+        )
             .assertTextContains("未授权")
 
         snapshot = allGranted(notificationGranted = true)
@@ -34,7 +37,10 @@ class PermissionCenterScreenTest {
         composeTestRule.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
         composeTestRule.waitForIdle()
 
-        composeTestRule.onNodeWithTag("permission-center-status-notification-permission-missing")
+        composeTestRule.onNodeWithTag(
+            "permission-center-status-notification-permission-missing",
+            useUnmergedTree = true,
+        )
             .assertTextContains("已授权")
     }
 

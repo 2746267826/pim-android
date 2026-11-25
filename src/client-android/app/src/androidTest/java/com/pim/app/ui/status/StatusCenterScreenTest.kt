@@ -917,14 +917,12 @@ class StatusCenterScreenTest {
             }
         }
 
-        composeTestRule.onNode(
-            hasTestTag("status-permission-precise-location") and
-                hasAnyDescendant(hasText("受限：仅允许大致位置"))
-        ).performScrollTo().assertIsDisplayed()
-        composeTestRule.onNode(
-            hasTestTag("status-permission-usage-access") and
-                hasAnyDescendant(hasText("检查失败"))
-        ).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-permission-precise-location")
+            .performScrollTo()
+            .assertTextContains("受限：仅允许大致位置", substring = true)
+        composeTestRule.onNodeWithTag("status-permission-usage-access")
+            .performScrollTo()
+            .assertTextContains("检查失败", substring = true)
         listOf(
             "notification" to "notification-permission-missing",
             "precise-location" to "foreground-location-missing",

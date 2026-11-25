@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 a3f269550587fb01e1491fb3659544b6ad4d0650ad1436aba22b707f33a02e3d)
+//   契约快照 : contract/openapi.json (sha256 cf04f50ff799ff51021c4842eb18f2039fbf7a844965fbbd935dc6c0fb106ddc)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -268,6 +268,8 @@ data class CreateCalendarRequest(
 /** 契约 `components.schemas.CreateEventRequest`（request）。 */
 @Serializable
 data class CreateEventRequest(
+    val allDayEndDateExclusive: String? = null,
+    val allDayStartDate: String? = null,
     val attachmentReferences: List<EventAttachmentReferenceDto>? = null,
     val attendees: List<EventAttendeeDto>? = null,
     val calendarId: String,
@@ -589,12 +591,17 @@ data class EventPersonDto(
 /** 契约 `components.schemas.EventResponse`（response）。 */
 @Serializable
 data class EventResponse(
+    val allDayEndDateExclusive: String? = null,
+    val allDayStartDate: String? = null,
     val attachmentReferences: List<EventAttachmentReferenceDto>? = null,
     val attendees: List<EventAttendeeDto>? = null,
     val calendarId: String,
     val categories: List<String>? = null,
     val description: String? = null,
     val descriptionFormat: String? = null,
+    val displayLocalEnd: String? = null,
+    val displayLocalStart: String? = null,
+    val displayTimeZoneId: String? = null,
     val dtEnd: String,
     val dtStart: String,
     val exDatesJson: String? = null,
@@ -608,6 +615,8 @@ data class EventResponse(
     val isOnlineMeeting: Boolean? = null,
     val isReminderOn: Boolean? = null,
     val isSeriesMaster: Boolean? = null,
+    val localEnd: String? = null,
+    val localStart: String? = null,
     val location: String? = null,
     val onlineMeetingProvider: String? = null,
     val onlineMeetingUrl: String? = null,
@@ -630,6 +639,9 @@ data class EventResponse(
     val sourceUid: String? = null,
     val status: String,
     val timeZoneId: String? = null,
+    val timeZoneIdType: String? = null,
+    val timeZoneResolution: String? = null,
+    val timeZoneSourceType: String? = null,
     val title: String,
     val uid: String,
 )
@@ -2876,6 +2888,8 @@ data class TypedDetailQueryResponseApiResponse(
 /** 契约 `components.schemas.UpdateEventRequest`（request）。 */
 @Serializable
 data class UpdateEventRequest(
+    val allDayEndDateExclusive: String? = null,
+    val allDayStartDate: String? = null,
     val attachmentReferences: List<EventAttachmentReferenceDto>? = null,
     val attendees: List<EventAttendeeDto>? = null,
     val calendarId: String,

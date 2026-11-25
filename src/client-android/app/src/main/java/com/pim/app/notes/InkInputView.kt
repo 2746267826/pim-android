@@ -49,7 +49,7 @@ class InkInputView(context: Context) : View(context) {
                 if (event.getPointerId(event.actionIndex) != pointer) return true
                 addPoint(event, event.actionIndex)
                 if (points.isNotEmpty()) {
-                    val next = if (eraseEnabled) ink.erasedBy(points) else ink.copy(strokes = ink.strokes + InkStroke(points.toList()))
+                    val next = if (eraseEnabled) ink.erasedBy(points) else ink.appendStroke(points.toList(), inkColor.cssColor())
                     ink = next
                     onInkChanged(next)
                 }
@@ -73,3 +73,5 @@ class InkInputView(context: Context) : View(context) {
     }
     private fun resetGesture() { points.clear(); pointer = -1; parent?.requestDisallowInterceptTouchEvent(false); invalidate() }
 }
+
+private fun Int.cssColor(): String = "#%06x".format(this and 0xFFFFFF)

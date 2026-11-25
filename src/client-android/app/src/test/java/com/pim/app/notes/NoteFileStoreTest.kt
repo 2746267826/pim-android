@@ -148,6 +148,10 @@ class NoteFileStoreTest {
             listOf(INK_COLOR_RED, INK_COLOR_BLUE, INK_COLOR_GREEN),
             exportedInk.strokes.map { it.color },
         )
+        assertEquals(
+            listOf(INK_WIDTH_THIN, INK_WIDTH_COARSE, INK_DEFAULT_WIDTH),
+            exportedInk.strokes.map { it.width },
+        )
         assertEquals("keep", exportedInk.strokes[0].extras.string("futureStroke"))
         assertEquals("keep", exportedInk.strokes[0].points[0].extras.string("futurePoint"))
         assertEquals("keep", exportedInk.strokes[0].styleExtras.string("futureStyle"))

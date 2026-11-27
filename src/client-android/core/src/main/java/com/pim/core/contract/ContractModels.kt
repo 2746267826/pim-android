@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 cf04f50ff799ff51021c4842eb18f2039fbf7a844965fbbd935dc6c0fb106ddc)
+//   契约快照 : contract/openapi.json (sha256 5f5bffc67f26d70a15507d093d526c62c27270f4627a5feaba97b79be6eb73e7)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -670,6 +670,31 @@ data class EventResponsePagedResult(
 data class EventResponsePagedResultApiResponse(
     val code: Int,
     val data: EventResponsePagedResult? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.GlobalSearchResult`（response）。 */
+@Serializable
+data class GlobalSearchResult(
+    val generatedAt: String,
+    val groups: List<SearchGroup>,
+    val items: List<SearchResult>,
+    val match: String,
+    val page: Int,
+    val pageSize: Int,
+    val query: String,
+    val scope: String,
+    val sort: String,
+    val totalCount: Int,
+    val totalPages: Int,
+)
+
+/** 契约 `components.schemas.GlobalSearchResultApiResponse`（response）。 */
+@Serializable
+data class GlobalSearchResultApiResponse(
+    val code: Int,
+    val data: GlobalSearchResult? = null,
     val message: String,
     val timestamp: String,
 )
@@ -2540,34 +2565,60 @@ data class SaveNoteDerivedManualRevisionRequest(
     val revisionId: String,
 )
 
+/** 契约 `components.schemas.SearchEventOccurrence`（response）。 */
+@Serializable
+data class SearchEventOccurrence(
+    val eventId: String,
+    val recurrenceId: String? = null,
+    val seriesMasterId: String? = null,
+    val startsAt: String,
+)
+
+/** 契约 `components.schemas.SearchFieldLocation`（response）。 */
+@Serializable
+data class SearchFieldLocation(
+    val field: String,
+    val index: Int? = null,
+    val label: String,
+)
+
+/** 契约 `components.schemas.SearchGroup`（response）。 */
+@Serializable
+data class SearchGroup(
+    val domain: String,
+    val failure: SearchGroupFailure? = null,
+    val items: List<SearchResult>,
+    val label: String,
+    val totalCount: Int,
+)
+
+/** 契约 `components.schemas.SearchGroupFailure`（response）。 */
+@Serializable
+data class SearchGroupFailure(
+    val code: String,
+    val correlationId: String,
+    val message: String,
+    val retryable: Boolean,
+)
+
 /** 契约 `components.schemas.SearchResult`（response）。 */
 @Serializable
 data class SearchResult(
+    val createdAt: String? = null,
+    val domain: String? = null,
+    val eventOccurrence: SearchEventOccurrence? = null,
+    val fieldLocations: List<SearchFieldLocation>? = null,
     val id: String,
+    val matchedFields: List<String>? = null,
     val moduleName: String,
+    val score: Double? = null,
     val snippet: String,
+    val sortKey: String? = null,
+    val sourceState: String? = null,
     val title: String,
     val type: String,
+    val updatedAt: String? = null,
     val url: String,
-)
-
-/** 契约 `components.schemas.SearchResultPagedResult`（response）。 */
-@Serializable
-data class SearchResultPagedResult(
-    val items: List<SearchResult>,
-    val page: Int,
-    val pageSize: Int,
-    val totalCount: Int,
-    val totalPages: Int,
-)
-
-/** 契约 `components.schemas.SearchResultPagedResultApiResponse`（response）。 */
-@Serializable
-data class SearchResultPagedResultApiResponse(
-    val code: Int,
-    val data: SearchResultPagedResult? = null,
-    val message: String,
-    val timestamp: String,
 )
 
 /** 契约 `components.schemas.SelectNoteDerivedVersionRequest`（request）。 */

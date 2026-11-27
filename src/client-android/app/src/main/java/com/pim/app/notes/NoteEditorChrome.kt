@@ -33,20 +33,27 @@ internal fun NoteEditorTopBar(
 ) {
     val d = PimTheme.dimensions
     var menu by remember { mutableStateOf(false) }
+    val saveState = noteSaveState(saved = saved, saveFailed = saveFailed, needsReview = needsReview)
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(Modifier.fillMaxWidth().padding(horizontal = d.spaceSmall, vertical = d.spaceSmall).testTag("note-top-bar"),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, enabled = !busy, modifier = Modifier.size(d.minimumTouchTarget)) { Icon(Icons.Default.ArrowBack, "返回记录列表") }
-            Row(Modifier.weight(1f).heightIn(min = d.minimumTouchTarget).clickable(onClick = onSaveStatus),
+            Row(Modifier.weight(1f).heightIn(min = d.minimumTouchTarget).clickable(onClick = onSaveStatus)
+                .testTag("note-save-status-open"),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.spaceExtraSmall)) {
-                Icon(when { saveFailed -> Icons.Default.ErrorOutline; needsReview -> Icons.Default.WarningAmber; saved -> Icons.Default.Check; else -> Icons.Default.Sync },
+                Icon(when (saveState) {
+                    NoteSaveState.SaveFailed -> Icons.Default.ErrorOutline
+                    NoteSaveState.NeedsReview -> Icons.Default.WarningAmber
+                    NoteSaveState.SavedLocally -> Icons.Default.Check
+                    NoteSaveState.Saving -> Icons.Default.Sync
+                },
                     null, Modifier.size(d.iconSize), tint = when {
-                        saveFailed -> MaterialTheme.colorScheme.error
-                        needsReview -> PimTheme.statusColors.onWarningContainer
-                        saved -> PimTheme.statusColors.onSuccessContainer
+                        saveState == NoteSaveState.SaveFailed -> MaterialTheme.colorScheme.error
+                        saveState == NoteSaveState.NeedsReview -> PimTheme.statusColors.onWarningContainer
+                        saveState == NoteSaveState.SavedLocally -> PimTheme.statusColors.onSuccessContainer
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     })
-                Text(when { saveFailed -> "保存失败"; needsReview -> "待核对正文"; saved -> "已保存本机"; else -> "保存中" },
+                Text(noteSaveStateLabel(saveState),
                     Modifier.testTag("note-save-status"), style = MaterialTheme.typography.bodySmall,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -98,7 +105,9 @@ internal fun NoteDocumentHeading(
                 Box { if (note.title.isBlank()) Text("未命名记录", style = MaterialTheme.typography.headlineMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant); field() }
             })
-        Text("${noteDate(note)} · 本机原稿", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        noteDate(note).takeIf { it.isNotBlank() }?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (recordingCount > 0 || latest != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (recordingCount > 0) TextButton(onClick = onRecordings, modifier = Modifier.testTag("note-recordings"),
                 contentPadding = PaddingValues(end = d.spaceMedium)) {
@@ -259,7 +268,16 @@ internal fun NoteMaterialsRail(note: NoteDocument, sessions: List<RecordingSessi
         }
         Divider(color = MaterialTheme.colorScheme.outlineVariant)
         TextButton(onClick = onMaterials) { Text("材料版本") }
-        Text("原始材料保留在本机。\n云端处理尚未接入。", style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+internal fun NoteDocumentEnd(preview: Boolean) {
+    val d = PimTheme.dimensions
+    if (preview) {
+        Text("原始笔记 · 预览", Modifier.padding(vertical = d.spaceLarge).testTag("note-document-end"),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
+        Spacer(Modifier.height(d.spaceLarge).testTag("note-document-end"))
     }
 }

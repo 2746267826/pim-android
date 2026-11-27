@@ -94,6 +94,7 @@ fun NativeNotesScreen(
                 var showRecordings by rememberSaveable { mutableStateOf(false) }
                 var confirmFinish by rememberSaveable { mutableStateOf(false) }
                 var showAbout by rememberSaveable { mutableStateOf(false) }
+                var showSaveStatus by rememberSaveable { mutableStateOf(false) }
                 var showRecordingConflict by remember(note.id) { mutableStateOf(false) }
                 val focus = LocalFocusManager.current
                 val keyboard = LocalSoftwareKeyboardController.current
@@ -113,6 +114,8 @@ fun NativeNotesScreen(
                 val sessions = (listOfNotNull(ownSession) + recording.archives.mapNotNull { it.session }).distinctBy { it.id }
                     .filter { it.noteId == note.id }.sortedWith(compareBy({ it.createdAtMillis }, { it.id }))
                 val latest = materials.entries.firstOrNull { it.noteId == note.id }
+                val latestUpload = latestUploadJobForNote(uploads.jobs, note.id)
+                val saveProblem = state.saveProblems[note.id]
                 val lastMarkdown = note.blocks.lastOrNull { it.string("kind") == "markdown" }
                 val showTextTools = editor.activeRichBlock != null && !preview && !busy && !committing
                 val dockClearance = d.noteDockClearance + if (showTextTools) d.minimumTouchTarget + d.spaceSmall else 0.dp
@@ -164,7 +167,11 @@ fun NativeNotesScreen(
                                 item(key = "alerts") {
                                     Column(verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
                                         if (note.id in state.errors) {
-                                            PimStatusBanner("保存失败，当前更改尚未可靠落盘。请检查存储空间后重试。", PimStatusTone.Error)
+                                            PimStatusBanner(
+                                                "保存失败：${saveProblem ?: "本机文件写入失败"}。" +
+                                                    "当前更改尚未可靠落盘；上次成功保存的内容仍保留。",
+                                                PimStatusTone.Error,
+                                            )
                                             TextButton(onClick = { onRetry(note.id) }) { Text("重试本地保存") }
                                         }
                                         when (state.historyUnavailable[note.id]) {
@@ -229,9 +236,7 @@ fun NativeNotesScreen(
                                     }
                                 }
                                 item(key = "document-end") {
-                                    Text(if (preview) "原始笔记 · 预览" else "正文支持 Markdown · 右下角插入照片与手写",
-                                        Modifier.padding(vertical = d.spaceLarge), style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    NoteDocumentEnd(preview)
                                 }
                             }
                         }
@@ -239,11 +244,8 @@ fun NativeNotesScreen(
                     NoteEditorTopBar(saved, note.id in state.errors, busy || committing, preview,
                         onBack = { afterInput { onOpen(null) } },
                         onSaveStatus = {
-                            if (note.id in state.errors) onRetry(note.id)
-                            else if (editor.reviewIds.isNotEmpty()) {
-                                val index = note.blocks.indexOfFirst { it.string("id") in editor.reviewIds }
-                                if (index >= 0) scope.launch { list.scrollToItem(index + 2) }
-                            } else { leaveInput(); showAbout = true }
+                            leaveInput()
+                            showSaveStatus = true
                         },
                         onPreview = { afterInput { preview = !preview } }, onFinish = { afterInput { confirmFinish = true } },
                         onMaterials = { leaveInput(); showMaterials = true }, onRecordings = { leaveInput(); showRecordings = true },
@@ -253,6 +255,30 @@ fun NativeNotesScreen(
                         canRedo = state.editHistory[note.id]?.canRedo == true,
                         onUndo = { afterInput { onUndo(note.id) } },
                         onRedo = { afterInput { onRedo(note.id) } })
+                    if (showSaveStatus) NoteSaveStatusDialog(
+                        state = noteSaveState(
+                            saved = saved,
+                            saveFailed = note.id in state.errors,
+                            needsReview = editor.reviewIds.isNotEmpty(),
+                        ),
+                        saveProblem = saveProblem,
+                        latestUpload = latestUpload,
+                        onRetrySave = {
+                            showSaveStatus = false
+                            onRetry(note.id)
+                        },
+                        onReview = {
+                            showSaveStatus = false
+                            val index = note.blocks.indexOfFirst { it.string("id") in editor.reviewIds }
+                            if (index >= 0) scope.launch { list.scrollToItem(index + 2) }
+                        },
+                        onOpenMaterials = {
+                            showSaveStatus = false
+                            leaveInput()
+                            showMaterials = true
+                        },
+                        onDismiss = { showSaveStatus = false },
+                    )
                     NoteEditorDock(recording, ownActive, activeOtherTitle, saved && !busy && !committing && !recording.preparing,
                         !busy && !committing && !preview && lastMarkdown != null,
                         onRecord = {

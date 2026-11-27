@@ -30,6 +30,7 @@ data class NotesState(
     val historyUnavailable: Map<String, NoteHistoryUnavailableReason> = emptyMap(),
     val importQuarantine: NoteImportQuarantineSummary = NoteImportQuarantineSummary(),
     val errors: Set<String> = emptySet(),
+    val saveProblems: Map<String, String> = emptyMap(),
     val loadFailed: Boolean = false
 )
 
@@ -65,8 +66,13 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
             for (id in pending) {
                 try {
                     checkpoint(id)
-                } catch (_: Exception) {
-                    synchronized(this@NoteRepository) { mutableState.value = state.value.copy(errors = state.value.errors + id) }
+                } catch (error: Exception) {
+                    synchronized(this@NoteRepository) {
+                        mutableState.value = state.value.copy(
+                            errors = state.value.errors + id,
+                            saveProblems = state.value.saveProblems + (id to noteSaveProblemText(error)),
+                        )
+                    }
                 }
             }
         }
@@ -197,6 +203,7 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
                         current.editHistory - id
                     },
                     errors = current.errors - id,
+                    saveProblems = current.saveProblems - id,
                 )
             }
             note
@@ -344,6 +351,7 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
             editHistory = old.editHistory + (note.id to (availability ?: NoteHistoryAvailability())),
             historyUnavailable = unavailable,
             errors = old.errors - note.id,
+            saveProblems = old.saveProblems - note.id,
         )
         pending.trySend(note.id)
     }

@@ -69,6 +69,8 @@ internal fun NoteUploadJobs(
     artifacts: NoteArtifactRepositoryState = NoteArtifactRepositoryState(),
     processing: NoteProcessingRepositoryState = NoteProcessingRepositoryState(),
     localMaterial: NoteMaterialEntry? = null,
+    showHeading: Boolean = true,
+    initiallyExpanded: Boolean = false,
     showProcessingStatuses: Boolean = true,
     showConflictActions: Boolean = false,
     onRefreshReceipt: (String) -> Unit = {},
@@ -76,9 +78,9 @@ internal fun NoteUploadJobs(
     onPromoteConflict: (String, String) -> Unit = { _, _ -> },
 ) {
     val d = PimTheme.dimensions
-    var expanded by rememberSaveable { mutableStateOf(false) }
+    var expanded by rememberSaveable { mutableStateOf(initiallyExpanded) }
     Column(verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
-        Text("材料上传", style = MaterialTheme.typography.titleSmall)
+        if (showHeading) Text("材料上传", style = MaterialTheme.typography.titleSmall)
         if (state.loadFailed) Text("部分上传任务无法读取，原文件保留；其余任务继续处理。", color = MaterialTheme.colorScheme.error)
         (if (expanded) state.jobs else state.jobs.take(3)).forEach { job ->
             val busy = job.id in state.busyJobIds

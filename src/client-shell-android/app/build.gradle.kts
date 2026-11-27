@@ -23,6 +23,12 @@ android {
         targetSdk = 34
         versionCode = System.getenv("CI_VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = System.getenv("CI_APP_VERSION") ?: "0.0.0(local)"
+        // 显示版本（给人看）；壳的更新检查同样只看 versionName。
+        buildConfigField(
+            "String",
+            "DISPLAY_VERSION",
+            "\"${System.getenv("CI_DISPLAY_VERSION") ?: "0.0.0-local"}\""
+        )
     }
     compileOptions {
         sourceCompatibility = JavaVersion.VERSION_17

@@ -73,6 +73,13 @@ android {
         targetSdk = 34
         versionCode = System.getenv("CI_VERSION_CODE")?.toIntOrNull() ?: 1
         versionName = System.getenv("CI_APP_VERSION") ?: "0.0.0(local)"
+        // 显示版本（给人看）：来自仓根 VERSION，由 CI 以 CI_DISPLAY_VERSION 注入。
+        // versionName 保持机器号不动 —— UpdateChecker 比较的就是它的最后一段数字。
+        buildConfigField(
+            "String",
+            "DISPLAY_VERSION",
+            "\"${System.getenv("CI_DISPLAY_VERSION") ?: "0.0.0-local"}\""
+        )
         testInstrumentationRunner = "androidx.test.runner.AndroidJUnitRunner"
         javaCompileOptions {
             annotationProcessorOptions {
@@ -84,7 +91,7 @@ android {
         sourceCompatibility = JavaVersion.VERSION_17
         targetCompatibility = JavaVersion.VERSION_17
     }
-    buildFeatures { compose = true }
+    buildFeatures { compose = true; buildConfig = true }
     composeOptions { kotlinCompilerExtensionVersion = "1.5.15" }
     kotlinOptions {
         jvmTarget = "17"

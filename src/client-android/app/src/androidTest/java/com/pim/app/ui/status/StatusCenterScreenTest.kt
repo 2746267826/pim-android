@@ -22,6 +22,9 @@ import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
 import androidx.compose.ui.unit.dp
+import androidx.lifecycle.Lifecycle
+import androidx.lifecycle.LifecycleOwner
+import androidx.lifecycle.LifecycleRegistry
 import com.pim.app.status.ApiConnectionSnapshot
 import com.pim.app.status.ConnectionProbeOutcome
 import com.pim.app.status.ConnectionProbeResult
@@ -39,6 +42,7 @@ import com.pim.app.status.StatusSeverity
 import com.pim.app.status.SyncPhase
 import com.pim.app.ui.theme.PimTheme
 import java.io.File
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
 import org.junit.Rule
 import org.junit.Test
@@ -66,12 +70,51 @@ class StatusCenterScreenTest {
     }
 
     @Test
+    fun statusCenterResumeRefreshesPermissionSnapshotAndLocalStatus() {
+        val lifecycleOwner = TestLifecycleOwner()
+        var permissions = PermissionStatusSnapshot(
+            notificationGranted = false,
+            preciseLocationGranted = true,
+            backgroundLocationGranted = true,
+            usageAccessGranted = true,
+            activityRecognitionGranted = true,
+            batteryOptimizationGranted = true,
+        )
+        var localRefreshCount = 0
+
+        composeTestRule.setContent {
+            PimTheme {
+                StatusCenterResumeRefresh(
+                    lifecycleOwner = lifecycleOwner,
+                    refreshPermissions = {
+                        permissions = permissions.copy(notificationGranted = true)
+                    },
+                    refreshLocalStatus = {
+                        localRefreshCount++
+                    },
+                )
+            }
+        }
+        composeTestRule.waitForIdle()
+
+        lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_CREATE)
+        lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_START)
+        lifecycleOwner.registry.handleLifecycleEvent(Lifecycle.Event.ON_RESUME)
+        composeTestRule.waitForIdle()
+
+        assertTrue("resume must re-read the permission snapshot", permissions.notificationGranted)
+        assertEquals("resume must refresh local status", 1, localRefreshCount)
+    }
+
+    @Test
     fun overallNormalShowsNormalText() {
         composeTestRule.setContent {
             PimTheme { StatusCenterContent(sprintSummary = sprintSummaryForTest(), state = normalState(syncPhase = SyncPhase.Idle)) }
         }
         composeTestRule.onNodeWithTag("status-overall").assertIsDisplayed()
-        composeTestRule.onNodeWithText("正常").assertIsDisplayed()
+        composeTestRule.onNode(
+            hasTestTag("status-overall") and hasAnyDescendant(hasText("正常"))
+        ).assertIsDisplayed()
     }
 
     @Test
@@ -95,7 +138,7 @@ class StatusCenterScreenTest {
         composeTestRule.setContent {
             PimTheme { StatusCenterContent(sprintSummary = sprintSummaryForTest(), state = normalState().copy(syncPhase = SyncPhase.Running)) }
         }
-        composeTestRule.onNodeWithTag("status-sync-phase").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-sync-phase").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("status-sync-button").assertIsNotEnabled()
     }
 
@@ -116,16 +159,16 @@ class StatusCenterScreenTest {
             }
         }
 
-        composeTestRule.onNodeWithTag("status-pending").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-pending").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithText("42").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-pending-location").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-confirmed").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-rejected").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-permanent-rejected").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-terminal-usage").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-last-success").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-last-attempt").assertIsDisplayed()
-        composeTestRule.onNodeWithTag("status-next-attempt").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-pending-location").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-confirmed").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-rejected").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-permanent-rejected").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-terminal-usage").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-last-success").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-last-attempt").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-next-attempt").performScrollTo().assertIsDisplayed()
     }
 
     @Test
@@ -225,6 +268,7 @@ class StatusCenterScreenTest {
         }
 
         composeTestRule.onNodeWithTag("status-sync-button")
+            .performScrollTo()
             .assertIsEnabled()
             .assertTextContains("立即同步")
             .performClick()
@@ -256,7 +300,7 @@ class StatusCenterScreenTest {
                     onSyncNow = { clickCount++ })
             }
         }
-        composeTestRule.onNodeWithTag("status-sync-button").performClick()
+        composeTestRule.onNodeWithTag("status-sync-button").performScrollTo().performClick()
         assertTrue("Expected 1 click", clickCount == 1)
     }
 
@@ -544,7 +588,7 @@ class StatusCenterScreenTest {
 
         topTags.forEach { tag ->
             composeTestRule.onAllNodesWithTag(tag).assertCountEquals(1)
-            val node = composeTestRule.onNodeWithTag(tag).assertIsDisplayed()
+            val node = composeTestRule.onNodeWithTag(tag).performScrollTo().assertIsDisplayed()
             val bounds = node.getUnclippedBoundsInRoot()
             assertTrue("$tag must stay inside the 320dp host", bounds.left >= hostBounds.left)
             assertTrue("$tag must stay inside the 320dp host", bounds.right <= hostBounds.right)
@@ -883,6 +927,112 @@ class StatusCenterScreenTest {
         composeTestRule.onAllNodesWithTag("status-policy-transition-last").assertCountEquals(1)
     }
 
+    @Test
+    fun collectionHealthShowsRestrictedAndFailedStatesAndRoutesPermissionActions() {
+        var openedCode: String? = null
+        var openedAccess: com.pim.app.status.CollectionPermissionAccess? = null
+        val permissions = PermissionStatusSnapshot(
+            notificationGranted = true,
+            preciseLocationGranted = false,
+            backgroundLocationGranted = false,
+            usageAccessGranted = false,
+            activityRecognitionGranted = true,
+            batteryOptimizationGranted = true,
+            restrictedPermissions = mapOf(
+                com.pim.app.status.CollectionPermissionKind.PRECISE_LOCATION to "仅允许大致位置",
+            ),
+            failedPermissionChecks = setOf(
+                com.pim.app.status.CollectionPermissionKind.USAGE_ACCESS,
+            ),
+        )
+        val state = normalState().copy(
+            snapshot = normalState().snapshot.copy(permissions = permissions),
+        )
+        composeTestRule.setContent {
+            PimTheme {
+                StatusCenterContent(
+                    sprintSummary = sprintSummaryForTest(),
+                    state = state,
+                    onPermissionAction = { code, access ->
+                        openedCode = code
+                        openedAccess = access
+                    },
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("status-permission-precise-location")
+            .performScrollTo()
+            .assertTextContains("受限：仅允许大致位置", substring = true)
+        composeTestRule.onNodeWithTag("status-permission-usage-access")
+            .performScrollTo()
+            .assertTextContains("检查失败", substring = true)
+        listOf(
+            "notification" to "notification-permission-missing",
+            "precise-location" to "foreground-location-missing",
+            "background-location" to "background-location-missing",
+            "usage-access" to "usage-access-missing",
+            "activity-recognition" to "activity-recognition-missing",
+            "battery-optimization" to "battery-optimization-missing",
+        ).forEach { (tagSuffix, issueCode) ->
+            openedCode = null
+            openedAccess = null
+            composeTestRule.onNodeWithTag("status-permission-$tagSuffix")
+                .performScrollTo()
+                .performClick()
+            assertEquals(issueCode, openedCode)
+            if (issueCode == "battery-optimization-missing") {
+                assertEquals(
+                    com.pim.app.status.CollectionPermissionAccess.GRANTED,
+                    openedAccess,
+                )
+            }
+        }
+    }
+
+    @Test
+    fun collectionHealthShowsKeepaliveHealthAndAlwaysHasAGuidanceEntry() {
+        var guidanceOpened = 0
+        composeTestRule.setContent {
+            PimTheme {
+                StatusCenterContent(
+                    sprintSummary = sprintSummaryForTest(),
+                    state = normalState(),
+                    keepAliveHealthAlert = null,
+                    onOpenGuidance = { guidanceOpened++ },
+                )
+            }
+        }
+
+        composeTestRule.onNode(
+            hasTestTag("status-keepalive-summary") and hasAnyDescendant(hasText("正常"))
+        ).performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-keepalive-action")
+            .performScrollTo()
+            .performClick()
+
+        assertEquals(1, guidanceOpened)
+    }
+
+    @Test
+    fun permissionSettingsLaunchFailureShowsSafeActionableMessage() {
+        composeTestRule.setContent {
+            PimTheme {
+                StatusCenterContent(
+                    sprintSummary = sprintSummaryForTest(),
+                    state = normalState(),
+                    permissionActionMessage = "无法打开系统设置，请手动前往系统设置授予权限。",
+                )
+            }
+        }
+
+        composeTestRule.onNodeWithTag("status-permission-action-feedback")
+            .performScrollTo()
+            .assertIsDisplayed()
+        composeTestRule.onNodeWithText("无法打开系统设置，请手动前往系统设置授予权限。")
+            .assertExists()
+    }
+
     private fun normalState(
         syncPhase: SyncPhase = SyncPhase.Idle
     ): StatusCenterState {
@@ -892,5 +1042,10 @@ class StatusCenterScreenTest {
             syncPhase = syncPhase,
             snapshot = StatusCenterState.empty().snapshot
         )
+    }
+
+    private class TestLifecycleOwner : LifecycleOwner {
+        val registry = LifecycleRegistry.createUnsafe(this)
+        override val lifecycle: Lifecycle = registry
     }
 }

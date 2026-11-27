@@ -5,6 +5,7 @@ import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.assertIsNotEnabled
 import androidx.compose.ui.test.assertIsOff
 import androidx.compose.ui.test.assertIsOn
+import androidx.compose.ui.test.assertTextContains
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
@@ -42,7 +43,8 @@ class KeepAliveScreenTest {
         exactAlarmGranted: Boolean? = true,
         lastWake: Long? = null,
         healthAlert: String? = null,
-        scheduleStatus: String = "已登记"
+        scheduleStatus: String = "已登记",
+        readState: KeepAliveSectionReadState = KeepAliveSectionReadState.Loaded,
     ) = KeepAliveSectionState(
         enabled = enabled,
         configuredIntervalMinutes = configured,
@@ -53,7 +55,8 @@ class KeepAliveScreenTest {
         ignoresBatteryOptimizations = true,
         lastWakeAtUtcMillis = lastWake,
         healthAlert = healthAlert,
-        scheduleStatusText = scheduleStatus
+        scheduleStatusText = scheduleStatus,
+        readState = readState,
     )
 
 
@@ -161,6 +164,38 @@ class KeepAliveScreenTest {
         renderSection(sectionState(enabled = true), SectionHandlers(onToggleEnabled = {}, onIntervalChange = {}, onOpenGuidance = {}))
 
         composeTestRule.onNodeWithTag("keepalive-enabled-switch").assertIsOn()
+    }
+
+    @Test
+    fun 首帧读取中不误报保活已关闭() {
+        renderSection(
+            sectionState(
+                enabled = false,
+                scheduleStatus = "读取中…",
+                readState = KeepAliveSectionReadState.Loading,
+            )
+        )
+
+        composeTestRule.onNodeWithTag("keepalive-enabled-text").assertTextContains("读取中…")
+        composeTestRule.onNodeWithTag("keepalive-enabled-switch").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("keepalive-status-schedule").assertTextContains("读取中…")
+    }
+
+    @Test
+    fun 读取失败时显示未知状态且不保留旧值() {
+        renderSection(
+            sectionState(
+                enabled = false,
+                scheduleStatus = "无法读取",
+                healthAlert = "保活状态暂时无法读取，请稍后重试",
+                readState = KeepAliveSectionReadState.Failed,
+            )
+        )
+
+        composeTestRule.onNodeWithTag("keepalive-enabled-text").assertTextContains("状态暂时无法读取")
+        composeTestRule.onNodeWithTag("keepalive-enabled-switch").assertIsNotEnabled()
+        composeTestRule.onNodeWithTag("keepalive-status-schedule").assertTextContains("无法读取")
+        composeTestRule.onNodeWithTag("keepalive-health-alert").performScrollTo().assertIsDisplayed()
     }
 
     /** AC-17.2：降频中显示提示；AC-17.3：复位后提示消失。 */

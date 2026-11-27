@@ -405,6 +405,12 @@ class StatusCenterViewModel @Inject constructor(
         return issue.target
     }
 
+    /** 从系统设置或权限弹窗返回时，权限快照和本机存活状态都必须重新读取。 */
+    fun refreshOnResume() {
+        repository.requestRefresh()
+        refreshLiveness()
+    }
+
     fun syncNow() {
         if (state.value.syncPhase in setOf(
                 com.pim.app.status.SyncPhase.Accepted,

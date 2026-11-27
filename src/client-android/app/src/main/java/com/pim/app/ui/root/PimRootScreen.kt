@@ -14,6 +14,7 @@ import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
 import androidx.compose.runtime.getValue
 import androidx.compose.runtime.mutableStateOf
+import androidx.compose.runtime.saveable.rememberSaveableStateHolder
 import androidx.compose.runtime.saveable.rememberSaveable
 import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
@@ -38,66 +39,98 @@ fun PimRootScreen(initialDestination: PimDestination = PimDestination.Today) {
     // WO-ANDROID-POLICY-TRANSITION-20260928 REQ-3（D-10）：状态页写入失败告警的动作按钮
     // 要把用户带到设置页「策略切换历史」板块（不新建二级页面）。
     var scrollToPolicyHistory by rememberSaveable { mutableStateOf(false) }
+    var statusReturnDestinationName by rememberSaveable { mutableStateOf<String?>(null) }
 
     PimTheme {
+      val destinationStateHolder = rememberSaveableStateHolder()
       BoxWithConstraints {
         val wide = maxWidth >= 600.dp
-        if (selected in PimDestination.more) BackHandler { selected = PimDestination.More }
+        if (selected in PimDestination.more) {
+          BackHandler {
+            val returnDestination = if (selected == PimDestination.Status) {
+              statusReturnDestinationName?.let { name ->
+                PimDestination.entries.firstOrNull { it.name == name }
+              }
+            } else {
+              null
+            }
+            statusReturnDestinationName = null
+            selected = returnDestination ?: PimDestination.More
+          }
+        }
         if (selected == PimDestination.Notes || selected == PimDestination.More) BackHandler { selected = PimDestination.Today }
         Scaffold(
             bottomBar = {
               if (!wide) {
                 PimBottomNavigation(
                     selected = selected,
-                    onSelected = { selected = it }
+                    onSelected = {
+                      statusReturnDestinationName = null
+                      selected = it
+                    }
                 )
               }
             }
         ) { innerPadding ->
           Row(Modifier.fillMaxSize().padding(innerPadding)) {
-            if (wide) PimSideNavigation(selected) { selected = it }
+            if (wide) PimSideNavigation(selected) {
+              statusReturnDestinationName = null
+              selected = it
+            }
             Box(Modifier.weight(1f).fillMaxHeight()) {
             val modifier = Modifier.fillMaxSize()
-            when (selected) {
-                PimDestination.Today -> TodayScreen(
-                    modifier = modifier,
-                    onOpenSettings = { selected = PimDestination.Settings },
-                    onOpenWorkbench = { selected = PimDestination.Workbench },
-                )
-                PimDestination.Notes -> com.pim.app.notes.NotesHomeScreen(modifier)
-                PimDestination.More -> PimMoreScreen { selected = it }
-                PimDestination.Workbench -> NativeWorkbenchScreen(
-                    modifier = modifier,
-                    onOpenStatusCenter = { selected = PimDestination.Status },
-                    onOpenSettings = { selected = PimDestination.Settings },
-                )
-                PimDestination.Location -> LocationScreen(
-                    modifier = modifier,
-                    onOpenSettings = { selected = PimDestination.Settings }
-                )
-                PimDestination.Tracks -> TracksScreen(
-                    modifier = modifier,
-                    onOpenSettings = { selected = PimDestination.Settings },
-                    savedUrl = savedTracksUrl,
-                    onUrlChanged = { savedTracksUrl = it }
-                )
-                PimDestination.Schedule -> SchedulePolicyScreen(
-                    modifier = modifier,
-                    onOpenSettings = { selected = PimDestination.Settings }
-                )
-                PimDestination.Status -> StatusCenterScreen(
-                    modifier = modifier,
-                    onOpenSettings = { selected = PimDestination.Settings },
-                    onOpenPolicyTransitionHistory = {
-                        scrollToPolicyHistory = true
-                        selected = PimDestination.Settings
-                    }
-                )
-                PimDestination.Settings -> SettingsScreen(
-                    modifier = modifier,
-                    scrollToPolicyTransitionHistory = scrollToPolicyHistory,
-                    onPolicyTransitionHistoryScrolled = { scrollToPolicyHistory = false }
-                )
+            destinationStateHolder.SaveableStateProvider(selected.name) {
+              when (selected) {
+                  PimDestination.Today -> TodayScreen(
+                      modifier = modifier,
+                      onOpenSettings = { selected = PimDestination.Settings },
+                      onOpenWorkbench = { selected = PimDestination.Workbench },
+                      onOpenStatusCenter = {
+                          statusReturnDestinationName = PimDestination.Today.name
+                          selected = PimDestination.Status
+                      },
+                  )
+                  PimDestination.Notes -> com.pim.app.notes.NotesHomeScreen(modifier)
+                  PimDestination.More -> PimMoreScreen {
+                      statusReturnDestinationName = null
+                      selected = it
+                  }
+                  PimDestination.Workbench -> NativeWorkbenchScreen(
+                      modifier = modifier,
+                      onOpenStatusCenter = {
+                          statusReturnDestinationName = PimDestination.Workbench.name
+                          selected = PimDestination.Status
+                      },
+                      onOpenSettings = { selected = PimDestination.Settings },
+                  )
+                  PimDestination.Location -> LocationScreen(
+                      modifier = modifier,
+                      onOpenSettings = { selected = PimDestination.Settings }
+                  )
+                  PimDestination.Tracks -> TracksScreen(
+                      modifier = modifier,
+                      onOpenSettings = { selected = PimDestination.Settings },
+                      savedUrl = savedTracksUrl,
+                      onUrlChanged = { savedTracksUrl = it }
+                  )
+                  PimDestination.Schedule -> SchedulePolicyScreen(
+                      modifier = modifier,
+                      onOpenSettings = { selected = PimDestination.Settings }
+                  )
+                  PimDestination.Status -> StatusCenterScreen(
+                      modifier = modifier,
+                      onOpenSettings = { selected = PimDestination.Settings },
+                      onOpenPolicyTransitionHistory = {
+                          scrollToPolicyHistory = true
+                          selected = PimDestination.Settings
+                      }
+                  )
+                  PimDestination.Settings -> SettingsScreen(
+                      modifier = modifier,
+                      scrollToPolicyTransitionHistory = scrollToPolicyHistory,
+                      onPolicyTransitionHistoryScrolled = { scrollToPolicyHistory = false }
+                  )
+              }
             }
             }
           }

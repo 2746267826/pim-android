@@ -11,13 +11,16 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.test.assertCountEquals
 import androidx.compose.ui.test.assertIsDisplayed
 import androidx.compose.ui.test.getUnclippedBoundsInRoot
+import androidx.compose.ui.test.hasText
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.test.onAllNodesWithTag
 import androidx.compose.ui.test.onNodeWithTag
 import androidx.compose.ui.test.onNodeWithText
 import androidx.compose.ui.test.performClick
 import androidx.compose.ui.test.performScrollTo
+import androidx.compose.ui.test.performScrollToNode
 import androidx.compose.ui.unit.dp
+import androidx.test.espresso.Espresso.pressBack
 import com.pim.app.MainActivity
 import com.pim.app.ui.theme.PimTheme
 import org.junit.Assert.assertTrue
@@ -52,6 +55,37 @@ class PimRootScreenNavTest {
         for (tag in listOf("location", "tracks", "schedule", "status")) composeTestRule.onNodeWithTag("pim-more-$tag").performScrollTo().assertIsDisplayed()
         composeTestRule.onNodeWithTag("pim-more-location").performScrollTo().performClick()
         composeTestRule.onNodeWithTag("location-status-section").assertIsDisplayed()
+    }
+
+    @Test
+    fun todayCollectionHealthEntryOpensStatusCenterAndBackReturnsToToday() {
+        composeTestRule.onNodeWithTag("today-native-business-content")
+            .performScrollToNode(hasText("查看全部日程"))
+        composeTestRule.onNodeWithText("查看全部日程").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("today-local-status").assertIsDisplayed().performClick()
+
+        composeTestRule.onNodeWithText("状态中心").assertIsDisplayed()
+        composeTestRule.onNodeWithText("采集健康").performScrollTo().assertIsDisplayed()
+        composeTestRule.onNodeWithTag("status-permission-notification")
+            .performScrollTo()
+            .assertIsDisplayed()
+
+        pressBack()
+
+        composeTestRule.onNodeWithTag("today-local-status").assertIsDisplayed()
+        composeTestRule.onNodeWithTag("today-pending-total").assertIsDisplayed()
+        composeTestRule.onNodeWithText("查看全部日程").assertIsDisplayed()
+    }
+
+    @Test
+    fun statusOpenedFromMoreReturnsToMore() {
+        composeTestRule.onNodeWithTag("pim-nav-more").performClick()
+        composeTestRule.onNodeWithTag("pim-more-status").performScrollTo().performClick()
+        composeTestRule.onNodeWithText("状态中心").assertIsDisplayed()
+
+        pressBack()
+
+        composeTestRule.onNodeWithTag("pim-more-status").assertIsDisplayed()
     }
 }
 

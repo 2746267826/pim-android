@@ -2,6 +2,7 @@ package com.pim.app.recovery
 
 import android.Manifest
 import android.app.Application
+import android.app.NotificationManager
 import android.content.Context
 import androidx.test.core.app.ApplicationProvider
 import androidx.work.WorkInfo
@@ -155,6 +156,22 @@ class RunningStateRestorerTest {
             .getWorkInfosForUniqueWork(MobileSyncScheduler.PERIODIC_NAME).get()
         val active = workInfos.filter { it.state == WorkInfo.State.ENQUEUED }
         assertEquals(1, active.size)
+    }
+
+    @Test
+    fun `notification master switch off blocks recovery despite runtime grant`() = runTest {
+        grantHardPermissions()
+        val notificationManager = app.getSystemService(Context.NOTIFICATION_SERVICE) as NotificationManager
+        shadowOf(notificationManager).setNotificationsEnabled(false)
+        store.setContinuousCollectionEnabled(true)
+        val restorer = createRestorer()
+        drainStartedServices()
+
+        val result = restorer.ensureRunningState()
+
+        assertEquals(CollectionState.Blocked, result.collectionState)
+        assertTrue("notification must be reported as blocked", result.missingPermissions.contains("notification"))
+        assertNull("service must not start when the notification master switch is off", shadowOf(app).nextStartedService)
     }
 
     @Test

@@ -1,7 +1,6 @@
 package com.pim.app.ui
 
 import android.Manifest
-import android.app.usage.UsageStatsManager
 import android.content.Context
 import android.content.Intent
 import android.content.pm.PackageInfo
@@ -74,6 +73,7 @@ import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.mobile.sync.MobileSyncCoordinator
 import com.pim.app.mobile.sync.MobileSyncScheduler
 import com.pim.app.mobile.sync.MobileSyncState
+import com.pim.app.mobile.usage.UsageAccessChecker
 
 import com.pim.core.auth.ServerBoundLoginCoordinator
 import com.pim.core.auth.ServerBoundLoginResult
@@ -952,18 +952,7 @@ private fun syncResultMessage(sync: MobileSyncState): String {
 }
 
 private fun hasUsageAccess(context: Context): Boolean {
-    val manager = context.getSystemService(Context.USAGE_STATS_SERVICE) as? UsageStatsManager
-        ?: return false
-    val now = System.currentTimeMillis()
-    return try {
-        manager.queryUsageStats(
-            UsageStatsManager.INTERVAL_DAILY,
-            (now - 24 * 60 * 60 * 1000L).coerceAtLeast(0L),
-            now
-        ).orEmpty().isNotEmpty()
-    } catch (_: SecurityException) {
-        false
-    }
+    return UsageAccessChecker(context).hasUsageAccess()
 }
 
 private fun hasFineLocationPermission(context: Context): Boolean {

@@ -12,6 +12,7 @@ import com.pim.app.status.StatusCenterState
 import com.pim.app.status.LegacyOutboxClaimPromptController
 import com.pim.app.status.StatusSyncActionRunner
 import com.pim.app.status.SyncPhase
+import com.pim.app.status.unreadyCollectionPermissionCount
 import com.pim.app.ui.shell.AndroidWebMessageBridge
 import com.pim.core.auth.AuthSessionStore
 import com.pim.core.auth.AuthTokens
@@ -132,6 +133,9 @@ data class TodayUiState(
     val nextAttemptAt: String? = null,
     val generatedAt: String? = null,
     val embedSupported: Boolean? = null,
+    val missingLocalPermissionCount: Int = 0,
+    // 首帧尚未拿到权限快照时必须显示“检查中”，不能把空快照误报成已就绪。
+    val localPermissionsChecking: Boolean = true,
     val isSyncing: Boolean = false,
     val isSyncButtonDisabled: Boolean = false,
     val syncButtonLabel: String = "立即同步",
@@ -255,6 +259,12 @@ object TodayStatusMapper {
             nextAttemptAt = nextAttemptStr,
             generatedAt = pageReport.generatedAt,
             embedSupported = embedSupported,
+            missingLocalPermissionCount = if (state.isLoading) {
+                0
+            } else {
+                state.snapshot.permissions.unreadyCollectionPermissionCount()
+            },
+            localPermissionsChecking = state.isLoading,
             isSyncing = isSyncing,
             isSyncButtonDisabled = isSyncButtonDisabled(
                 isSyncActionInProgress = isSyncActionInProgress,
@@ -474,6 +484,10 @@ class TodayViewModel @Inject constructor(
     )
 
     val syncFeedback: StateFlow<String?> = syncFeedbackFlow.asStateFlow()
+
+    fun refreshOnResume() {
+        statusCenterRepository.requestRefresh()
+    }
 
     fun syncNow() {
         if (latestStatusState.value.syncPhase in setOf(

@@ -9,6 +9,8 @@ import android.provider.Settings
 import androidx.test.core.app.ApplicationProvider
 import com.pim.app.TestPimApp
 import org.junit.Assert.assertEquals
+import org.junit.Assert.assertFalse
+import org.junit.Assert.assertTrue
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
@@ -32,6 +34,89 @@ class StatusPermissionNavigatorTest {
 
         assertEquals(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS, intent.action)
         assertEquals(Uri.parse("package:${context.packageName}"), intent.data)
+    }
+
+    @Test
+    fun grantedBatteryOptimizationOpensTheReadOnlySettingsList() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val intent = StatusPermissionNavigator.intentFor(
+            context = context,
+            issueCode = "battery-optimization-missing",
+            access = CollectionPermissionAccess.GRANTED,
+        )
+
+        assertEquals(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS, intent.action)
+    }
+
+    @Test
+    fun batteryRequestFailureFallsBackToOptimizationSettings() {
+        val context = SecurityRecordingContext(
+            ApplicationProvider.getApplicationContext(),
+            failuresBeforeSuccess = 1,
+        )
+
+        val opened = StatusPermissionNavigator.open(
+            context = context,
+            issueCode = "battery-optimization-missing",
+            access = CollectionPermissionAccess.RESTRICTED,
+        )
+
+        assertTrue(opened)
+        assertEquals(
+            listOf(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+            ),
+            context.actions,
+        )
+    }
+
+    @Test
+    fun batteryRequestFailureEventuallyFallsBackToAppDetails() {
+        val context = SecurityRecordingContext(
+            ApplicationProvider.getApplicationContext(),
+            failuresBeforeSuccess = 2,
+        )
+
+        val opened = StatusPermissionNavigator.open(
+            context = context,
+            issueCode = "battery-optimization-missing",
+            access = CollectionPermissionAccess.MISSING,
+        )
+
+        assertTrue(opened)
+        assertEquals(
+            listOf(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            ),
+            context.actions,
+        )
+    }
+
+    @Test
+    fun failedBatteryOptimizationFallbacksReportFalseWithoutCrashing() {
+        val context = SecurityRecordingContext(
+            ApplicationProvider.getApplicationContext(),
+            failuresBeforeSuccess = Int.MAX_VALUE,
+        )
+
+        val opened = StatusPermissionNavigator.open(
+            context = context,
+            issueCode = "battery-optimization-missing",
+            access = CollectionPermissionAccess.CHECK_FAILED,
+        )
+
+        assertFalse(opened)
+        assertEquals(
+            listOf(
+                Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS,
+                Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS,
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+            ),
+            context.actions,
+        )
     }
 
     @Test
@@ -100,9 +185,39 @@ class StatusPermissionNavigatorTest {
             failuresBeforeSuccess = Int.MAX_VALUE
         )
 
-        StatusPermissionNavigator.open(context, StatusIssue.usageAccessMissing())
+        val opened = StatusPermissionNavigator.open(context, StatusIssue.usageAccessMissing())
 
+        assertFalse("all settings destinations failed", opened)
         assertEquals(2, context.actions.size)
+    }
+
+    @Test
+    fun successfulSettingsLaunchReportsTrue() {
+        val context = SecurityRecordingContext(
+            ApplicationProvider.getApplicationContext<Application>(),
+            failuresBeforeSuccess = 0,
+        )
+
+        assertTrue(StatusPermissionNavigator.open(context, "notification-permission-missing"))
+        assertEquals(listOf(Settings.ACTION_APP_NOTIFICATION_SETTINGS), context.actions)
+    }
+
+    @Test
+    fun everyCollectionPermissionHasAnExecutableSettingsIntent() {
+        val context = ApplicationProvider.getApplicationContext<Application>()
+        val codes = listOf(
+            "notification-permission-missing",
+            "foreground-location-missing",
+            "background-location-missing",
+            "usage-access-missing",
+            "activity-recognition-missing",
+            "battery-optimization-missing",
+        )
+
+        codes.forEach { code ->
+            val intent = StatusPermissionNavigator.intentFor(context, code)
+            assertTrue("$code must have an action", !intent.action.isNullOrBlank())
+        }
     }
 
     private class SecurityRecordingContext(

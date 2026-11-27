@@ -6,6 +6,8 @@ import com.pim.app.mobile.logs.StructuredLogRepository
 import com.pim.app.mobile.sync.MobileSyncScheduler
 import com.pim.app.permissions.PermissionStatusRepository
 import com.pim.app.settings.TrackingSettingsStore
+import com.pim.app.status.CollectionPermissionKind
+import com.pim.app.status.blockingCollectionPermissions
 import kotlinx.coroutines.CancellationException
 import javax.inject.Inject
 import javax.inject.Singleton
@@ -109,10 +111,14 @@ class RunningStateRestorer internal constructor(
             return RunningStateRecoveryResult(syncScheduled, CollectionState.Failed, "permission-read-failed")
         }
 
-        val missingHard = mutableListOf<String>()
-        if (!permissions.notificationGranted) missingHard.add("notification")
-        if (!permissions.preciseLocationGranted) missingHard.add("precise_location")
-        if (!permissions.backgroundLocationGranted) missingHard.add("background_location")
+        val missingHard = permissions.blockingCollectionPermissions().map { permission ->
+            when (permission.kind) {
+                CollectionPermissionKind.NOTIFICATION -> "notification"
+                CollectionPermissionKind.PRECISE_LOCATION -> "precise_location"
+                CollectionPermissionKind.BACKGROUND_LOCATION -> "background_location"
+                else -> permission.kind.issueCode
+            }
+        }
 
         if (missingHard.isNotEmpty()) {
             structuredLogRepository.warn(

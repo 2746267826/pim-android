@@ -8,19 +8,34 @@ import android.os.Build
 import android.provider.Settings
 
 object StatusPermissionNavigator {
-    fun open(context: Context, issue: StatusIssue) =
-        tryStartActivity(context, intentFor(context, issue))
+    fun open(
+        context: Context,
+        issue: StatusIssue,
+        access: CollectionPermissionAccess? = null,
+    ) = tryStartActivity(context, intentFor(context, issue, access))
 
-    fun open(context: Context, issueCode: String) =
-        tryStartActivity(context, intentFor(context, issueCode))
+    fun open(
+        context: Context,
+        issueCode: String,
+        access: CollectionPermissionAccess? = null,
+    ) = tryStartActivity(context, intentFor(context, issueCode, access))
 
-    private fun tryStartActivity(context: Context, intent: Intent) {
-        if (tryOpen(context, intent)) return
+    private fun tryStartActivity(context: Context, intent: Intent): Boolean {
+        if (tryOpen(context, intent)) return true
 
-        val fallback = appDetailsIntent(context)
-        if (intent.action != fallback.action || intent.data != fallback.data) {
-            tryOpen(context, fallback)
+        fallbackIntents(context, intent).forEach { fallback ->
+            if (tryOpen(context, fallback)) return true
         }
+        return false
+    }
+
+    private fun fallbackIntents(context: Context, primary: Intent): List<Intent> = buildList {
+        if (primary.action == Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS) {
+            add(Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS))
+        }
+        add(appDetailsIntent(context))
+    }.filter { fallback ->
+        fallback.action != primary.action || fallback.data != primary.data
     }
 
     private fun tryOpen(context: Context, intent: Intent): Boolean = try {
@@ -30,17 +45,31 @@ object StatusPermissionNavigator {
         false
     } catch (_: SecurityException) {
         false
+    } catch (_: Exception) {
+        false
     }
 
-    fun intentFor(context: Context, issue: StatusIssue): Intent = intentFor(context, issue.code)
+    fun intentFor(
+        context: Context,
+        issue: StatusIssue,
+        access: CollectionPermissionAccess? = null,
+    ): Intent = intentFor(context, issue.code, access)
 
-    fun intentFor(context: Context, issueCode: String): Intent = when (issueCode) {
+    fun intentFor(
+        context: Context,
+        issueCode: String,
+        access: CollectionPermissionAccess? = null,
+    ): Intent = when (issueCode) {
         "usage-access-missing" -> Intent(Settings.ACTION_USAGE_ACCESS_SETTINGS)
         // 工单 04 E3.3：勿扰访问权限只能在这个系统页面里授予
         "dnd-access-missing" -> Intent(Settings.ACTION_NOTIFICATION_POLICY_ACCESS_SETTINGS)
         "notification-permission-missing" -> notificationSettingsIntent(context)
-        "battery-optimization-missing" -> Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
-            .setData(Uri.parse("package:${context.packageName}"))
+        "battery-optimization-missing" -> if (access == CollectionPermissionAccess.GRANTED) {
+            Intent(Settings.ACTION_IGNORE_BATTERY_OPTIMIZATION_SETTINGS)
+        } else {
+            Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
+                .setData(Uri.parse("package:${context.packageName}"))
+        }
         "foreground-location-missing",
         "background-location-missing",
         "activity-recognition-missing" -> appDetailsIntent(context)

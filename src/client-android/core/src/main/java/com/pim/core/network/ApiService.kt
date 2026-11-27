@@ -103,7 +103,7 @@ import com.pim.core.contract.ReminderResponseApiResponse
 import com.pim.core.contract.ReminderResponseIReadOnlyListApiResponse
 import com.pim.core.contract.RestoreQuickNoteRequest
 import com.pim.core.contract.SaveAppKnowledgeContextRequest
-import com.pim.core.contract.SearchResultPagedResultApiResponse
+import com.pim.core.contract.GlobalSearchResultApiResponse
 import com.pim.core.contract.StringApiResponse
 import com.pim.core.contract.SystemStatusDetailDtoApiResponse
 import com.pim.core.contract.TaskBookDtoApiResponse
@@ -427,12 +427,12 @@ interface ApiService {
     @POST("calendar/tasks/{id}/timer/stop")
     suspend fun stopTaskTimer(@Path("id") id: String): TaskExecutionSegmentResponseApiResponse
 
-    // Search — 契约 2xx payload 是 SearchResultPagedResult（对象），不是裸数组（F-B-04）。
+    // Search — 契约 2xx payload 是 GlobalSearchResult（对象），不是裸数组（F-B-04）。
     @GET("search")
     suspend fun search(
         @Query("q") query: String,
         @Query("type") type: String? = null
-    ): SearchResultPagedResultApiResponse
+    ): GlobalSearchResultApiResponse
 
     // ICS 导入 —— 契约该 operation 是 multipart/form-data（`IcsImportForm`：`file` binary 必填、
     // `calendarId` 可空），2xx payload 是 ImportReport（F-B-04）。非 JSON 请求体按本仓门禁口径

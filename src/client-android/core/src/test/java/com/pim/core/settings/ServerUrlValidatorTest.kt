@@ -16,19 +16,41 @@ class ServerUrlValidatorTest {
     }
 
     @Test
-    fun publicIpIsAcceptedAndGetsTrailingSlash() {
+    fun remoteCleartextIsRejected() {
         val result = ServerUrlValidator.validate("http://203.0.113.8:5858/api/v1")
 
-        assertTrue(result.isValid)
+        assertFalse(result.isValid)
+        assertEquals("insecure-http", result.reasonCode)
         assertEquals("http://203.0.113.8:5858/api/v1/", result.normalizedUrl)
     }
 
     @Test
-    fun publicDomainIsAccepted() {
+    fun remoteHttpsIsAccepted() {
         val result = ServerUrlValidator.validate("https://pim.example.com/api/v1/")
 
         assertTrue(result.isValid)
         assertEquals("https://pim.example.com/api/v1/", result.normalizedUrl)
+    }
+
+    @Test
+    fun loopbackCleartextRemainsAvailableForLocalDevelopment() {
+        val loopback = ServerUrlValidator.validate("http://127.0.0.1:5858/api/v1/")
+        val localhost = ServerUrlValidator.validate("http://localhost:5858/api/v1/")
+        val ipv6Loopback = ServerUrlValidator.validate("http://[::1]:5858/api/v1/")
+
+        assertTrue(loopback.isValid)
+        assertTrue(localhost.isValid)
+        assertTrue(ipv6Loopback.isValid)
+        assertTrue(loopback.warnings.contains("cleartext-http"))
+    }
+
+    @Test
+    fun androidEmulatorHostRemainsAvailableForLocalDevelopment() {
+        val result = ServerUrlValidator.validate("http://10.0.2.2:5858/api/v1/")
+
+        assertTrue(result.isValid)
+        assertTrue(result.warnings.contains("cleartext-http"))
+        assertFalse(result.warnings.contains("real-device-localhost"))
     }
 
     @Test

@@ -36,10 +36,19 @@ class ServerSettingsStore(context: Context) {
                 val uri = java.net.URI(candidate)
                 val scheme = uri.scheme?.lowercase()
                 if ((scheme != "http" && scheme != "https") || uri.host.isNullOrEmpty()) return null
+                if (uri.userInfo != null || uri.query != null || uri.fragment != null) return null
                 candidate
             } catch (_: Exception) { null }
         }
 
-        fun isInsecure(url: String): Boolean = url.startsWith("http://", ignoreCase = true)
+        private val LOCAL_DEV_HOSTS = setOf("127.0.0.1", "localhost", "::1", "[::1]", "10.0.2.2")
+
+        fun isLocalDevHost(host: String): Boolean = host.lowercase() in LOCAL_DEV_HOSTS
+
+        fun isRemoteCleartext(url: String): Boolean {
+            val uri = runCatching { java.net.URI(url) }.getOrNull() ?: return false
+            return uri.scheme.equals("http", ignoreCase = true) &&
+                uri.host?.let { !isLocalDevHost(it) } == true
+        }
     }
 }

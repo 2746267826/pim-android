@@ -4,7 +4,6 @@ import android.os.Bundle
 import android.widget.Button
 import android.widget.EditText
 import android.widget.TextView
-import androidx.appcompat.app.AlertDialog
 import androidx.appcompat.app.AppCompatActivity
 
 class SetupActivity : AppCompatActivity() {
@@ -19,29 +18,28 @@ class SetupActivity : AppCompatActivity() {
         val checker = HealthChecker { HttpHealthFetcher.fetchStatus(it) }
 
         button.setOnClickListener {
+            val normalized = ServerSettingsStore.normalize(input.text.toString())
+            if (normalized == null) {
+                hint.text = getString(R.string.unreachable)
+                return@setOnClickListener
+            }
+            if (ServerSettingsStore.isRemoteCleartext(normalized)) {
+                hint.text = getString(R.string.insecure_blocked)
+                return@setOnClickListener
+            }
             button.isEnabled = false
             hint.text = getString(R.string.connecting)
             Thread {
-                val normalized = checker.check(input.text.toString())
+                val checked = checker.check(normalized)
                 runOnUiThread {
                     button.isEnabled = true
                     when {
-                        normalized == null -> hint.text = getString(R.string.unreachable)
-                        ServerSettingsStore.isInsecure(normalized) -> confirmInsecure(normalized, store)
-                        else -> enterBrowser(normalized, store)
+                        checked == null -> hint.text = getString(R.string.unreachable)
+                        else -> enterBrowser(checked, store)
                     }
                 }
             }.start()
         }
-    }
-
-    private fun confirmInsecure(url: String, store: ServerSettingsStore) {
-        AlertDialog.Builder(this)
-            .setTitle(R.string.insecure_title)
-            .setMessage(R.string.insecure_warning)
-            .setNegativeButton(android.R.string.cancel, null)
-            .setPositiveButton(android.R.string.ok) { _, _ -> enterBrowser(url, store) }
-            .show()
     }
 
     private fun enterBrowser(url: String, store: ServerSettingsStore) {

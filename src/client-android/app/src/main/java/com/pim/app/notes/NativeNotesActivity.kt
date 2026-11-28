@@ -5,7 +5,6 @@ import android.app.Activity
 import android.content.ClipData
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.media.MediaPlayer
 import android.net.Uri
 import android.os.Build
@@ -21,7 +20,6 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.setValue
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.ui.graphics.toArgb
-import androidx.core.content.ContextCompat
 import androidx.core.content.FileProvider
 import androidx.core.view.WindowCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
@@ -223,9 +221,7 @@ class NativeNotesActivity : ComponentActivity() {
     override fun onNewIntent(intent: Intent) { super.onNewIntent(intent); openFromIntent(intent) }
     override fun onResume() {
         super.onResume()
-        val manager = getSystemService(android.app.NotificationManager::class.java)
-        notificationsVisible = androidx.core.app.NotificationManagerCompat.from(this).areNotificationsEnabled() &&
-            manager.getNotificationChannel("pim_recording_v1")?.importance != android.app.NotificationManager.IMPORTANCE_NONE
+        notificationsVisible = RecordingPermissionsInspector.inspect(this).notificationsReady
     }
     override fun onStop() { stopPlayback(); super.onStop() }
     private fun openFromIntent(intent: Intent) { intent.getStringExtra(NOTE_ID)?.takeIf(::validNoteId)?.let(model::open) }
@@ -247,9 +243,7 @@ class NativeNotesActivity : ComponentActivity() {
         val note = model.notes.state.value.documents[id] ?: return
         if (model.notes.state.value.savedRevisions[id] != note.revision) { model.tell("请先等待本地保存完成，再开始录音"); return }
         if (model.recordings.state.value.active) { model.tell("已有录音正在进行，请先结束该段"); return }
-        if (ContextCompat.checkSelfPermission(this, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            model.tell(RecordingProblem.Permission.message); return
-        }
+        RecordingPermissionsInspector.inspect(this).startProblem()?.let { model.tell(it.message); return }
         RecordingController.start(this, id)?.let { model.tell(it.message) }
     }
 

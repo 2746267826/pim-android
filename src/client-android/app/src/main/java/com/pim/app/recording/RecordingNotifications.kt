@@ -15,7 +15,7 @@ import com.pim.app.notes.NativeNotesActivity
 
 internal object RecordingNotifications {
     const val ID = 8201
-    private const val CHANNEL = "pim_recording_v1"
+    internal const val CHANNEL = "pim_recording_v1"
     const val PROBE_ACTIVITY = "com.pim.app.recording.RecordingProbeActivity"
 
     fun createChannel(context: Context) {
@@ -27,11 +27,17 @@ internal object RecordingNotifications {
         )
     }
 
-    fun build(context: Context, state: RecordingState, interrupted: Boolean = false): Notification {
+    fun build(
+        context: Context,
+        state: RecordingState,
+        interrupted: Boolean = false,
+        resumed: Boolean = false,
+    ): Notification {
         val session = state.session
         val title = when {
             interrupted -> "录音已中断"
             session?.phase == RecordingPhase.Paused -> "录音已暂停"
+            resumed -> "已自动续接"
             session?.phase == RecordingPhase.Recording -> "正在录音"
             else -> "正在准备录音"
         }

@@ -1,10 +1,8 @@
 package com.pim.app.recording
 
-import android.Manifest
 import android.app.Activity
 import android.content.Context
 import android.content.Intent
-import android.content.pm.PackageManager
 import android.net.Uri
 import androidx.core.content.ContextCompat
 
@@ -21,9 +19,7 @@ object RecordingController {
         noteId: String? = null,
         availableBytes: Long = activity.noBackupFilesDir.usableSpace,
     ): RecordingProblem? {
-        if (ContextCompat.checkSelfPermission(activity, Manifest.permission.RECORD_AUDIO) != PackageManager.PERMISSION_GRANTED) {
-            return RecordingProblem.Permission
-        }
+        RecordingPermissionsInspector.inspect(activity).startProblem()?.let { return it }
         if (!RecordingStoragePolicy.canStart(availableBytes)) return RecordingProblem.Storage
         return try {
             ContextCompat.startForegroundService(activity, intent(activity, START).putExtra(NOTE, noteId))

@@ -54,6 +54,19 @@ internal class RecordingEngine(
         store.save(session)
     }
 
+    fun continueAfterInterruption() {
+        check(session.phase == RecordingPhase.Recording)
+        if (session.currentSegmentSamples == 0L) {
+            closeChunk()
+        } else {
+            output?.close()
+            output = null
+            session = session.copy(currentSegment = session.currentSegment + 1)
+            store.save(session)
+            sinceCheckpoint = 0
+        }
+    }
+
     fun finish(problem: RecordingProblem? = null) {
         if (!session.active) return
         var failure = problem

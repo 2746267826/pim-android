@@ -50,6 +50,12 @@ class RecordingRepository @Inject constructor(@ApplicationContext context: Conte
     internal fun resume() { checkNotNull(engine).resume(); publish(emptyList()) }
 
     @Synchronized
+    internal fun continueAfterInterruption() {
+        checkNotNull(engine).continueAfterInterruption()
+        publish(emptyList())
+    }
+
+    @Synchronized
     internal fun finish(problem: RecordingProblem? = null) {
         if (engine == null) {
             report(problem ?: RecordingProblem.Input)

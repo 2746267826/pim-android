@@ -74,6 +74,27 @@ class RecordingCaptureTest {
         } finally { player.release() }
     }
 
+    @Test fun backgroundRecordingWhoKeepsAppendingAfterUnlockIsOneUserRecording() {
+        start()
+        val before = repository.state.value.session!!
+        val notifications = compose.activity.getSystemService(NotificationManager::class.java)
+        compose.waitUntil(5000) { notifications.activeNotifications.any { it.id == RecordingNotifications.ID } }
+        compose.activityRule.scenario.moveToState(Lifecycle.State.CREATED)
+        shell("input keyevent KEYCODE_SLEEP")
+        SystemClock.sleep(1200)
+        shell("input keyevent KEYCODE_WAKEUP")
+        shell("wm dismiss-keyguard")
+        compose.activityRule.scenario.moveToState(Lifecycle.State.RESUMED)
+        compose.waitUntil(10_000) { repository.state.value.session?.samples?.let { it > before.samples } == true }
+        val resumed = repository.state.value.session!!
+        assertTrue(repository.state.value.active)
+        assertEquals(before.id, resumed.id)
+        assertEquals(RecordingPhase.Recording, resumed.phase)
+        assertEquals(1, resumed.currentSegment)
+        RecordingController.finish(compose.activity, resumed.id)
+        compose.waitUntil(10_000) { repository.state.value.session?.phase == RecordingPhase.Completed }
+    }
+
     @RequiresDevice
     @Test fun pauseStopsSampleClockAndNotificationResumeRestartsActualInput() {
         start()

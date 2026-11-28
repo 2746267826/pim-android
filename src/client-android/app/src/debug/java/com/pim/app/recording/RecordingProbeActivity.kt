@@ -26,7 +26,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.platform.testTag
-import androidx.core.app.NotificationManagerCompat
 import androidx.core.content.ContextCompat
 import androidx.lifecycle.compose.collectAsStateWithLifecycle
 import androidx.lifecycle.lifecycleScope
@@ -129,9 +128,7 @@ class RecordingProbeActivity : ComponentActivity() {
     override fun onStop() { stopPlayback(); super.onStop() }
 
     private fun refreshNotificationVisibility() {
-        val manager = getSystemService(android.app.NotificationManager::class.java)
-        notificationsVisible = NotificationManagerCompat.from(this).areNotificationsEnabled() &&
-            (manager.getNotificationChannel("pim_recording_v1")?.importance != android.app.NotificationManager.IMPORTANCE_NONE)
+        notificationsVisible = RecordingPermissionsInspector.inspect(this).notificationsReady
     }
 
     private fun play(id: String, files: List<File>) {

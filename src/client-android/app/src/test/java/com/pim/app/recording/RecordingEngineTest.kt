@@ -51,6 +51,38 @@ class RecordingEngineTest {
         assertEquals(2, engine.session.chunks.size)
     }
 
+    @Test fun interruptionRecoveryKeepsTheSameRecordingButAdvancesTheInternalSegment() {
+        val store = store()
+        val engine = RecordingEngine(store(), noteId = "note-1")
+        val id = engine.session.id
+        engine.append(ShortArray(8000), 8000)
+        engine.continueAfterInterruption()
+        assertEquals(id, engine.session.id)
+        assertEquals("note-1", engine.session.noteId)
+        assertEquals(RecordingPhase.Recording, engine.session.phase)
+        assertEquals(2, engine.session.currentSegment)
+        assertEquals(8000L, engine.session.samples)
+        val firstChunk = engine.session.chunks.single()
+        engine.append(ShortArray(4000), 4000)
+        engine.finish()
+        assertEquals(RecordingPhase.Completed, engine.session.phase)
+        assertEquals(12_000L, engine.session.samples)
+        assertEquals(listOf(1, 2), engine.session.chunks.map { it.segment })
+        assertEquals(8000L, engine.session.chunks.first { it == firstChunk }.samples)
+        val stored = store.archives(recover = false).single().session!!
+        assertEquals(id, stored.id)
+        assertEquals(listOf(1, 2), stored.chunks.map { it.segment })
+    }
+
+    @Test fun interruptionBeforeAnySampleDoesNotInventAnEmptySegment() {
+        val engine = RecordingEngine(store())
+        engine.continueAfterInterruption()
+        assertEquals(1, engine.session.currentSegment)
+        assertTrue(engine.session.chunks.isEmpty())
+        engine.append(shortArrayOf(1), 1)
+        assertEquals(1, engine.session.currentSegment)
+    }
+
     @Test fun waveformUsesInputPeakIncludingNegativeFullScaleNotDecorativeData() {
         val engine = RecordingEngine(store())
         assertEquals(0f, engine.append(ShortArray(10), 10), 0f)

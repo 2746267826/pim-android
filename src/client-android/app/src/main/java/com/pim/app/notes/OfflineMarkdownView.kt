@@ -55,18 +55,27 @@ internal class OfflineMarkdownView(context: Context) : WebView(context) {
     private var committing = false
     private var retiring = false
     private var reviewRequired = false
+    private var formatFallback = false
     private val work = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val handler = android.os.Handler(android.os.Looper.getMainLooper())
     private var commit: Deferred<Unit>? = null
     private var retirement: CompletableDeferred<Unit>? = null
     private var theme = emptyMap<String, String>()
+    private var editorBlocks: List<JsonObject>? = null
+    private var documentSignature: String? = null
+    private var materialPreviews: Map<String, String> = emptyMap()
+    private var pendingMaterialScroll: String? = null
     var readCurrentText: () -> String? = { null }
+    var readCurrentBlocks: () -> List<JsonObject>? = { null }
     var onText: (String) -> Unit = {}
+    var onBlocks: (List<JsonObject>) -> Unit = {}
     var onInsertion: (NoteInsertion, Boolean, Set<String>) -> Unit = { _, _, _ -> }
+    var onMaterial: (String) -> Unit = {}
     var onCaret: (Float, Float) -> Unit = { _, _ -> }
     var onHeight: (Int) -> Unit = {}
     var onFailure: (String) -> Unit = {}
     var onReviewRequired: (String) -> Unit = {}
+    var onSourceOnly: (String) -> Unit = {}
     var onNotice: (String) -> Unit = {}
     var onPending: (Boolean) -> Unit = {}
     var blockId: String = ""
@@ -116,7 +125,7 @@ internal class OfflineMarkdownView(context: Context) : WebView(context) {
     }
 
     fun bind(text: String, editable: Boolean, colors: Map<String, String>) {
-        if (released || failed) return
+        if (released || failed || formatFallback) return
         enabled = editable; theme = colors
         // Do not disable the DOM or change its epoch while an IME acknowledgement is in flight.
         if (!bindingAllowed || committing || retiring) return
@@ -131,10 +140,33 @@ internal class OfflineMarkdownView(context: Context) : WebView(context) {
         configure()
     }
 
+    fun bindDocument(blocks: List<JsonObject>, editable: Boolean, colors: Map<String, String>, previews: Map<String, String>) {
+        if (released || failed || formatFallback) return
+        enabled = editable; theme = colors; materialPreviews = previews
+        if (!bindingAllowed || committing || retiring) return
+        val current = readCurrentBlocks() ?: blocks
+        val nextSignature = blockSignature(current)
+        if (editorBlocks == null) {
+            editorBlocks = current; documentSignature = nextSignature
+        } else if (documentSignature != nextSignature) {
+            epoch++; sequence = 0
+            editorBlocks = current; documentSignature = nextSignature
+        }
+        if (url == null) {
+            loadUrl(NoteEditorPolicy.PAGE)
+            postDelayed({ if (!ready && !released) fail("离线正文未能启动，已保留原文并改用 Markdown 源码编辑。") }, 10_000)
+        }
+        configure()
+        applyMaterialPreviews()
+    }
+
     fun pauseBinding() { bindingAllowed = false }
     fun allowBinding() {
         bindingAllowed = true
-        if (!released && !retiring) bind(readCurrentText().orEmpty(), enabled, theme)
+        if (released || retiring) return
+        val blocks = editorBlocks
+        if (blocks != null) bindDocument(readCurrentBlocks() ?: blocks, enabled, theme, materialPreviews)
+        else bind(readCurrentText().orEmpty(), enabled, theme)
     }
     fun requireSourceReview(reason: String) = fail(reason, true)
 
@@ -151,10 +183,32 @@ internal class OfflineMarkdownView(context: Context) : WebView(context) {
         if (!ready || failed || released) return
         val config = buildJsonObject {
             put("session", session); put("epoch", epoch); put("sequence", sequence)
-            put("text", source.orEmpty()); put("enabled", enabled); put("frozen", frozen); put("nativeToolbar", true)
+            put("enabled", enabled); put("frozen", frozen); put("nativeToolbar", true)
             put("theme", buildJsonObject { theme.forEach { (key, value) -> put(key, value) } })
+            val blocks = editorBlocks
+            if (blocks != null) {
+                put("blocks", buildJsonArray {
+                    var photos = 0; var inks = 0; var other = 0
+                    blocks.forEach { block ->
+                        val kind = block.string("kind")
+                        addJsonObject {
+                            put("id", block.string("id")); put("kind", kind)
+                            if (kind == "markdown") put("text", block.string("text"))
+                            else put("label", when (kind) {
+                                "photo" -> "照片 ${++photos}"
+                                "ink" -> "手写卡片 ${++inks}"
+                                else -> "材料 ${++other}"
+                            })
+                        }
+                    }
+                })
+            } else put("text", source.orEmpty())
         }
         evaluateJavascript("window.PimEditor.configure($config)", null)
+        pendingMaterialScroll?.let { id ->
+            pendingMaterialScroll = null
+            evaluateJavascript("window.PimEditor.scrollToMaterial(${JsonPrimitive(id)})", null)
+        }
     }
 
     private fun receive(raw: String): Boolean {
@@ -162,14 +216,21 @@ internal class OfflineMarkdownView(context: Context) : WebView(context) {
         require(raw.length <= 2_100_000)
         val data = NoteJson.parseToJsonElement(raw).jsonObject
         require(data.getValue("protocol").jsonPrimitive.int == 1)
-        if (data["type"]?.jsonPrimitive?.content == "ready" && !ready) { ready = true; configure(); return true }
+        if (data["type"]?.jsonPrimitive?.content == "ready" && !ready) {
+            ready = true; configure(); applyMaterialPreviews(); return true
+        }
         require(data["session"]?.jsonPrimitive?.content == session)
         if (data.getValue("epoch").jsonPrimitive.long != epoch) return false
         return when (data["type"]?.jsonPrimitive?.content) {
-            "snapshot" -> acceptSnapshot(data)
+            "snapshot" -> if (data["blocks"] is JsonArray) acceptDocumentSnapshot(data) else acceptSnapshot(data)
             "composing" -> { onPending(true); false }
             "height" -> { onHeight(data.getValue("height").jsonPrimitive.int.coerceIn(1, 8192)); true }
-            "sourceOnly" -> { fail(data.getValue("reason").jsonPrimitive.content.take(400)); true }
+            "sourceOnly" -> {
+                formatFallback = true
+                onSourceOnly(data.getValue("reason").jsonPrimitive.content.take(400))
+                true
+            }
+            "material" -> { onMaterial(data.getValue("id").jsonPrimitive.content); true }
             "notice" -> { onNotice(data.getValue("reason").jsonPrimitive.content.take(400)); true }
             "error" -> { fail(NoteEditorCoordinator.REVIEW_MESSAGE, true); false }
             else -> false
@@ -198,9 +259,71 @@ internal class OfflineMarkdownView(context: Context) : WebView(context) {
         return true
     }
 
+    private fun acceptDocumentSnapshot(data: JsonObject): Boolean {
+        val next = data.getValue("sequence").jsonPrimitive.long
+        if (next < sequence) return false
+        val blocks = data.getValue("blocks").jsonArray.map { it.jsonObject }
+        val nextSignature = blockSignature(blocks)
+        if (next == sequence && documentSignature != null && documentSignature != nextSignature) return false
+        val changed = documentSignature != nextSignature
+        sequence = next
+        editorBlocks = blocks
+        documentSignature = nextSignature
+        if (changed) onBlocks(blocks)
+        onPending(false)
+        val focused = data.getValue("focused").jsonPrimitive.boolean
+        val marks = data["active"]?.jsonArray?.map { it.jsonPrimitive.content }?.toSet().orEmpty()
+        data["target"]?.jsonObject?.let { target ->
+            val anchor = NoteInsertion(
+                target.getValue("blockId").jsonPrimitive.content,
+                0,
+                target.getValue("expectedText").jsonPrimitive.content,
+                target.getValue("before").jsonPrimitive.content,
+                target.getValue("after").jsonPrimitive.content,
+            )
+            anchor.validate()
+            onInsertion(anchor, focused, marks)
+        }
+        data["caret"]?.jsonObject?.let { caret ->
+            val top = caret.getValue("top").jsonPrimitive.float
+            val bottom = caret.getValue("bottom").jsonPrimitive.float
+            require(top.isFinite() && bottom.isFinite() && bottom >= top && top >= -1_000_000 && bottom <= 1_000_000)
+            onCaret(top, bottom)
+        }
+        return true
+    }
+
+    private fun blockSignature(blocks: List<JsonObject>): String = buildString {
+        blocks.forEach { block ->
+            append(block.string("id")); append('\u0000')
+            append(block.string("kind")); append('\u0000')
+            if (block.string("kind") == "markdown") append(block.string("text"))
+            append('\u0001')
+        }
+    }
+
+    private fun applyMaterialPreviews() {
+        if (!ready || failed || released || materialPreviews.isEmpty()) return
+        val payload = buildJsonObject { materialPreviews.forEach { (id, data) -> put(id, data) } }
+        evaluateJavascript("window.PimEditor.setMaterialPreviews($payload)", null)
+    }
+
+    fun updateMaterialPreviews(previews: Map<String, String>) {
+        materialPreviews = previews
+        applyMaterialPreviews()
+    }
+
+    fun scrollToMaterial(id: String) {
+        if (ready && !failed && !released) {
+            pendingMaterialScroll = null
+            evaluateJavascript("window.PimEditor.scrollToMaterial(${JsonPrimitive(id)})", null)
+        } else pendingMaterialScroll = id
+    }
+
     suspend fun commitAndFreeze() {
         if (released) { checkNotNull(retirement).await(); return }
         if (failed) { check(!reviewRequired) { "Editor source requires review" }; return }
+        if (formatFallback) return
         if (!bindingAllowed && source == null) return // This successor has never accepted input.
         val existing = commit
         if (existing != null && (!existing.isCompleted || frozen)) { existing.await(); return }
@@ -237,9 +360,11 @@ internal class OfflineMarkdownView(context: Context) : WebView(context) {
     }
 
     fun resumeEditing() {
-        if (!retiring && !released && !failed) {
+        if (!retiring && !released && !failed && !formatFallback) {
             frozen = false
-            bind(readCurrentText() ?: source.orEmpty(), enabled, theme)
+            val blocks = editorBlocks
+            if (blocks != null) bindDocument(readCurrentBlocks() ?: blocks, enabled, theme, materialPreviews)
+            else bind(readCurrentText() ?: source.orEmpty(), enabled, theme)
         }
     }
     fun command(name: String) {

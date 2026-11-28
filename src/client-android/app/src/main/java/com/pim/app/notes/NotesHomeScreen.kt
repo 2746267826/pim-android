@@ -92,7 +92,7 @@ fun NotesHomeScreen(modifier: Modifier = Modifier, model: NotesViewModel = hiltV
             cloudNotes = cloudNotes, onRefreshCloudNotes = model::refreshCloudNotes,
             onOpenCloudNote = { id -> model.openCloudNote(id) { restoredId ->
                 context.startActivity(NativeNotesActivity.intent(context, restoredId, true))
-            } })
+            } }, onRetryLoad = model::retryLoad)
         SnackbarHost(snackbar, Modifier.align(Alignment.BottomCenter).padding(com.pim.app.ui.theme.PimTheme.dimensions.spaceLarge)
             .padding(bottom = com.pim.app.ui.theme.PimTheme.dimensions.noteDockClearance))
         if (showAsr) NoteAsrSurface(

@@ -1,4 +1,13 @@
-import { createEditor, insertionAtCaret, sourceOnlyReason } from './engine.mjs'
+import {
+  createEditor,
+  createDocumentEditor,
+  documentBlocks,
+  documentInsertion,
+  documentNeedsSource,
+  insertionAtCaret,
+  setDocumentBlocks,
+  sourceOnlyReason,
+} from './engine.mjs'
 
 let editor
 let source = ''
@@ -9,6 +18,9 @@ let enabled = false
 let frozen = false
 let nativeToolbar = false
 let geometryFrame = 0
+let documentMode = false
+let documentSignature = ''
+let materialPreviews = {}
 const markNames = ['bold', 'italic', 'heading', 'bulletList', 'taskList', 'blockquote', 'codeBlock', 'table']
 const tools = document.querySelector('#tools')
 const envelope = value => ({ protocol: 1, session, epoch, ...value })
@@ -22,6 +34,13 @@ const snapshot = split => {
   if (editor.isFocused) {
     const { top, bottom } = editor.view.coordsAtPos(editor.state.selection.head)
     caret = { top, bottom }
+  }
+  if (documentMode) {
+    const blocks = documentBlocks(editor)
+    documentSignature = signature(blocks)
+    const target = split ? documentInsertion(editor) : null
+    return { type: 'snapshot', blocks, sequence, focused: editor.isFocused,
+      caret, active: markNames.filter(name => editor.isActive(name)), ...(target ? { target } : {}) }
   }
   return { type: 'snapshot', text: source, sequence, focused: editor.isFocused,
     caret, active: markNames.filter(name => editor.isActive(name)), ...(split ? insertionAtCaret(editor, source) : {}) }
@@ -49,6 +68,57 @@ function scheduleGeometry() {
   })
 }
 
+function signature(blocks) {
+  return JSON.stringify(blocks.map(block => [block.id, block.kind, block.text ?? '']))
+}
+
+function applyMaterialPreviews() {
+  for (const [id, sourceUrl] of Object.entries(materialPreviews)) {
+    const root = document.querySelector(`[data-pim-material="${id}"]`)
+    if (!root) continue
+    const image = root.querySelector('.pim-material-image')
+    if (image && image.getAttribute('src') !== sourceUrl) {
+      image.setAttribute('src', sourceUrl)
+      root.classList.add('has-preview')
+    }
+  }
+}
+
+function configureDocument(config) {
+  const reason = documentNeedsSource(config.blocks)
+  if (reason) {
+    post({ type: 'sourceOnly', reason })
+    return
+  }
+  if (config.epoch > epoch) { epoch = config.epoch; sequence = 0 }
+  const nextSignature = signature(config.blocks)
+  if (!editor) {
+    documentMode = true
+    documentSignature = nextSignature
+    editor = createDocumentEditor(document.querySelector('#editor'), config.blocks, {
+      onUpdate() {
+        sequence += 1
+        post(snapshot(true))
+        refreshTools()
+        scheduleGeometry()
+      },
+      onSelection: publishSelection,
+      onFocus: publishSelection,
+      onBlur: publishSelection,
+      onProblem(reason) { post({ type: 'notice', reason }) },
+    })
+    applyMaterialPreviews()
+  } else if (config.epoch === epoch && config.sequence < sequence) {
+    // The native side still holds an older echo of a local transaction.
+  } else if (nextSignature !== documentSignature) {
+    documentSignature = nextSignature
+    setDocumentBlocks(editor, config.blocks)
+    applyMaterialPreviews()
+  }
+  editor.setEditable(enabled && !frozen, false)
+  refreshTools()
+}
+
 window.PimEditor = {
   configure(config) {
     if (session && session !== config.session) throw new Error('Wrong editor session')
@@ -58,6 +128,13 @@ window.PimEditor = {
     enabled = config.enabled
     frozen = config.frozen
     nativeToolbar = config.nativeToolbar
+    if (Array.isArray(config.blocks)) {
+      if (editor && config.epoch === epoch && config.sequence < sequence) {
+        editor.setEditable(enabled && !frozen, false); refreshTools(); return
+      }
+      configureDocument(config)
+      return
+    }
     if (editor && config.epoch === epoch && config.sequence < sequence) {
       editor.setEditable(enabled && !frozen, false); refreshTools(); return
     }
@@ -96,6 +173,13 @@ window.PimEditor = {
     return JSON.stringify(envelope(result))
   },
   command(command) { executeCommand(command) },
+  setMaterialPreviews(previews) {
+    materialPreviews = { ...materialPreviews, ...previews }
+    applyMaterialPreviews()
+  },
+  scrollToMaterial(id) {
+    document.querySelector(`[data-pim-material="${id}"]`)?.scrollIntoView({ block: 'center' })
+  },
 }
 
 function executeCommand(command) {
@@ -114,6 +198,10 @@ function executeCommand(command) {
 tools.addEventListener('pointerdown', event => event.preventDefault())
 tools.addEventListener('click', event => executeCommand(event.target.closest('button')?.dataset.command))
 document.addEventListener('click', event => { if (event.target.closest('a')) event.preventDefault() })
+document.querySelector('#editor').addEventListener('click', event => {
+  const material = event.target.closest?.('[data-pim-material]')
+  if (material) post({ type: 'material', id: material.getAttribute('data-pim-material') })
+})
 document.addEventListener('compositionend', () => setTimeout(() => post(snapshot(true)), 0))
 new ResizeObserver(() => {
   post({ type: 'height', height: Math.ceil(document.body.getBoundingClientRect().height) })

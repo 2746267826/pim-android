@@ -49,7 +49,7 @@ class NativeNotesRichEditorTest {
         compose.waitUntil(10_000) { model.recordings.state.value.active && (model.recordings.state.value.session?.samples ?: 0) >= 3200 }
         val session = model.recordings.state.value.session!!.id
         compose.waitUntil(10_000) { eval("document.querySelector('.tiptap')?.getAttribute('contenteditable')") == "\"true\"" }
-        compose.onNodeWithTag("rich-markdown-${note().blocks.single().string("id")}").performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
+        compose.onNodeWithTag("note-document-editor").performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
         eval("document.querySelector('.tiptap').focus(); true")
         var connection: android.view.inputmethod.InputConnection? = null
         compose.waitUntil(10_000) {
@@ -116,7 +116,7 @@ class NativeNotesRichEditorTest {
 
     @Test fun nativeFormatToolbarStaysInTheViewportAndRealHistoryCanUndoAndRedo() {
         create(); ready()
-        compose.onNodeWithTag("rich-markdown-${note().blocks.single().string("id")}").performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
+        compose.onNodeWithTag("note-document-editor").performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
         eval("document.querySelector('.tiptap').focus();document.execCommand('insertText',false,'正文');true")
         compose.waitUntil(10_000) { note().blocks.single().string("text") == "正文" }
         withEditorEvidence("format-tools") {
@@ -154,14 +154,14 @@ class NativeNotesRichEditorTest {
             val forward = view.onCaret
             view.onCaret = { top, bottom -> receivedCaret.set("$top..$bottom"); forward(top, bottom) }
         }
-        compose.onNodeWithTag("rich-markdown-$id").performScrollTo().performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
+        compose.onNodeWithTag("note-document-editor").performScrollTo().performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
         eval("document.querySelector('.tiptap').focus();true")
         compose.waitUntil(10_000) { ViewCompat.getRootWindowInsets(compose.activity.window.decorView)?.isVisible(WindowInsetsCompat.Type.ime()) == true }
         compose.waitUntil(10_000) { eval("JSON.parse(window.PimEditor.snapshot(true)).focused") == "true" }
         // Finish native IME focus before selecting the exact paragraph, not the earlier touch position.
-        eval("const n=document.querySelector('.tiptap p').firstChild;const r=document.createRange();r.setStart(n,n.textContent.length);r.collapse(true);const s=window.getSelection();s.removeAllRanges();s.addRange(r);JSON.parse(window.PimEditor.snapshot(true)).before")
+        eval("const n=document.querySelector('.tiptap p').firstChild;const r=document.createRange();r.setStart(n,n.textContent.length);r.collapse(true);const s=window.getSelection();s.removeAllRanges();s.addRange(r);JSON.parse(window.PimEditor.snapshot(true)).target.before")
         val expectedBefore = note().blocks.first().string("text").substringBefore("\n\n- ")
-        compose.waitUntil(10_000) { eval("JSON.parse(window.PimEditor.snapshot(true)).before") == JsonPrimitive(expectedBefore).toString() }
+        compose.waitUntil(10_000) { eval("JSON.parse(window.PimEditor.snapshot(true)).target.before") == JsonPrimitive(expectedBefore).toString() }
         var lastBounds = ""
         withEditorEvidence("caret-viewport", { lastBounds }) { compose.waitUntil(10_000) {
             val bounds = NoteJson.parseToJsonElement(eval("(()=>{const r=window.getSelection().getRangeAt(0).getBoundingClientRect();return {top:r.top,bottom:r.bottom}})()")).jsonObject
@@ -190,7 +190,7 @@ class NativeNotesRichEditorTest {
                 bottom <= rootOrigin[1] + minOf(document.bottom, currentTools.top)
         } }
         android.util.Log.i("PimCaretEvidence", lastBounds)
-        assertEquals(JsonPrimitive(expectedBefore).toString(), eval("JSON.parse(window.PimEditor.snapshot(true)).before"))
+        assertEquals(JsonPrimitive(expectedBefore).toString(), eval("JSON.parse(window.PimEditor.snapshot(true)).target.before"))
         captureEditorEvidence("caret-visible")
         eval("document.execCommand('insertText',false,'补充');true")
         compose.waitUntil(10_000) { note().blocks.first().string("text").contains("重要。补充") }
@@ -223,6 +223,21 @@ class NativeNotesRichEditorTest {
         assertEquals("true", eval("Boolean(document.querySelector('.tiptap table') && document.querySelector('.tiptap input[type=checkbox]'))"))
     }
 
+    @Test fun wholeDocumentSourceModeIsReachedFromOneOverflowEntryAndReturnsToContinuousEditing() {
+        create(); ready()
+        compose.onNodeWithContentDescription("更多文档操作").performClick()
+        compose.onNodeWithTag("note-source-toggle").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("note-source-document").fetchSemanticsNodes().size == 1 }
+        compose.onNodeWithTag("note-document-editor").assertDoesNotExist()
+        compose.onNodeWithText("Markdown 源码编辑：整篇正文共用一个模式", substring = true)
+            .performScrollTo().assertIsDisplayed()
+
+        compose.onNodeWithContentDescription("更多文档操作").performClick()
+        compose.onNodeWithTag("note-source-toggle").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-document-editor").fetchSemanticsNodes().size == 1 }
+        compose.waitUntil(15_000) { eval("Boolean(document.querySelector('.tiptap'))") == "true" }
+    }
+
     @Test fun unsupportedSourceRemainsEditableVerbatimAndEditorCannotFetchOrNavigateToRemoteContent() {
         create(); ready()
         compose.runOnUiThread {
@@ -247,6 +262,11 @@ class NativeNotesRichEditorTest {
         }
         closeSoftKeyboard(); saved()
         assertEquals(source + "补充原文", note().blocks.single().string("text"))
+        compose.onNodeWithTag("note-save-status", useUnmergedTree = true).assertTextEquals("已保存本机")
+        compose.onNodeWithTag("note-finish").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
+        compose.onNodeWithText("继续记录").performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().isEmpty() }
     }
 
     private fun create() {

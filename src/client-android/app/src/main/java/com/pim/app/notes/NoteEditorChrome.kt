@@ -14,6 +14,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.SolidColor
 import androidx.compose.ui.platform.testTag
+import androidx.compose.ui.semantics.contentDescription
+import androidx.compose.ui.semantics.heading
+import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
 import com.pim.app.recording.*
 import com.pim.app.ui.components.PimFloatingSurface
@@ -25,7 +28,9 @@ import com.pim.app.ui.theme.PimTheme
 @Composable
 internal fun NoteEditorTopBar(
     saved: Boolean, saveFailed: Boolean, busy: Boolean, preview: Boolean,
+    noteTitle: String = "", sourceMode: Boolean = false,
     onBack: () -> Unit, onSaveStatus: () -> Unit, onPreview: () -> Unit, onFinish: () -> Unit,
+    onToggleSource: () -> Unit = {},
     onMaterials: () -> Unit, onRecordings: () -> Unit, onExport: () -> Unit, onImport: () -> Unit,
     onAbout: () -> Unit,
     needsReview: Boolean = false, canUndo: Boolean = false, canRedo: Boolean = false,
@@ -38,24 +43,28 @@ internal fun NoteEditorTopBar(
         Row(Modifier.fillMaxWidth().padding(horizontal = d.spaceSmall, vertical = d.spaceSmall).testTag("note-top-bar"),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, enabled = !busy, modifier = Modifier.size(d.minimumTouchTarget)) { Icon(Icons.Default.ArrowBack, "返回记录列表") }
-            Row(Modifier.weight(1f).heightIn(min = d.minimumTouchTarget).clickable(onClick = onSaveStatus)
-                .testTag("note-save-status-open"),
-                verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.spaceExtraSmall)) {
-                Icon(when (saveState) {
-                    NoteSaveState.SaveFailed -> Icons.Default.ErrorOutline
-                    NoteSaveState.NeedsReview -> Icons.Default.WarningAmber
-                    NoteSaveState.SavedLocally -> Icons.Default.Check
-                    NoteSaveState.Saving -> Icons.Default.Sync
-                },
-                    null, Modifier.size(d.iconSize), tint = when {
-                        saveState == NoteSaveState.SaveFailed -> MaterialTheme.colorScheme.error
-                        saveState == NoteSaveState.NeedsReview -> PimTheme.statusColors.onWarningContainer
-                        saveState == NoteSaveState.SavedLocally -> PimTheme.statusColors.onSuccessContainer
-                        else -> MaterialTheme.colorScheme.onSurfaceVariant
-                    })
-                Text(noteSaveStateLabel(saveState),
-                    Modifier.testTag("note-save-status"), style = MaterialTheme.typography.bodySmall,
-                    maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+            Column(Modifier.weight(1f).heightIn(min = d.minimumTouchTarget).clickable(onClick = onSaveStatus)
+                .padding(horizontal = d.spaceSmall).testTag("note-save-status-open"),
+                verticalArrangement = Arrangement.Center) {
+                Text(noteTitle.ifBlank { "未命名记录" }, Modifier.testTag("note-top-title").semantics { heading() },
+                    style = MaterialTheme.typography.titleSmall, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.spaceExtraSmall)) {
+                    Icon(when (saveState) {
+                        NoteSaveState.SaveFailed -> Icons.Default.ErrorOutline
+                        NoteSaveState.NeedsReview -> Icons.Default.WarningAmber
+                        NoteSaveState.SavedLocally -> Icons.Default.Check
+                        NoteSaveState.Saving -> Icons.Default.Sync
+                    },
+                        null, Modifier.size(d.iconSize), tint = when {
+                            saveState == NoteSaveState.SaveFailed -> MaterialTheme.colorScheme.error
+                            saveState == NoteSaveState.NeedsReview -> PimTheme.statusColors.onWarningContainer
+                            saveState == NoteSaveState.SavedLocally -> PimTheme.statusColors.onSuccessContainer
+                            else -> MaterialTheme.colorScheme.onSurfaceVariant
+                        })
+                    Text(noteSaveStateLabel(saveState),
+                        Modifier.testTag("note-save-status"), style = MaterialTheme.typography.bodySmall,
+                        maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
             }
             IconButton(onClick = onPreview, enabled = !busy, modifier = Modifier.size(d.minimumTouchTarget).testTag("note-preview")) {
                 Icon(if (preview) Icons.Default.Edit else Icons.Default.Visibility, if (preview) "编辑笔记" else "预览笔记",
@@ -64,6 +73,11 @@ internal fun NoteEditorTopBar(
             Box {
                 IconButton(onClick = { menu = true }, enabled = !busy, modifier = Modifier.size(d.minimumTouchTarget)) { Icon(Icons.Default.MoreHoriz, "更多文档操作") }
                 DropdownMenu(expanded = menu, onDismissRequest = { menu = false }) {
+                    DropdownMenuItem(text = { Text(if (sourceMode) "返回富文本编辑" else "整篇 Markdown 源码") },
+                        leadingIcon = { Icon(Icons.Default.EditNote, null) }, enabled = !busy,
+                        modifier = Modifier.testTag("note-source-toggle"),
+                        onClick = { menu = false; onToggleSource() })
+                    Divider()
                     DropdownMenuItem(text = { Text("撤销整篇操作") }, leadingIcon = { Icon(Icons.Default.Undo, null) },
                         enabled = canUndo && !busy, modifier = Modifier.testTag("note-undo"),
                         onClick = { menu = false; onUndo() })
@@ -85,7 +99,8 @@ internal fun NoteEditorTopBar(
             Button(onClick = onFinish, enabled = !busy, shape = CircleShape,
                 elevation = ButtonDefaults.buttonElevation(defaultElevation = d.floatingElevation),
                 contentPadding = PaddingValues(horizontal = d.spaceLarge),
-                modifier = Modifier.heightIn(min = d.minimumTouchTarget).testTag("note-finish")) { Text(if (busy) "保存中" else "结束", maxLines = 1) }
+                modifier = Modifier.heightIn(min = d.minimumTouchTarget).testTag("note-finish")
+                    .semantics { this.contentDescription = "结束并保存本次记录" }) { Text(if (busy) "保存中" else "结束", maxLines = 1) }
         }
     }
 }
@@ -97,7 +112,8 @@ internal fun NoteDocumentHeading(
 ) {
     val d = PimTheme.dimensions
     Column(verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
-        BasicTextField(note.title, { onTitle(it.take(500)) }, modifier = Modifier.fillMaxWidth().heightIn(min = d.minimumTouchTarget).testTag("note-title"),
+        BasicTextField(note.title, { onTitle(it.take(500)) }, modifier = Modifier.fillMaxWidth().heightIn(min = d.minimumTouchTarget)
+            .testTag("note-title").semantics { heading() },
             enabled = enabled, readOnly = preview,
             textStyle = MaterialTheme.typography.headlineMedium.copy(color = MaterialTheme.colorScheme.onSurface),
             cursorBrush = SolidColor(MaterialTheme.colorScheme.primary),

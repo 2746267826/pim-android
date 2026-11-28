@@ -31,6 +31,19 @@ directory.
 - Existing schema-v1 documents, block IDs/order, photos, vector ink and frozen
   input versions remain unchanged. Merely loading, previewing, focusing or
   changing the theme does not normalize the original Markdown.
+- The default editing surface is one Tiptap/ProseMirror document. Every stored
+  Markdown leaf is projected into an ordered `pimRegion`; photos, ink and
+  unknown materials are atomic `pimMaterial` nodes at their original positions.
+  Text before and after a material therefore shares one selection, history and
+  document layout instead of separate per-leaf editors. Material clicks open
+  the native photo/ink sheet; the WebView only receives bounded data-URI
+  previews and can never rewrite material identity or payloads.
+- The Markdown entry point is now a whole-document source mode in the overflow
+  menu, not a switch above every text segment. If any Markdown leaf contains
+  HTML, image syntax, reference definitions, footnotes, front matter or more
+  than 500,000 characters, the whole note uses that source view and keeps the
+  original text and material order. A known format fallback is not treated as
+  unconfirmed input; renderer/bridge failures still require explicit review.
 - User edits serialize the supported Markdown subset. HTML, Markdown images,
   reference definitions, footnotes, front matter and blocks over 500,000
   characters use the source-preserving native editor, with an explanation.
@@ -93,13 +106,18 @@ directory.
 
 ## Deliberate MVP limitations
 
-The mature engine edits individual Markdown leaf blocks. Photos/ink remain
-native blocks between them. Undo/redo is per live text leaf, not global across
-material insertion/deletion, source-mode changes or view recreation. A very
-long leaf caps the outer WebView height at 8192 CSS pixels and then scrolls
-inside it. A unified whole-document engine, many-block performance profiling,
-OPPO IME/stylus/palm rejection and 100/180-minute recording acceptance remain
-explicit gaps, not implied by automated tests.
+The storage and material-version boundary is still schema-v1 Markdown leaves.
+The single document engine preserves those leaf identities without merging them
+into one opaque string. Undo/redo inside the live rich document can cross text
+regions, but native photo/ink insertion is committed as a separate document
+replacement and is not merged into the WebView history. The WebView also rejects
+moving or deleting material nodes; material operations stay in the native
+sheets. Source mode still edits the ordered Markdown leaves and materials rather
+than one free-form textarea so that IDs and unknown extension fields survive.
+A very long region caps the outer WebView height at 8192 CSS pixels and then
+scrolls inside it. Many-block performance profiling, OPPO IME/stylus/palm
+rejection and 100/180-minute recording acceptance remain explicit gaps, not
+implied by automated tests.
 
 No font or animation from the reference archive is shipped in this slice;
 their user-confirmed availability remains recorded for later selection. This

@@ -91,8 +91,8 @@ class NativeNotesEditorRecoveryTest {
         capture("renderer-review")
         assertFinishBlocked()
         // No arbitrary edit or second Finish tap is required to acknowledge the displayed source.
-        compose.onNodeWithTag("note-review-source-$id").performScrollTo().assertIsEnabled().performClick()
-        compose.onNodeWithTag("note-review-source-$id").assertDoesNotExist()
+        compose.onNodeWithTag("note-review-source-document").performScrollTo().assertIsEnabled().performClick()
+        compose.onNodeWithTag("note-review-source-document").assertDoesNotExist()
         finishOnce()
         val fixed = NoteMaterialStore.at(compose.activity.noBackupFilesDir).read(model.completion.value!!.versionId)
         assertEquals("已收到的原文", fixed.document.blocks.single().string("text"))
@@ -107,8 +107,8 @@ class NativeNotesEditorRecoveryTest {
         val id = note().blocks.first().string("id")
         ready(id); startRecording()
         closeSoftKeyboard()
-        compose.onNodeWithTag("note-document").performScrollToIndex(10)
-        compose.onNodeWithTag("note-document").performScrollToIndex(note().blocks.lastIndex + 2)
+        compose.onNodeWithTag("note-document").performScrollToIndex(3)
+        compose.onNodeWithTag("note-document").performScrollToIndex(0)
         compose.onNodeWithTag("note-document").performScrollToIndex(2)
         ready(id)
         focus(id)
@@ -207,20 +207,21 @@ class NativeNotesEditorRecoveryTest {
         compose.waitUntil(10_000) { model.recordings.state.value.active && model.recordings.state.value.session!!.samples >= 3200 }
     }
     private fun focus(id: String) {
-        compose.onNodeWithTag("rich-markdown-$id").performScrollTo().performTouchInput { click(androidx.compose.ui.geometry.Offset(30f, 30f)) }
+        compose.onNodeWithTag("note-document-editor").performScrollTo().performTouchInput {
+            click(androidx.compose.ui.geometry.Offset(30f, 30f))
+        }
         eval(web(id), "document.querySelector('.tiptap').focus();true")
         compose.waitUntil(10_000) { eval(web(id), "JSON.parse(window.PimEditor.snapshot(true)).focused") == "true" }
     }
     private fun ready(id: String) {
-        val index = note().blocks.indexOfFirst { it.string("id") == id }
-        compose.onNodeWithTag("note-document").performScrollToIndex(index + 2)
+        compose.onNodeWithTag("note-document").performScrollToIndex(2)
         compose.waitUntil(15_000) { webOrNull(id) != null }
         compose.waitUntil(15_000) { eval(web(id), "Boolean(document.querySelector('.tiptap'))") == "true" }
     }
     private fun reviewVisible(id: String) {
         compose.onNodeWithTag("note-document").performScrollToIndex(2)
-        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-review-source-$id").fetchSemanticsNodes().size == 1 }
-        compose.onNodeWithTag("note-review-source-$id").performScrollTo().assertIsDisplayed()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-review-source-document").fetchSemanticsNodes().size == 1 }
+        compose.onNodeWithTag("note-review-source-document").performScrollTo().assertIsDisplayed()
     }
     private fun assertFinishBlocked() {
         assertNull(model.completion.value)

@@ -33,6 +33,49 @@ class NoteDocumentTest {
         assertEquals(1, note.blocks.size)
     }
 
+    @Test fun continuousDocumentEditsOnlyReplaceMarkdownAndKeepMaterialIdentity() {
+        val first = JsonObject(markdownBlock("before") + ("future" to JsonPrimitive("keep")))
+        val material = inkBlock(320f)
+        val last = markdownBlock("after")
+        val note = NoteDocument.create().withBlocks(listOf(first, material, last))
+        val changed = note.withDocumentBlocks(listOf(
+            JsonObject(buildJsonObject {
+                put("id", first.string("id")); put("kind", "markdown"); put("text", "before edited")
+            }),
+            JsonObject(buildJsonObject {
+                put("id", material.string("id")); put("kind", "ink"); put("ignored", true)
+            }),
+            JsonObject(buildJsonObject {
+                put("id", last.string("id")); put("kind", "markdown"); put("text", "after edited")
+            }),
+        ))
+        assertEquals(listOf("before edited", "after edited"), changed.blocks.filter { it.string("kind") == "markdown" }.map { it.string("text") })
+        assertEquals("keep", changed.blocks[0].string("future"))
+        assertEquals(material, changed.blocks[1])
+        assertEquals(first.string("id"), changed.blocks[0].string("id"))
+    }
+
+    @Test fun continuousDocumentEditorCannotMoveOrDeleteMaterialBlocks() {
+        val text = markdownBlock("text")
+        val material = inkBlock(320f)
+        val note = NoteDocument.create().withBlocks(listOf(text, material))
+        assertThrows(IllegalArgumentException::class.java) {
+            note.withDocumentBlocks(listOf(JsonObject(buildJsonObject {
+                put("id", text.string("id")); put("kind", "markdown"); put("text", "text")
+            })))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            note.withDocumentBlocks(listOf(
+                JsonObject(buildJsonObject {
+                    put("id", material.string("id")); put("kind", "ink")
+                }),
+                JsonObject(buildJsonObject {
+                    put("id", text.string("id")); put("kind", "markdown"); put("text", "text")
+                }),
+            ))
+        }
+    }
+
     @Test fun richCaretUsesCompleteMarkdownFragmentsAndKeepsOpaqueFields() {
         val block = JsonObject(markdownBlock("**beforeafter**") + ("future" to JsonPrimitive("keep")))
         val anchor = NoteInsertion(block.string("id"), 0, "**beforeafter**", "**before**", "**after**")

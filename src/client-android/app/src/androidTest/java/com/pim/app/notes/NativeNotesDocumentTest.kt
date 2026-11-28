@@ -16,6 +16,10 @@ import com.pim.app.recording.*
 import java.io.ByteArrayInputStream
 import java.io.ByteArrayOutputStream
 import java.io.File
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Rule
@@ -51,6 +55,8 @@ class NativeNotesDocumentTest {
         val inkId = note().blocks.single { it.string("kind") == "ink" }.string("id")
         assertEquals("# Session\n\nbefore\n", note().blocks[0].string("text"))
         assertEquals("after", note().blocks[2].string("text"))
+        openMaterial(inkId)
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("note-material-sheet").fetchSemanticsNodes().isNotEmpty() }
         compose.onNodeWithTag("ink-draw-$inkId").performScrollTo().performClick()
         compose.onNodeWithTag("ink-canvas-$inkId").performTouchInput {
             down(Offset(30f, 30f)); moveTo(Offset(160f, 100f), 100); up()
@@ -64,6 +70,8 @@ class NativeNotesDocumentTest {
         val resized = inkOf(note().blocks[1])
         assertTrue(resized.width > 320f)
         assertEquals(strokes, resized.strokes)
+        compose.onNodeWithText("关闭材料").performScrollTo().performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithTag("note-material-sheet").fetchSemanticsNodes().isEmpty() }
         saved()
         val snapshot = note()
         assertEquals(snapshot, NoteFileStore(File(compose.activity.noBackupFilesDir, "notes")).read(snapshot.id))
@@ -102,6 +110,11 @@ class NativeNotesDocumentTest {
         val file = model.notes.photoFile(note().id, photo.string("assetId"))
         assertArrayEquals(bytes, file.readBytes())
         assertNotNull(NoteFileStore.photoPreview(file))
+        openMaterial(photo.string("id"))
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("note-material-sheet").fetchSemanticsNodes().isNotEmpty() }
+        compose.onNodeWithText("照片材料").assertIsDisplayed()
+        compose.onNodeWithText("关闭材料").performScrollTo().performClick()
+        compose.waitUntil(5000) { compose.onAllNodesWithTag("note-material-sheet").fetchSemanticsNodes().isEmpty() }
         saved()
         val before = note()
         compose.runOnUiThread {
@@ -111,6 +124,35 @@ class NativeNotesDocumentTest {
         compose.waitUntil(10_000) { !model.busy.value && model.message.value?.contains("导入失败") == true }
         assertEquals(before, note())
         assertTrue(file.exists())
+    }
+
+    @Test fun oneContinuousEditorEditsBothSidesOfNativeMaterialWithoutChangingIt() {
+        create()
+        closeSoftKeyboard()
+        compose.runOnUiThread {
+            model.notes.update(note().id) {
+                it.withBlocks(listOf(markdownBlock("前段"), inkBlock(320f), markdownBlock("后段")))
+            }
+        }
+        saved()
+        compose.onNodeWithTag("note-document").performScrollToIndex(2)
+        compose.waitUntil(15_000) { webOrNull() != null }
+        compose.waitUntil(15_000) { eval("Boolean(document.querySelector('.tiptap'))") == "true" }
+        assertEquals("true", eval(
+            "document.querySelectorAll('.tiptap').length===1 && document.querySelectorAll('.pim-region').length===2 && Boolean(document.querySelector('[data-pim-material]'))"
+        ))
+        val material = note().blocks[1]
+        eval("""
+            const region=document.querySelectorAll('.pim-region')[1];
+            const range=document.createRange(); range.selectNodeContents(region.querySelector('p')); range.collapse(false);
+            const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range);
+            document.querySelector('.tiptap').focus();
+            document.execCommand('insertText', false, '。追加'); true
+        """.trimIndent())
+        compose.waitUntil(10_000) { note().blocks[2].string("text").contains("追加") }
+        assertEquals("前段", note().blocks[0].string("text"))
+        assertEquals(material, note().blocks[1])
+        saved()
     }
 
     @RequiresDevice
@@ -231,16 +273,53 @@ class NativeNotesDocumentTest {
     }
 
     private fun edit(text: String, offset: Int) {
-        val mode = "markdown-mode-${note().blocks.first { it.string("kind") == "markdown" }.string("id")}"
-        if (compose.onAllNodes(hasTestTag(mode) and hasText("Markdown 源码")).fetchSemanticsNodes().isNotEmpty()) {
-            compose.onNodeWithTag(mode).performScrollTo().performClick()
-            compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag(mode) and hasText("富文本")).fetchSemanticsNodes().isNotEmpty() }
-        }
+        compose.onNodeWithTag("note-document").performScrollToIndex(2)
+        compose.waitUntil(15_000) { webOrNull() != null }
+        compose.waitUntil(15_000) { eval("Boolean(document.querySelector('.tiptap'))") == "true" }
+        val block = note().blocks.first { it.string("kind") == "markdown" }
         compose.runOnUiThread {
-            val editor = descendants(compose.activity.window.decorView).filterIsInstance<MarkdownEditText>().first()
-            editor.requestFocus(); editor.setText(text); editor.setSelection(offset)
+            model.notes.update(note().id) { doc ->
+                doc.replaceBlock(block.string("id")) { JsonObject(it + ("text" to JsonPrimitive(text))) }
+            }
         }
+        compose.waitUntil(10_000) { note().blocks.first { it.string("kind") == "markdown" }.string("text") == text }
+        compose.waitUntil(10_000) { eval("Boolean(document.querySelector('.tiptap'))") == "true" }
+        eval("""
+            const region=document.querySelector('.pim-region');
+            const walker=document.createTreeWalker(region, NodeFilter.SHOW_TEXT);
+            let remaining=$offset, node;
+            while(node=walker.nextNode()) {
+              if(remaining<=node.textContent.length) {
+                const range=document.createRange(); range.setStart(node, remaining); range.collapse(true);
+                const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range); break;
+              }
+              remaining-=node.textContent.length;
+            }
+            document.querySelector('.tiptap').focus(); true
+        """.trimIndent())
         compose.waitForIdle(); closeSoftKeyboard(); compose.waitForIdle()
+    }
+    private fun openMaterial(id: String) {
+        compose.waitUntil(10_000) { eval("Boolean(document.querySelector('[data-pim-material=\"$id\"]'))") == "true" }
+        eval("document.querySelector('[data-pim-material=\"$id\"]').dispatchEvent(new MouseEvent('click',{bubbles:true,cancelable:true}));true")
+        compose.waitForIdle()
+    }
+    private fun webOrNull(): OfflineMarkdownView? {
+        var result: OfflineMarkdownView? = null
+        compose.runOnUiThread {
+            result = descendants(compose.activity.window.decorView).filterIsInstance<OfflineMarkdownView>().firstOrNull()
+        }
+        return result
+    }
+    private fun eval(script: String): String {
+        var result = ""
+        val done = CountDownLatch(1)
+        compose.runOnUiThread {
+            val editor = webOrNull()
+            if (editor == null) done.countDown() else editor.evaluateJavascript(script) { result = it; done.countDown() }
+        }
+        check(done.await(10, TimeUnit.SECONDS)) { "Editor WebView did not respond" }
+        return result
     }
     private fun finishNote() {
         compose.onNodeWithTag("note-finish").performClick()

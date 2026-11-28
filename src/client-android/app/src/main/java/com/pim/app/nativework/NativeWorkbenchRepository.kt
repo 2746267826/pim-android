@@ -381,7 +381,7 @@ class NativeWorkbenchRepository @Inject constructor(
         }
         val result = api.deleteEvent(event.id)
         requireNonBlankAcknowledgement(
-            requireSuccess(result.code, result.data, result.message, "删除日程"),
+            requireSuccess(result.code, result.data, result.message, "删除日程").status,
             "删除日程",
         )
     }

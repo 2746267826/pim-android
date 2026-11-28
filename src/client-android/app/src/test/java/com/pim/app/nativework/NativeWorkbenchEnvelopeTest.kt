@@ -5,7 +5,8 @@ import com.pim.core.contract.CalendarOperationResultApiResponse
 import com.pim.core.contract.DeviceDeleteResultDto
 import com.pim.core.contract.DeviceDeleteResultDtoApiResponse
 import com.pim.core.contract.EventResponse
-import com.pim.core.contract.StringApiResponse
+import com.pim.core.contract.OutlookWriteResult
+import com.pim.core.contract.OutlookWriteResultApiResponse
 import com.pim.core.contract.TaskResponse
 import com.pim.core.contract.TaskResponsePagedResult
 import com.pim.core.contract.TaskResponsePagedResultApiResponse
@@ -116,7 +117,7 @@ class NativeWorkbenchEnvelopeTest {
     }
 
     @Test
-    fun deviceDeleteUsesTypedResultAndStringDeleteRequiresNonblankAck() = runBlocking {
+    fun deviceDeleteUsesTypedResultAndEventDeleteRequiresStructuredAck() = runBlocking {
         val deviceResult = DeviceDeleteResultDto(
             deviceId = "device-1",
             tables = emptyList(),
@@ -154,28 +155,21 @@ class NativeWorkbenchEnvelopeTest {
         val blankAck = assertThrows(NativeWorkbenchRequestException::class.java) {
             runBlocking {
                 NativeWorkbenchRepository(
-                    api(StringApiResponse(code = 0, data = "  ", message = "ok", timestamp = "now"))
+                    api(deleteEventResult(status = "  "))
                 ).deleteEvent(event)
             }
         }
         assertTrue(blankAck.message.orEmpty().contains("未返回确认信息"))
 
         NativeWorkbenchRepository(
-            api(StringApiResponse(code = 0, data = "deleted", message = "ok", timestamp = "now"))
+            api(deleteEventResult())
         ).deleteEvent(event)
 
         for (confirmation in listOf("false", " FALSE ", "FaLsE")) {
             val falseAck = assertThrows(NativeWorkbenchRequestException::class.java) {
                 runBlocking {
                     NativeWorkbenchRepository(
-                        api(
-                            StringApiResponse(
-                                code = 0,
-                                data = confirmation,
-                                message = "ok",
-                                timestamp = "now",
-                            )
-                        )
+                        api(deleteEventResult(status = confirmation))
                     ).deleteEvent(event)
                 }
             }
@@ -185,19 +179,23 @@ class NativeWorkbenchEnvelopeTest {
         val failedAck = assertThrows(NativeWorkbenchRequestException::class.java) {
             runBlocking {
                 NativeWorkbenchRepository(
-                    api(
-                        StringApiResponse(
-                            code = 5,
-                            data = "deleted",
-                            message = "delete denied",
-                            timestamp = "now",
-                        )
-                    )
+                    api(deleteEventResult(code = 5, message = "delete denied"))
                 ).deleteEvent(event)
             }
         }
         assertTrue(failedAck.message.orEmpty().contains("delete denied"))
     }
+
+    private fun deleteEventResult(
+        code: Int = 0,
+        status: String = "deleted",
+        message: String = "ok",
+    ) = OutlookWriteResultApiResponse(
+        code = code,
+        data = OutlookWriteResult(status = status),
+        message = message,
+        timestamp = "now",
+    )
 
     private fun api(response: Any): ApiService =
         Proxy.newProxyInstance(

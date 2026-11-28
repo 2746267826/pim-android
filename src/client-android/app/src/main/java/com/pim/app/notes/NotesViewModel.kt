@@ -37,6 +37,9 @@ class NotesViewModel @Inject constructor(
     val message = mutableMessage.asStateFlow()
     private val mutableBusy = MutableStateFlow(false)
     val busy = mutableBusy.asStateFlow()
+    private val libraryLaunches = NoteLibraryLaunchGate {
+        if (busy.value) null else notes.create()
+    }
     private val mutableCompletion = MutableStateFlow<NoteCompletion?>(null)
     val completion = mutableCompletion.asStateFlow()
     private val mutableArtifactEntry = MutableStateFlow<NoteArtifactEntry?>(null)
@@ -98,7 +101,21 @@ class NotesViewModel @Inject constructor(
     }
 
     fun open(id: String?) { if (!busy.value) { saved["noteId"] = id; mutableMessage.value = null; dismissCompletion() } }
-    fun create() { open(notes.create()) }
+
+    @Synchronized
+    fun create(): String? {
+        if (busy.value) return null
+        val selected = selectedId.value
+        if (selected != null && notes.state.value.documents.containsKey(selected)) return null
+        val id = notes.create()
+        open(id)
+        return id
+    }
+
+    fun createForLibraryLaunch(): String? = libraryLaunches.launch()
+
+    fun finishLibraryLaunch() = libraryLaunches.finish()
+
     fun openLegacyQuickNoteMigration() { viewModelScope.launch { legacyQuickNoteMigration.open() } }
     fun refreshLegacyQuickNoteMigration() {
         viewModelScope.launch { legacyQuickNoteMigration.open(legacyQuickNoteMigration.state.value.page) }
@@ -421,13 +438,10 @@ class NotesViewModel @Inject constructor(
     fun editTaskSuggestion(
         scope: NoteTaskSuggestionActionScope,
         suggestionId: String,
-        title: String,
-        description: String,
-        priority: Int,
-        due: String,
+        edit: NoteTaskSuggestionEdit,
     ) {
         viewModelScope.launch {
-            taskSuggestions.stageDraft(scope, suggestionId, title, description, priority, due)
+            taskSuggestions.stageDraft(scope, suggestionId, edit)
         }
     }
 

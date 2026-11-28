@@ -9,6 +9,11 @@ data class ServerUrlValidationResult(
 )
 
 object ServerUrlValidator {
+    private val LOCAL_DEV_HOSTS = setOf("127.0.0.1", "localhost", "::1", "[::1]", "10.0.2.2")
+    private val LOOPBACK_HOSTS = setOf("127.0.0.1", "localhost", "::1", "[::1]")
+
+    fun isLocalDevHost(host: String): Boolean = host.lowercase() in LOCAL_DEV_HOSTS
+
     fun validate(value: String?): ServerUrlValidationResult {
         val input = value?.trim().orEmpty()
         if (input.isBlank()) {
@@ -25,8 +30,17 @@ object ServerUrlValidator {
         val scheme = endpoints.apiBaseUrl.scheme
         val host = endpoints.apiBaseUrl.host.lowercase()
 
+        if (scheme == "http" && !isLocalDevHost(host)) {
+            return ServerUrlValidationResult(
+                input = input,
+                normalizedUrl = endpoints.apiBaseUrl.toString(),
+                isValid = false,
+                reasonCode = "insecure-http"
+            )
+        }
+
         val warnings = buildSet {
-            if (host == "127.0.0.1" || host == "localhost" || host == "::1" || host == "[::1]") {
+            if (host in LOOPBACK_HOSTS) {
                 add("real-device-localhost")
             }
             if (scheme == "http") {

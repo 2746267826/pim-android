@@ -18,6 +18,8 @@ import androidx.compose.ui.text.style.TextOverflow
 import com.pim.app.recording.*
 import com.pim.app.ui.components.PimFloatingSurface
 import com.pim.app.ui.components.PimRecordingPill
+import com.pim.app.ui.components.PimStatusBanner
+import com.pim.app.ui.components.PimStatusTone
 import com.pim.app.ui.theme.PimTheme
 
 @Composable
@@ -31,20 +33,27 @@ internal fun NoteEditorTopBar(
 ) {
     val d = PimTheme.dimensions
     var menu by remember { mutableStateOf(false) }
+    val saveState = noteSaveState(saved = saved, saveFailed = saveFailed, needsReview = needsReview)
     Surface(color = MaterialTheme.colorScheme.surface) {
         Row(Modifier.fillMaxWidth().padding(horizontal = d.spaceSmall, vertical = d.spaceSmall).testTag("note-top-bar"),
             verticalAlignment = Alignment.CenterVertically) {
             IconButton(onClick = onBack, enabled = !busy, modifier = Modifier.size(d.minimumTouchTarget)) { Icon(Icons.Default.ArrowBack, "返回记录列表") }
-            Row(Modifier.weight(1f).heightIn(min = d.minimumTouchTarget).clickable(onClick = onSaveStatus),
+            Row(Modifier.weight(1f).heightIn(min = d.minimumTouchTarget).clickable(onClick = onSaveStatus)
+                .testTag("note-save-status-open"),
                 verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(d.spaceExtraSmall)) {
-                Icon(when { saveFailed -> Icons.Default.ErrorOutline; needsReview -> Icons.Default.WarningAmber; saved -> Icons.Default.Check; else -> Icons.Default.Sync },
+                Icon(when (saveState) {
+                    NoteSaveState.SaveFailed -> Icons.Default.ErrorOutline
+                    NoteSaveState.NeedsReview -> Icons.Default.WarningAmber
+                    NoteSaveState.SavedLocally -> Icons.Default.Check
+                    NoteSaveState.Saving -> Icons.Default.Sync
+                },
                     null, Modifier.size(d.iconSize), tint = when {
-                        saveFailed -> MaterialTheme.colorScheme.error
-                        needsReview -> PimTheme.statusColors.onWarningContainer
-                        saved -> PimTheme.statusColors.onSuccessContainer
+                        saveState == NoteSaveState.SaveFailed -> MaterialTheme.colorScheme.error
+                        saveState == NoteSaveState.NeedsReview -> PimTheme.statusColors.onWarningContainer
+                        saveState == NoteSaveState.SavedLocally -> PimTheme.statusColors.onSuccessContainer
                         else -> MaterialTheme.colorScheme.onSurfaceVariant
                     })
-                Text(when { saveFailed -> "保存失败"; needsReview -> "待核对正文"; saved -> "已保存本机"; else -> "保存中" },
+                Text(noteSaveStateLabel(saveState),
                     Modifier.testTag("note-save-status"), style = MaterialTheme.typography.bodySmall,
                     maxLines = 1, overflow = TextOverflow.Ellipsis, color = MaterialTheme.colorScheme.onSurfaceVariant)
             }
@@ -96,7 +105,9 @@ internal fun NoteDocumentHeading(
                 Box { if (note.title.isBlank()) Text("未命名记录", style = MaterialTheme.typography.headlineMedium,
                     color = MaterialTheme.colorScheme.onSurfaceVariant); field() }
             })
-        Text("${noteDate(note)} · 本机原稿", style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        noteDate(note).takeIf { it.isNotBlank() }?.let {
+            Text(it, style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+        }
         if (recordingCount > 0 || latest != null) Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
             if (recordingCount > 0) TextButton(onClick = onRecordings, modifier = Modifier.testTag("note-recordings"),
                 contentPadding = PaddingValues(end = d.spaceMedium)) {
@@ -120,7 +131,7 @@ internal fun NoteDocumentHeading(
 
 @Composable
 internal fun NoteEditorDock(
-    recording: RecordingState, ownActive: Boolean, canRecord: Boolean, canInsert: Boolean,
+    recording: RecordingState, ownActive: Boolean, activeOtherTitle: String?, canRecord: Boolean, canInsert: Boolean,
     onRecord: () -> Unit, onPauseResume: () -> Unit, onRecordings: () -> Unit,
     onPhoto: (Boolean) -> Unit, onInk: () -> Unit, modifier: Modifier = Modifier
 ) {
@@ -136,7 +147,11 @@ internal fun NoteEditorDock(
                     modifier = Modifier.heightIn(min = d.minimumTouchTarget).testTag("note-start-recording")) {
                     Icon(Icons.Default.MicNone, null, Modifier.size(d.iconSize))
                     Spacer(Modifier.width(d.spaceSmall))
-                    Text(when { recording.preparing -> "正在开启"; recording.active -> "其他笔记录音中"; else -> "开始录音" }, maxLines = 1)
+                    Text(when {
+                        recording.preparing -> "正在开启"
+                        activeOtherTitle != null -> "《$activeOtherTitle》正在录音"
+                        else -> "开始录音"
+                    }, maxLines = 1, overflow = TextOverflow.Ellipsis)
                 }
             }
         }
@@ -159,6 +174,84 @@ internal fun NoteEditorDock(
 }
 
 @Composable
+internal fun RecordingPermissionNotice(
+    permissions: RecordingPermissions,
+    requestEnabled: Boolean = true,
+    onRequest: () -> Unit,
+    onOpenSettings: (RecordingPermissionSetting) -> Unit,
+) {
+    val d = PimTheme.dimensions
+    Column(
+        Modifier.fillMaxWidth().testTag("recording-permission-notice"),
+        verticalArrangement = Arrangement.spacedBy(d.spaceExtraSmall),
+    ) {
+        PimStatusBanner(permissions.message, PimStatusTone.Warning)
+        if (permissions.canRequest && !requestEnabled) {
+            Text(
+                "笔记保存完成后才能请求录音权限；现在仍可先打开系统设置。",
+                style = MaterialTheme.typography.bodySmall,
+                color = MaterialTheme.colorScheme.onSurfaceVariant,
+            )
+        }
+        if (permissions.canRequest) {
+            TextButton(
+                onClick = onRequest,
+                enabled = requestEnabled,
+                modifier = Modifier.testTag("recording-permission-request"),
+            ) {
+                Text(permissions.requestActionLabel ?: "允许录音权限")
+            }
+        }
+        if (!permissions.microphoneGranted) {
+            TextButton(
+                onClick = { onOpenSettings(RecordingPermissionSetting.AppSettings) },
+                modifier = Modifier.testTag("recording-permission-microphone-settings"),
+            ) { Text("麦克风设置") }
+        }
+        if (!permissions.notificationPermissionGranted || !permissions.notificationsEnabled) {
+            TextButton(
+                onClick = { onOpenSettings(RecordingPermissionSetting.NotificationSettings) },
+                modifier = Modifier.testTag("recording-permission-notification-settings"),
+            ) { Text("通知设置") }
+        }
+        if (!permissions.channelEnabled) {
+            TextButton(
+                onClick = { onOpenSettings(RecordingPermissionSetting.RecordingChannelSettings) },
+                modifier = Modifier.testTag("recording-permission-channel-settings"),
+            ) { Text("录音通知渠道设置") }
+        }
+    }
+}
+
+@Composable
+internal fun ActiveRecordingConflictDialog(
+    title: String,
+    canOpenRecording: Boolean,
+    onOpenRecording: () -> Unit,
+    onContinueEditing: () -> Unit,
+) {
+    AlertDialog(
+        onDismissRequest = onContinueEditing,
+        title = { Text("另一篇笔记正在录音") },
+        text = {
+            Text("《$title》仍在录音。你可以返回原笔记，或留在这里继续编辑本篇；原录音不会被结束，也不会改归本篇。")
+        },
+        confirmButton = {
+            if (canOpenRecording) {
+                TextButton(onClick = onOpenRecording, modifier = Modifier.testTag("recording-conflict-open")) {
+                    Text("返回正在录音笔记")
+                }
+            }
+        },
+        dismissButton = {
+            TextButton(onClick = onContinueEditing, modifier = Modifier.testTag("recording-conflict-continue")) {
+                Text("继续编辑本篇")
+            }
+        },
+    )
+}
+
+@Composable
 internal fun NoteMaterialsRail(note: NoteDocument, sessions: List<RecordingSession>, onRecordings: () -> Unit, onMaterials: () -> Unit, onBlock: (String) -> Unit) {
     val d = PimTheme.dimensions
     Column(Modifier.width(d.noteMaterialsRailWidth).fillMaxHeight().verticalScroll(rememberScrollState()).padding(d.spaceLarge).testTag("note-materials-rail"),
@@ -175,7 +268,16 @@ internal fun NoteMaterialsRail(note: NoteDocument, sessions: List<RecordingSessi
         }
         Divider(color = MaterialTheme.colorScheme.outlineVariant)
         TextButton(onClick = onMaterials) { Text("材料版本") }
-        Text("原始材料保留在本机。\n云端处理尚未接入。", style = MaterialTheme.typography.bodySmall,
-            color = MaterialTheme.colorScheme.onSurfaceVariant)
+    }
+}
+
+@Composable
+internal fun NoteDocumentEnd(preview: Boolean) {
+    val d = PimTheme.dimensions
+    if (preview) {
+        Text("原始笔记 · 预览", Modifier.padding(vertical = d.spaceLarge).testTag("note-document-end"),
+            style = MaterialTheme.typography.bodySmall, color = MaterialTheme.colorScheme.onSurfaceVariant)
+    } else {
+        Spacer(Modifier.height(d.spaceLarge).testTag("note-document-end"))
     }
 }

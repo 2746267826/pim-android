@@ -31,7 +31,8 @@ import kotlinx.serialization.json.JsonPrimitive
 @OptIn(ExperimentalMaterial3Api::class, ExperimentalComposeUiApi::class)
 @Composable
 fun NativeNotesScreen(
-    state: NotesState, selectedId: String?, recording: RecordingState, busy: Boolean, message: String?, playing: String?, notificationsVisible: Boolean,
+    state: NotesState, selectedId: String?, recording: RecordingState, busy: Boolean, message: String?, playing: String?,
+    recordingPermissions: RecordingPermissions,
     materials: NoteMaterialsState,
     onCreate: () -> Unit, onOpen: (String?) -> Unit,
     readDocument: (String) -> NoteDocument?, onProblem: (String) -> Unit,
@@ -58,6 +59,8 @@ fun NativeNotesScreen(
     legacyMigration: LegacyQuickNoteMigrationState = LegacyQuickNoteMigrationState(),
     legacyMigrationActions: LegacyQuickNoteMigrationActions = LegacyQuickNoteMigrationActions(),
     initialAsr: Boolean = false,
+    onRequestRecordingPermissions: () -> Unit = {},
+    onOpenRecordingSettings: (RecordingPermissionSetting) -> Unit = {},
     artifactOverlay: @Composable () -> Unit = {},
 ) {
     val d = PimTheme.dimensions
@@ -91,6 +94,8 @@ fun NativeNotesScreen(
                 var showRecordings by rememberSaveable { mutableStateOf(false) }
                 var confirmFinish by rememberSaveable { mutableStateOf(false) }
                 var showAbout by rememberSaveable { mutableStateOf(false) }
+                var showSaveStatus by rememberSaveable { mutableStateOf(false) }
+                var showRecordingConflict by remember(note.id) { mutableStateOf(false) }
                 val focus = LocalFocusManager.current
                 val keyboard = LocalSoftwareKeyboardController.current
                 val list = rememberLazyListState()
@@ -98,9 +103,19 @@ fun NativeNotesScreen(
                 val saved = state.savedRevisions[note.id] == note.revision && !editor.pending && !committing
                 val ownSession = recording.session?.takeIf { it.noteId == note.id }
                 val ownActive = ownSession?.active == true
+                val activeOtherSession = recording.session?.takeIf { it.active && it.noteId != note.id }
+                val activeOtherNoteId = activeOtherSession?.noteId
+                val activeOtherTitle = activeOtherSession?.let { session ->
+                    session.noteId?.let { noteDisplayTitle(state, it) } ?: "另一篇笔记"
+                }
+                LaunchedEffect(activeOtherSession?.id) {
+                    showRecordingConflict = false
+                }
                 val sessions = (listOfNotNull(ownSession) + recording.archives.mapNotNull { it.session }).distinctBy { it.id }
                     .filter { it.noteId == note.id }.sortedWith(compareBy({ it.createdAtMillis }, { it.id }))
                 val latest = materials.entries.firstOrNull { it.noteId == note.id }
+                val latestUpload = latestUploadJobForNote(uploads.jobs, note.id)
+                val saveProblem = state.saveProblems[note.id]
                 val lastMarkdown = note.blocks.lastOrNull { it.string("kind") == "markdown" }
                 val showTextTools = editor.activeRichBlock != null && !preview && !busy && !committing
                 val dockClearance = d.noteDockClearance + if (showTextTools) d.minimumTouchTarget + d.spaceSmall else 0.dp
@@ -152,7 +167,11 @@ fun NativeNotesScreen(
                                 item(key = "alerts") {
                                     Column(verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
                                         if (note.id in state.errors) {
-                                            PimStatusBanner("保存失败，当前更改尚未可靠落盘。请检查存储空间后重试。", PimStatusTone.Error)
+                                            PimStatusBanner(
+                                                "保存失败：${saveProblem ?: "本机文件写入失败"}。" +
+                                                    "当前更改尚未可靠落盘；上次成功保存的内容仍保留。",
+                                                PimStatusTone.Error,
+                                            )
                                             TextButton(onClick = { onRetry(note.id) }) { Text("重试本地保存") }
                                         }
                                         when (state.historyUnavailable[note.id]) {
@@ -167,8 +186,20 @@ fun NativeNotesScreen(
                                             null -> Unit
                                         }
                                         recording.problem?.takeIf { ownSession != null }?.let { PimStatusBanner(it.message, PimStatusTone.Error) }
-                                        if (ownActive && !notificationsVisible) PimStatusBanner("系统通知权限或录音渠道已关闭，后台录音状态可能不可见。", PimStatusTone.Warning)
-                                        if (recording.active && !ownActive) PimStatusBanner("另一篇笔记正在录音，本页编辑不会改变录音归属。", PimStatusTone.Info)
+                                        if (ownActive && !recordingPermissions.notificationsReady) {
+                                            PimStatusBanner("系统通知权限、总开关或录音渠道已关闭，后台录音状态可能不可见。", PimStatusTone.Warning)
+                                        }
+                                        if (activeOtherSession != null) {
+                                            PimStatusBanner("《${activeOtherTitle ?: "另一篇笔记"}》正在录音。本页编辑不会改变录音归属，也不会开始第二段录音。", PimStatusTone.Info)
+                                        }
+                                        if (!ownActive && !recording.active && !recordingPermissions.canStart) {
+                                            RecordingPermissionNotice(
+                                                permissions = recordingPermissions,
+                                                requestEnabled = saved,
+                                                onRequest = { afterInput { onRequestRecordingPermissions() } },
+                                                onOpenSettings = onOpenRecordingSettings,
+                                            )
+                                        }
                                         if (materials.loadFailed) PimStatusBanner("材料版本暂时无法读取，原文件保留；请重新打开页面。", PimStatusTone.Warning)
                                          if (editor.reviewIds.isNotEmpty()) {
                                              PimStatusBanner("有正文需要核对，确认后才能结束、导出或离开本篇。录音仍独立进行。", PimStatusTone.Warning)
@@ -205,9 +236,7 @@ fun NativeNotesScreen(
                                     }
                                 }
                                 item(key = "document-end") {
-                                    Text(if (preview) "原始笔记 · 预览" else "正文支持 Markdown · 右下角插入照片与手写",
-                                        Modifier.padding(vertical = d.spaceLarge), style = MaterialTheme.typography.bodySmall,
-                                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                                    NoteDocumentEnd(preview)
                                 }
                             }
                         }
@@ -215,11 +244,8 @@ fun NativeNotesScreen(
                     NoteEditorTopBar(saved, note.id in state.errors, busy || committing, preview,
                         onBack = { afterInput { onOpen(null) } },
                         onSaveStatus = {
-                            if (note.id in state.errors) onRetry(note.id)
-                            else if (editor.reviewIds.isNotEmpty()) {
-                                val index = note.blocks.indexOfFirst { it.string("id") in editor.reviewIds }
-                                if (index >= 0) scope.launch { list.scrollToItem(index + 2) }
-                            } else { leaveInput(); showAbout = true }
+                            leaveInput()
+                            showSaveStatus = true
                         },
                         onPreview = { afterInput { preview = !preview } }, onFinish = { afterInput { confirmFinish = true } },
                         onMaterials = { leaveInput(); showMaterials = true }, onRecordings = { leaveInput(); showRecordings = true },
@@ -229,9 +255,36 @@ fun NativeNotesScreen(
                         canRedo = state.editHistory[note.id]?.canRedo == true,
                         onUndo = { afterInput { onUndo(note.id) } },
                         onRedo = { afterInput { onRedo(note.id) } })
-                    NoteEditorDock(recording, ownActive, saved && !busy && !committing && !recording.active && !recording.preparing,
+                    if (showSaveStatus) NoteSaveStatusDialog(
+                        state = noteSaveState(
+                            saved = saved,
+                            saveFailed = note.id in state.errors,
+                            needsReview = editor.reviewIds.isNotEmpty(),
+                        ),
+                        saveProblem = saveProblem,
+                        latestUpload = latestUpload,
+                        onRetrySave = {
+                            showSaveStatus = false
+                            onRetry(note.id)
+                        },
+                        onReview = {
+                            showSaveStatus = false
+                            val index = note.blocks.indexOfFirst { it.string("id") in editor.reviewIds }
+                            if (index >= 0) scope.launch { list.scrollToItem(index + 2) }
+                        },
+                        onOpenMaterials = {
+                            showSaveStatus = false
+                            leaveInput()
+                            showMaterials = true
+                        },
+                        onDismiss = { showSaveStatus = false },
+                    )
+                    NoteEditorDock(recording, ownActive, activeOtherTitle, saved && !busy && !committing && !recording.preparing,
                         !busy && !committing && !preview && lastMarkdown != null,
-                        onRecord = { afterInput { onRecord(it.id) } }, onPauseResume = onPauseResume,
+                        onRecord = {
+                            if (activeOtherSession != null) showRecordingConflict = true
+                            else afterInput { onRecord(it.id) }
+                        }, onPauseResume = onPauseResume,
                         onRecordings = { leaveInput(); showRecordings = true },
                         onPhoto = { capture -> afterInput { current -> onInsertPhoto(current.id, editor.insertion(current), capture) } },
                         onInk = { afterInput { current -> onChange(current.id) { it.insert(editor.insertion(current), inkBlock(d.noteDefaultInkWidth.value)) } } },
@@ -239,6 +292,15 @@ fun NativeNotesScreen(
                     if (showTextTools) NoteTextToolbar(editor, Modifier.align(Alignment.BottomCenter)
                         .padding(horizontal = d.spaceLarge).padding(bottom = d.noteDockClearance))
                 }
+                if (showRecordingConflict && activeOtherSession != null) ActiveRecordingConflictDialog(
+                    title = activeOtherTitle ?: "另一篇笔记",
+                    canOpenRecording = activeOtherNoteId != null,
+                    onOpenRecording = {
+                        showRecordingConflict = false
+                        activeOtherNoteId?.let { id -> afterInput { onOpen(id) } }
+                    },
+                    onContinueEditing = { showRecordingConflict = false },
+                )
                 if (confirmFinish) AlertDialog(onDismissRequest = { confirmFinish = false },
                     title = { Text("结束这次记录？") },
                     text = { Text("本篇录音会停止，笔记与全部录音会固定为一个本机版本。之后仍可继续编辑和补录。\n\n如已对当前账号和服务器开启持续授权，完整材料会自动上传；否则只保存在本机。不会自动发起付费转写或 AI 分析。") },

@@ -62,8 +62,9 @@ class NativeNotesExperienceTest {
         assertTrue("The document must receive most vertical space, even on a compact phone", document.height >= root.height * .70f)
         assertDockBounds()
         evidence("editor")
-        compose.onNodeWithTag("note-document").performScrollToNode(hasText("正文支持 Markdown · 右下角插入照片与手写"))
-        val end = compose.onNodeWithText("正文支持 Markdown · 右下角插入照片与手写").fetchSemanticsNode().boundsInRoot
+        compose.onNodeWithTag("note-document").performScrollToNode(hasTestTag("note-document-end"))
+        assertTrue(compose.onAllNodes(hasText("正文支持 Markdown · 右下角插入照片与手写")).fetchSemanticsNodes().isEmpty())
+        val end = compose.onNodeWithTag("note-document-end").fetchSemanticsNode().boundsInRoot
         val dock = compose.onNodeWithTag("note-dock").fetchSemanticsNode().boundsInRoot
         assertTrue("The final content must scroll above the floating controls", end.bottom <= dock.top)
         compose.onNodeWithTag("note-finish").assertIsDisplayed()

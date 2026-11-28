@@ -45,6 +45,9 @@ internal fun NoteLibraryScreen(
     val d = PimTheme.dimensions
     var search by rememberSaveable { mutableStateOf("") }
     var showMore by rememberSaveable { mutableStateOf(false) }
+    var showTopMore by rememberSaveable { mutableStateOf(false) }
+    var showUploadHistory by rememberSaveable { mutableStateOf(false) }
+    var uploadHistoryNoteId by rememberSaveable { mutableStateOf<String?>(null) }
     var cloudBusyId by rememberSaveable { mutableStateOf<String?>(null) }
     var cloudRequestStarted by remember { mutableStateOf(false) }
     LaunchedEffect(busy, cloudBusyId) {
@@ -62,19 +65,38 @@ internal fun NoteLibraryScreen(
         ) {
             item {
                 Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
-                    if (onExit != null) IconButton(onClick = onExit) { Icon(Icons.Default.ArrowBack, "返回应用") }
+                    if (onExit != null) {
+                        IconButton(onClick = onExit) { Icon(Icons.Default.ArrowBack, "返回应用") }
+                    }
                     Spacer(Modifier.weight(1f))
-                    Text("本机 · 离线记录", style = MaterialTheme.typography.labelMedium,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    Box {
+                        IconButton(
+                            onClick = { showTopMore = true },
+                            modifier = Modifier.testTag("notes-top-more"),
+                        ) { Icon(Icons.Default.MoreHoriz, "更多") }
+                        DropdownMenu(expanded = showTopMore, onDismissRequest = { showTopMore = false }) {
+                            DropdownMenuItem(
+                                text = {
+                                    Text(
+                                        when {
+                                            uploads.loadFailed -> "上传记录 · 读取失败"
+                                            uploads.jobs.isNotEmpty() -> "上传记录 · ${uploads.jobs.size} 个"
+                                            else -> "上传记录"
+                                        },
+                                    )
+                                },
+                                leadingIcon = { Icon(Icons.Default.FileUpload, null) },
+                                modifier = Modifier.testTag("notes-upload-history-open"),
+                                onClick = {
+                                    showTopMore = false
+                                    uploadHistoryNoteId = null
+                                    showUploadHistory = true
+                                },
+                            )
+                        }
+                    }
                 }
-                Column(Modifier.padding(vertical = d.spaceLarge)) {
-                    Text("笔记", style = MaterialTheme.typography.headlineLarge)
-                    Spacer(Modifier.height(d.spaceSmall))
-                    Text(if (state.entries.isEmpty()) "留住课堂、会议与每一个想法" else "${state.entries.size} 篇记录，保存在这台设备",
-                        style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
-                }
-                PimStatusBanner("笔记和原始材料保存在本机。上传只保存固定材料；逐段转写需单独核对 ASR 目标并明确同意。",
-                    PimStatusTone.Info)
+                Spacer(Modifier.height(d.spaceSmall))
                 if (state.importQuarantine.retainedCount > 0) {
                     val retainedMiB = (state.importQuarantine.retainedBytes + 1024 * 1024 - 1) / (1024 * 1024)
                     PimStatusBanner(
@@ -89,20 +111,20 @@ internal fun NoteLibraryScreen(
                 OutlinedTextField(search, { search = it }, label = { Text("搜索本机笔记") }, singleLine = true,
                     leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth().testTag("notes-search"))
             }
-            if (uploads.jobs.isNotEmpty() || uploads.loadFailed) item {
-                NoteUploadJobs(uploads, currentTarget, onResumeUpload, onPauseUpload, showProcessingStatuses = false)
-            }
             if (state.loadFailed) item { PimStatusBanner("本地记录读取失败，原文件保留。请重新打开页面。", PimStatusTone.Error) }
             if (selectedId != null) item { PimStatusBanner("该记录仍在加载或无法读取，不会用空白文档覆盖它。", PimStatusTone.Warning) }
             recording.session?.takeIf { it.active && it.noteId != null }?.let { session ->
+                val title = session.noteId?.let { noteDisplayTitle(state, it) } ?: "未命名记录"
                 item {
                     OutlinedCard(onClick = { onOpen(session.noteId) }, modifier = Modifier.fillMaxWidth()) {
                         Row(Modifier.padding(d.spaceLarge), verticalAlignment = Alignment.CenterVertically,
                             horizontalArrangement = Arrangement.spacedBy(d.spaceMedium)) {
                             Icon(Icons.Default.GraphicEq, null, tint = MaterialTheme.colorScheme.primary)
                             Column(Modifier.weight(1f)) {
-                                Text("返回正在录音的笔记", style = MaterialTheme.typography.titleSmall)
-                                Text("离开编辑页不会结束录音", style = MaterialTheme.typography.bodySmall)
+                                Text("正在录音：$title", style = MaterialTheme.typography.titleSmall, maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis)
+                                Text("点按返回原笔记，或继续在列表中浏览；离开编辑页不会结束录音",
+                                    style = MaterialTheme.typography.bodySmall)
                             }
                             Icon(Icons.Default.ChevronRight, null)
                         }
@@ -126,6 +148,7 @@ internal fun NoteLibraryScreen(
             if (state.loaded && entries.isEmpty() && state.entries.isNotEmpty()) item { Text("没有匹配的本机笔记", style = MaterialTheme.typography.bodyMedium) }
             items(entries, key = { it.id }) { entry ->
                 val note = state.documents[entry.id]
+                val uploadNotice = noteUploadNotice(latestUploadJobForNote(uploads.jobs, entry.id))
                 OutlinedCard(
                     onClick = { onOpen(entry.id) }, enabled = !entry.damaged && !busy,
                     modifier = Modifier.fillMaxWidth().testTag("note-open-${entry.id}"),
@@ -151,6 +174,30 @@ internal fun NoteLibraryScreen(
                             if (inks > 0) append(" · $inks 张手写")
                         }, style = MaterialTheme.typography.bodySmall,
                             color = if (entry.damaged) MaterialTheme.colorScheme.error else MaterialTheme.colorScheme.onSurfaceVariant)
+                        if (uploadNotice != null) {
+                            Row(Modifier.fillMaxWidth(), verticalAlignment = Alignment.CenterVertically) {
+                                Text(
+                                    uploadNotice.label,
+                                    Modifier.weight(1f).testTag("note-upload-notice-${entry.id}"),
+                                    style = MaterialTheme.typography.labelMedium,
+                                    color = when (uploadNotice.tone) {
+                                        NoteUploadNoticeTone.Error -> MaterialTheme.colorScheme.error
+                                        NoteUploadNoticeTone.Warning -> PimTheme.statusColors.onWarningContainer
+                                        NoteUploadNoticeTone.Info -> MaterialTheme.colorScheme.onSurfaceVariant
+                                    },
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis,
+                                )
+                                TextButton(
+                                    onClick = {
+                                        uploadHistoryNoteId = entry.id
+                                        showUploadHistory = true
+                                    },
+                                    enabled = !busy,
+                                    modifier = Modifier.testTag("note-upload-issue-${entry.id}"),
+                                ) { Text("查看上传记录") }
+                            }
+                        }
                     }
                 }
             }
@@ -223,8 +270,25 @@ internal fun NoteLibraryScreen(
             containerColor = MaterialTheme.colorScheme.primary, contentColor = MaterialTheme.colorScheme.onPrimary
         )
     }
+    if (showUploadHistory) {
+        NoteUploadHistoryDialog(
+            state = uploads,
+            target = currentTarget,
+            focusNoteId = uploadHistoryNoteId,
+            focusTitle = uploadHistoryNoteId?.let { noteDisplayTitle(state, it) },
+            onResume = onResumeUpload,
+            onPause = onPauseUpload,
+            onShowAll = { uploadHistoryNoteId = null },
+            onDismiss = { showUploadHistory = false },
+        )
+    }
 }
 
 internal fun noteDate(note: NoteDocument): String = (note.source["createdAtMillis"] as? JsonPrimitive)?.longOrNull?.let {
     SimpleDateFormat("M月d日 HH:mm", Locale.SIMPLIFIED_CHINESE).format(Date(it))
 }.orEmpty()
+
+internal fun noteDisplayTitle(state: NotesState, id: String): String =
+    state.documents[id]?.title?.takeIf { it.isNotBlank() }
+        ?: state.entries.firstOrNull { it.id == id }?.title?.takeIf { it.isNotBlank() }
+        ?: "未命名记录"

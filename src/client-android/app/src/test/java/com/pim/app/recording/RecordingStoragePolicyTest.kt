@@ -2,7 +2,6 @@ package com.pim.app.recording
 
 import android.Manifest
 import android.app.Activity
-import android.os.Build
 import com.pim.app.TestPimApp
 import java.io.IOException
 import org.junit.Assert.assertEquals
@@ -34,8 +33,10 @@ class RecordingStoragePolicyTest {
 
     @Test fun lowSpaceDoesNotStartTheRecordingService() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-        shadowOf(activity.application).grantPermissions(Manifest.permission.RECORD_AUDIO)
-        if (Build.VERSION.SDK_INT >= 33) shadowOf(activity.application).grantPermissions(Manifest.permission.POST_NOTIFICATIONS)
+        shadowOf(activity.application).grantPermissions(
+            Manifest.permission.RECORD_AUDIO,
+            Manifest.permission.POST_NOTIFICATIONS,
+        )
 
         assertEquals(
             RecordingProblem.Storage,

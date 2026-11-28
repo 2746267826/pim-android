@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 c33efcb7bafd64d00a39eb0d68b150fe5f4f11e934026163ffc2cfaf72cd2bc8)
+//   契约快照 : contract/openapi.json (sha256 5f5bffc67f26d70a15507d093d526c62c27270f4627a5feaba97b79be6eb73e7)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -268,6 +268,8 @@ data class CreateCalendarRequest(
 /** 契约 `components.schemas.CreateEventRequest`（request）。 */
 @Serializable
 data class CreateEventRequest(
+    val allDayEndDateExclusive: String? = null,
+    val allDayStartDate: String? = null,
     val attachmentReferences: List<EventAttachmentReferenceDto>? = null,
     val attendees: List<EventAttendeeDto>? = null,
     val calendarId: String,
@@ -589,12 +591,17 @@ data class EventPersonDto(
 /** 契约 `components.schemas.EventResponse`（response）。 */
 @Serializable
 data class EventResponse(
+    val allDayEndDateExclusive: String? = null,
+    val allDayStartDate: String? = null,
     val attachmentReferences: List<EventAttachmentReferenceDto>? = null,
     val attendees: List<EventAttendeeDto>? = null,
     val calendarId: String,
     val categories: List<String>? = null,
     val description: String? = null,
     val descriptionFormat: String? = null,
+    val displayLocalEnd: String? = null,
+    val displayLocalStart: String? = null,
+    val displayTimeZoneId: String? = null,
     val dtEnd: String,
     val dtStart: String,
     val exDatesJson: String? = null,
@@ -608,6 +615,8 @@ data class EventResponse(
     val isOnlineMeeting: Boolean? = null,
     val isReminderOn: Boolean? = null,
     val isSeriesMaster: Boolean? = null,
+    val localEnd: String? = null,
+    val localStart: String? = null,
     val location: String? = null,
     val onlineMeetingProvider: String? = null,
     val onlineMeetingUrl: String? = null,
@@ -630,6 +639,9 @@ data class EventResponse(
     val sourceUid: String? = null,
     val status: String,
     val timeZoneId: String? = null,
+    val timeZoneIdType: String? = null,
+    val timeZoneResolution: String? = null,
+    val timeZoneSourceType: String? = null,
     val title: String,
     val uid: String,
 )
@@ -658,6 +670,31 @@ data class EventResponsePagedResult(
 data class EventResponsePagedResultApiResponse(
     val code: Int,
     val data: EventResponsePagedResult? = null,
+    val message: String,
+    val timestamp: String,
+)
+
+/** 契约 `components.schemas.GlobalSearchResult`（response）。 */
+@Serializable
+data class GlobalSearchResult(
+    val generatedAt: String,
+    val groups: List<SearchGroup>,
+    val items: List<SearchResult>,
+    val match: String,
+    val page: Int,
+    val pageSize: Int,
+    val query: String,
+    val scope: String,
+    val sort: String,
+    val totalCount: Int,
+    val totalPages: Int,
+)
+
+/** 契约 `components.schemas.GlobalSearchResultApiResponse`（response）。 */
+@Serializable
+data class GlobalSearchResultApiResponse(
+    val code: Int,
+    val data: GlobalSearchResult? = null,
     val message: String,
     val timestamp: String,
 )
@@ -2036,8 +2073,11 @@ data class NoteTaskSuggestionDto(
     val description: String? = null,
     val dismissedAt: String? = null,
     val due: String? = null,
+    val end: String? = null,
+    val eventId: String? = null,
     val extractionId: String,
     val id: String,
+    val kind: NoteTaskSuggestionKindDto,
     val noteId: String,
     val ordinal: Int,
     val priority: Int,
@@ -2046,9 +2086,11 @@ data class NoteTaskSuggestionDto(
     val sourceGenerationTaskId: String? = null,
     val sourceInputSha256: String,
     val sourceManifestSha256: String,
+    val start: String? = null,
     val status: NoteTaskSuggestionStatusDto,
     val taskBookId: String? = null,
     val taskId: String? = null,
+    val timeZoneId: String? = null,
     val title: String,
     val updatedAt: String,
     val versionId: String,
@@ -2115,6 +2157,18 @@ enum class NoteTaskSuggestionExtractionStatusDto {
     SUCCEEDED,
     @SerialName("Failed")
     FAILED,
+}
+
+/** 契约 `components.schemas.NoteTaskSuggestionKindDto`（response）。 */
+/**
+ * 契约枚举 `NoteTaskSuggestionKindDto`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class NoteTaskSuggestionKindDto {
+    @SerialName("Task")
+    TASK,
+    @SerialName("Event")
+    EVENT,
 }
 
 /** 契约 `components.schemas.NoteTaskSuggestionListDto`（response）。 */
@@ -2511,34 +2565,60 @@ data class SaveNoteDerivedManualRevisionRequest(
     val revisionId: String,
 )
 
+/** 契约 `components.schemas.SearchEventOccurrence`（response）。 */
+@Serializable
+data class SearchEventOccurrence(
+    val eventId: String,
+    val recurrenceId: String? = null,
+    val seriesMasterId: String? = null,
+    val startsAt: String,
+)
+
+/** 契约 `components.schemas.SearchFieldLocation`（response）。 */
+@Serializable
+data class SearchFieldLocation(
+    val field: String,
+    val index: Int? = null,
+    val label: String,
+)
+
+/** 契约 `components.schemas.SearchGroup`（response）。 */
+@Serializable
+data class SearchGroup(
+    val domain: String,
+    val failure: SearchGroupFailure? = null,
+    val items: List<SearchResult>,
+    val label: String,
+    val totalCount: Int,
+)
+
+/** 契约 `components.schemas.SearchGroupFailure`（response）。 */
+@Serializable
+data class SearchGroupFailure(
+    val code: String,
+    val correlationId: String,
+    val message: String,
+    val retryable: Boolean,
+)
+
 /** 契约 `components.schemas.SearchResult`（response）。 */
 @Serializable
 data class SearchResult(
+    val createdAt: String? = null,
+    val domain: String? = null,
+    val eventOccurrence: SearchEventOccurrence? = null,
+    val fieldLocations: List<SearchFieldLocation>? = null,
     val id: String,
+    val matchedFields: List<String>? = null,
     val moduleName: String,
+    val score: Double? = null,
     val snippet: String,
+    val sortKey: String? = null,
+    val sourceState: String? = null,
     val title: String,
     val type: String,
+    val updatedAt: String? = null,
     val url: String,
-)
-
-/** 契约 `components.schemas.SearchResultPagedResult`（response）。 */
-@Serializable
-data class SearchResultPagedResult(
-    val items: List<SearchResult>,
-    val page: Int,
-    val pageSize: Int,
-    val totalCount: Int,
-    val totalPages: Int,
-)
-
-/** 契约 `components.schemas.SearchResultPagedResultApiResponse`（response）。 */
-@Serializable
-data class SearchResultPagedResultApiResponse(
-    val code: Int,
-    val data: SearchResultPagedResult? = null,
-    val message: String,
-    val timestamp: String,
 )
 
 /** 契约 `components.schemas.SelectNoteDerivedVersionRequest`（request）。 */
@@ -2859,6 +2939,8 @@ data class TypedDetailQueryResponseApiResponse(
 /** 契约 `components.schemas.UpdateEventRequest`（request）。 */
 @Serializable
 data class UpdateEventRequest(
+    val allDayEndDateExclusive: String? = null,
+    val allDayStartDate: String? = null,
     val attachmentReferences: List<EventAttachmentReferenceDto>? = null,
     val attendees: List<EventAttendeeDto>? = null,
     val calendarId: String,
@@ -2896,9 +2978,12 @@ data class UpdateNoteTaskSuggestionRequest(
     val calendarId: String? = null,
     val description: String? = null,
     val due: String? = null,
+    val end: String? = null,
     val expectedRevision: String,
     val priority: Int,
+    val start: String? = null,
     val taskBookId: String? = null,
+    val timeZoneId: String? = null,
     val title: String,
 )
 

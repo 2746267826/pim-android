@@ -2,6 +2,8 @@ package com.pim.app.notes
 
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Column
+import androidx.compose.foundation.layout.ExperimentalLayoutApi
+import androidx.compose.foundation.layout.FlowRow
 import androidx.compose.foundation.layout.PaddingValues
 import androidx.compose.foundation.layout.Row
 import androidx.compose.foundation.layout.fillMaxSize
@@ -40,6 +42,7 @@ import androidx.compose.ui.platform.LocalLifecycleOwner
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import com.pim.core.contract.NoteTaskSuggestionExtractionStatusDto
+import com.pim.core.contract.NoteTaskSuggestionKindDto
 import com.pim.core.contract.NoteTaskSuggestionStatusDto
 
 data class NoteTaskSuggestionsActions(
@@ -48,8 +51,8 @@ data class NoteTaskSuggestionsActions(
     val revalidate: () -> Unit = {},
     val extract: (NoteTaskSuggestionActionScope, NoteTaskSuggestionDestination, Boolean) -> Unit =
         { _, _, _ -> },
-    val edit: (NoteTaskSuggestionActionScope, String, String, String, Int, String) -> Unit =
-        { _, _, _, _, _, _ -> },
+    val edit: (NoteTaskSuggestionActionScope, String, NoteTaskSuggestionEdit) -> Unit =
+        { _, _, _ -> },
     val save: (NoteTaskSuggestionActionScope, String) -> Unit = { _, _ -> },
     val discard: (NoteTaskSuggestionActionScope, String) -> Unit = { _, _ -> },
     val rebase: (NoteTaskSuggestionActionScope, String) -> Unit = { _, _ -> },
@@ -95,7 +98,7 @@ fun NoteTaskSuggestionsScreen(
         Column {
             Row(Modifier.fillMaxWidth().padding(16.dp), horizontalArrangement = Arrangement.SpaceBetween) {
                 Column(Modifier.weight(1f)) {
-                    Text("任务建议", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
+                    Text("任务与日程建议", style = MaterialTheme.typography.headlineSmall, fontWeight = FontWeight.SemiBold)
                     Text("固定来源 · ${source?.title?.ifBlank { "未命名笔记" } ?: "未选择版本"}")
                     Text("版本 ${source?.versionId?.take(8).orEmpty()} · 材料 ${source?.materialVersionId?.take(8).orEmpty()}")
                 }
@@ -176,7 +179,7 @@ fun NoteTaskSuggestionsScreen(
                                     (!state.frozenExtraction && acknowledgeCharge || state.frozenExtraction),
                                 modifier = Modifier.fillMaxWidth().testTag("task-suggestions-extract"),
                             ) {
-                                Text(if (state.frozenExtraction) "核对 / 重试原提取请求" else "提取任务建议")
+                                Text(if (state.frozenExtraction) "核对 / 重试原提取请求" else "提取任务与日程建议")
                             }
                         }
                     }
@@ -196,8 +199,8 @@ fun NoteTaskSuggestionsScreen(
     pendingDismissId?.takeIf { state.actionScope != null && !state.loading }?.let { id ->
         AlertDialog(
             onDismissRequest = { pendingDismissId = null },
-            title = { Text("放弃此任务建议？") },
-            text = { Text("服务端建议会标记为已放弃。请先保存或明确删除未同步的本机修订。") },
+            title = { Text("放弃此建议？") },
+            text = { Text("服务端建议会标记为已放弃，不会创建任务或日程。请先保存或明确删除未同步的本机修订。") },
             confirmButton = {
                 TextButton(
                     onClick = {
@@ -212,13 +215,27 @@ fun NoteTaskSuggestionsScreen(
     }
     pendingConfirmId?.takeIf { state.actionScope != null && !state.loading }?.let { id ->
         val item = state.items.firstOrNull { it.remote.id == id }
+        val isEvent = item?.kind == NoteTaskSuggestionKindDto.EVENT
         AlertDialog(
             onDismissRequest = { pendingConfirmId = null },
-            title = { Text(if (item?.confirmationPending == true) "重试同一创建请求？" else "创建日历任务？") },
+            title = {
+                Text(
+                    if (item?.confirmationPending == true) "重试同一创建请求？"
+                    else if (isEvent) "创建日历日程？" else "创建日历任务？",
+                )
+            },
             text = {
                 Text(
                     item?.let {
-                        "将使用当前保存版本创建任务：${it.title}\n优先级 ${it.priority} · 截止 ${it.due.ifBlank { "未设置" }}。" +
+                        val summary = if (isEvent) {
+                            "将使用当前保存版本创建日程：${it.title}\n" +
+                                "时区 ${it.remote.timeZoneId?.ifBlank { "未设置" } ?: "未设置"} · " +
+                                "${formatEventRange(it.remote.start, it.remote.end, it.remote.timeZoneId)}。"
+                        } else {
+                            "将使用当前保存版本创建任务：${it.title}\n" +
+                                "优先级 ${it.priority} · 截止 ${it.due.ifBlank { "未设置" }}。"
+                        }
+                        summary +
                             if (it.confirmationPending) "\n未确认请求会复用原 requestId，不创建新的请求身份。" else ""
                     } ?: "该建议已变化；请刷新后核对。",
                 )
@@ -230,7 +247,7 @@ fun NoteTaskSuggestionsScreen(
                         state.actionScope?.let { scope -> actions.confirm(scope, id) }
                     },
                     enabled = state.actionScope != null && item != null && !item.dirty &&
-                        !item.hasConflict && !item.confirmationBlocked,
+                        !item.hasConflict && !item.confirmationBlocked && item.eventReady,
                     modifier = Modifier.testTag("task-suggestion-confirm-dialog-$id"),
                 ) { Text("确认创建") }
             },
@@ -281,6 +298,7 @@ private fun destinationIdentity(destination: NoteTaskSuggestionDestination): Str
 private fun NoteTaskSuggestionDestination.destinationLabel(): String =
     "$displayName · $model · 修订 ${modelRevision.take(8)}"
 
+@OptIn(ExperimentalLayoutApi::class)
 @Composable
 private fun NoteTaskSuggestionCard(
     item: NoteTaskSuggestionItem,
@@ -291,10 +309,14 @@ private fun NoteTaskSuggestionCard(
 ) {
     val remote = item.remote
     val draft = item.draft
+    val isEvent = item.kind == NoteTaskSuggestionKindDto.EVENT
     var title by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(item.title) }
     var description by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(item.description) }
     var priority by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(item.priority) }
     var due by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(item.due) }
+    var start by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(item.start) }
+    var end by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(item.end) }
+    var timeZoneId by rememberSaveable(scope, remote.id, remote.revision) { mutableStateOf(item.timeZoneId) }
     var lastDraftRevision by remember(scope, remote.id, remote.revision) {
         mutableStateOf(item.draft?.expectedRevision)
     }
@@ -307,7 +329,10 @@ private fun NoteTaskSuggestionCard(
                 title = remote.title
                 description = remote.description.orEmpty()
                 priority = remote.priority
-                due = suggestionDueInput(remote.due)
+                due = if (isEvent) "" else suggestionDueInput(remote.due)
+                start = if (isEvent) suggestionEventInput(remote.start, remote.timeZoneId) else ""
+                end = if (isEvent) suggestionEventInput(remote.end, remote.timeZoneId) else ""
+                timeZoneId = if (isEvent) remote.timeZoneId.orEmpty() else ""
                 locallyEdited = false
             }
             currentDraft != null && lastDraftRevision == null && !locallyEdited -> {
@@ -315,31 +340,72 @@ private fun NoteTaskSuggestionCard(
                 description = currentDraft.description
                 priority = currentDraft.priority
                 due = currentDraft.due
+                start = currentDraft.start
+                end = currentDraft.end
+                timeZoneId = currentDraft.timeZoneId
             }
             currentDraft != null && lastDraftRevision != null && lastDraftRevision != currentRevision -> {
                 title = currentDraft.title
                 description = currentDraft.description
                 priority = currentDraft.priority
                 due = currentDraft.due
+                start = currentDraft.start
+                end = currentDraft.end
+                timeZoneId = currentDraft.timeZoneId
             }
         }
         lastDraftRevision = currentRevision
     }
+    val currentEdit = NoteTaskSuggestionEdit(
+        title = title,
+        description = description,
+        priority = priority,
+        due = if (isEvent) "" else due,
+        start = if (isEvent) start else "",
+        end = if (isEvent) end else "",
+        timeZoneId = if (isEvent) timeZoneId else "",
+    )
+    fun emitEdit(edit: NoteTaskSuggestionEdit) {
+        scope?.let { actions.edit(it, remote.id, edit) }
+    }
+
     val editable = remote.status == NoteTaskSuggestionStatusDto.DRAFT && scope != null
     val conflicted = item.hasConflict
     OutlinedCard(Modifier.fillMaxWidth().testTag("task-suggestion-${remote.id}")) {
         Column(Modifier.padding(16.dp), verticalArrangement = Arrangement.spacedBy(8.dp)) {
-            Text("建议 ${remote.ordinal + 1} · ${remote.status}", style = MaterialTheme.typography.labelLarge)
+            Text(
+                "建议 ${remote.ordinal + 1} · ${remote.status} · ${if (isEvent) "日程" else "任务"}",
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.testTag("task-suggestion-kind-${remote.id}"),
+            )
             Text("服务端修订 ${remote.revision.take(8)} · 来源摘要 ${remote.sourceContentSha256.take(12)}")
+            if (isEvent) {
+                Text(
+                    "日程时间：${formatEventRange(remote.start, remote.end, remote.timeZoneId)}",
+                    modifier = Modifier.testTag("task-suggestion-range-${remote.id}"),
+                )
+            }
             if (remote.status == NoteTaskSuggestionStatusDto.CONFIRMED) {
-                Text("已确认创建任务 ${remote.taskId?.take(8) ?: "（服务端未提供任务编号）"}")
+                if (isEvent) {
+                    Text("已确认创建日程 ${remote.eventId?.take(8) ?: "（服务端未提供日程编号）"}")
+                } else {
+                    Text("已确认创建任务 ${remote.taskId?.take(8) ?: "（服务端未提供任务编号）"}")
+                }
             } else if (remote.status == NoteTaskSuggestionStatusDto.DISMISSED) {
                 Text("已放弃的建议只读。")
             } else {
-                OutlinedTextField(title, { title = it; locallyEdited = true; scope?.let { s -> actions.edit(s, remote.id, it, description, priority, due) } },
+                OutlinedTextField(title, {
+                    title = it
+                    locallyEdited = true
+                    emitEdit(currentEdit.copy(title = it))
+                },
                     label = { Text("标题") }, enabled = editable && !item.confirmationPending,
                     modifier = Modifier.fillMaxWidth().testTag("task-suggestion-title-${remote.id}"))
-                OutlinedTextField(description, { description = it; locallyEdited = true; scope?.let { s -> actions.edit(s, remote.id, title, it, priority, due) } },
+                OutlinedTextField(description, {
+                    description = it
+                    locallyEdited = true
+                    emitEdit(currentEdit.copy(description = it))
+                },
                     label = { Text("说明") }, enabled = editable && !item.confirmationPending,
                     modifier = Modifier.fillMaxWidth().testTag("task-suggestion-description-${remote.id}"))
                 Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
@@ -347,13 +413,64 @@ private fun NoteTaskSuggestionCard(
                         it.toIntOrNull()?.takeIf { value -> value == 1 || value == 5 || value == 9 }?.let { value ->
                             priority = value
                             locallyEdited = true
-                            scope?.let { s -> actions.edit(s, remote.id, title, description, value, due) }
+                            emitEdit(currentEdit.copy(priority = value))
                         }
                     }, label = { Text("优先级 1 / 5 / 9") }, enabled = editable && !item.confirmationPending,
                         modifier = Modifier.weight(1f).testTag("task-suggestion-priority-${remote.id}"))
-                    OutlinedTextField(due, { due = it; locallyEdited = true; scope?.let { s -> actions.edit(s, remote.id, title, description, priority, it) } },
-                        label = { Text("截止时间（本地）") }, enabled = editable && !item.confirmationPending,
-                        modifier = Modifier.weight(2f).testTag("task-suggestion-due-${remote.id}"))
+                    if (isEvent) {
+                        OutlinedTextField(timeZoneId, {
+                            val nextStart = if (start.isBlank()) {
+                                suggestionEventInput(remote.start, it)
+                            } else {
+                                start
+                            }
+                            val nextEnd = if (end.isBlank()) {
+                                suggestionEventInput(remote.end, it)
+                            } else {
+                                end
+                            }
+                            timeZoneId = it
+                            start = nextStart
+                            end = nextEnd
+                            locallyEdited = true
+                            emitEdit(currentEdit.copy(
+                                start = nextStart,
+                                end = nextEnd,
+                                timeZoneId = it,
+                            ))
+                        }, label = { Text("IANA 时区") }, enabled = editable && !item.confirmationPending,
+                            modifier = Modifier.weight(2f).testTag("task-suggestion-timezone-${remote.id}"))
+                    } else {
+                        OutlinedTextField(due, {
+                            due = it
+                            locallyEdited = true
+                            emitEdit(currentEdit.copy(due = it))
+                        }, label = { Text("截止时间（本地）") }, enabled = editable && !item.confirmationPending,
+                            modifier = Modifier.weight(2f).testTag("task-suggestion-due-${remote.id}"))
+                    }
+                }
+                if (isEvent) {
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        OutlinedTextField(start, {
+                            start = it
+                            locallyEdited = true
+                            emitEdit(currentEdit.copy(start = it))
+                        }, label = { Text("开始时间") }, enabled = editable && !item.confirmationPending,
+                            modifier = Modifier.weight(1f).testTag("task-suggestion-start-${remote.id}"))
+                        OutlinedTextField(end, {
+                            end = it
+                            locallyEdited = true
+                            emitEdit(currentEdit.copy(end = it))
+                        }, label = { Text("结束时间") }, enabled = editable && !item.confirmationPending,
+                            modifier = Modifier.weight(1f).testTag("task-suggestion-end-${remote.id}"))
+                    }
+                    item.eventHint?.let { hint ->
+                        Text(
+                            hint,
+                            color = MaterialTheme.colorScheme.error,
+                            modifier = Modifier.testTag("task-suggestion-event-hint-${remote.id}"),
+                        )
+                    }
                 }
                 if (conflicted) {
                     Text("发现服务端修订冲突。双方内容均保留；只有明确更新 CAS 基线后才能保存。")
@@ -366,7 +483,10 @@ private fun NoteTaskSuggestionCard(
                     color = MaterialTheme.colorScheme.error,
                 )
                 if (draft?.dirty == true) Text("本机修订尚未保存；请先保存或明确放弃，不能直接放弃服务端建议。")
-                Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                FlowRow(
+                    horizontalArrangement = Arrangement.spacedBy(8.dp),
+                    verticalArrangement = Arrangement.spacedBy(8.dp),
+                ) {
                     Button(onClick = { scope?.let { s -> actions.save(s, remote.id) } }, enabled = scope != null && draft?.dirty == true && !conflicted &&
                         !item.confirmationPending, modifier = Modifier.testTag("task-suggestion-save-${remote.id}")) {
                         Text("保存到服务器")
@@ -376,8 +496,12 @@ private fun NoteTaskSuggestionCard(
                     TextButton(onClick = onDismiss, enabled = scope != null && !item.confirmationPending && !item.dirty,
                         modifier = Modifier.testTag("task-suggestion-dismiss-${remote.id}")) { Text("放弃建议") }
                     Button(onClick = onConfirm, enabled = scope != null && !item.dirty && !conflicted &&
-                        !item.confirmationBlocked, modifier = Modifier.testTag("task-suggestion-confirm-${remote.id}")) {
-                        Text(if (item.confirmationPending) "重试原创建请求" else "确认创建任务")
+                        !item.confirmationBlocked && item.eventReady,
+                        modifier = Modifier.testTag("task-suggestion-confirm-${remote.id}")) {
+                        Text(
+                            if (item.confirmationPending) "重试原创建请求"
+                            else if (isEvent) "确认创建日程" else "确认创建任务",
+                        )
                     }
                 }
             }
@@ -385,7 +509,14 @@ private fun NoteTaskSuggestionCard(
                 Text("服务端状态已变化；未同步的本机修订仍保留，未自动删除。")
                 Text("本机标题：${draft.title}")
                 if (draft.description.isNotBlank()) Text("本机说明：${draft.description}")
-                Text("本机优先级 ${draft.priority} · 截止 ${draft.due.ifBlank { "未设置" }}")
+                if (isEvent) {
+                    Text(
+                        "本机日程 ${draft.timeZoneId.ifBlank { "未设置时区" }} · " +
+                            "开始 ${draft.start.ifBlank { "未设置" }} · 结束 ${draft.end.ifBlank { "未设置" }}",
+                    )
+                } else {
+                    Text("本机优先级 ${draft.priority} · 截止 ${draft.due.ifBlank { "未设置" }}")
+                }
                 TextButton(
                     onClick = { scope?.let { s -> actions.discard(s, remote.id) } },
                     enabled = scope != null && !item.confirmationPending,

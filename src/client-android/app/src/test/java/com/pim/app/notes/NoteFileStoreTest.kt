@@ -115,6 +115,57 @@ class NoteFileStoreTest {
         assertEquals(setOf("note.json", "document.md", NoteFileStore.photoPath(photoBlock), NoteFileStore.inkPath(ink)), files.keys)
     }
 
+    @Test fun exportedPackagePreservesWebD04IdentityStylesAndUnknownFieldsAfterEdit() {
+        val original = NoteDocument.decode(resource("notes/ink-web-d04-v1.json"))
+        val block = original.blocks.single()
+        val resized = inkOf(block).resized(400f, 300f, 600f).withStrokeIdentities()
+        val editedInk = resized.copy(strokes = resized.strokes + InkStroke(
+            points = listOf(
+                InkPoint(350f, 50f, 0.6f, buildJsonObject { put("futurePoint", "new") }),
+            ),
+            width = INK_DEFAULT_WIDTH,
+            color = INK_COLOR_GREEN,
+            id = newNoteId(),
+        ))
+        val edited = original
+            .withTitle("导出前已编辑")
+            .nextRevision()
+            .replaceBlock(block.string("id")) { withInk(it, editedInk) }
+
+        store.save(edited)
+        val packageBytes = ByteArrayOutputStream().also { store.exportDocument(edited, it) }.toByteArray()
+        val files = unzip(packageBytes)
+        val exported = NoteDocument.decode(files.getValue("note.json").toString(Charsets.UTF_8))
+        val exportedBlock = exported.blocks.single()
+        val exportedInk = inkOf(exportedBlock)
+
+        assertEquals(edited, exported)
+        assertEquals("导出前已编辑", exported.title)
+        assertEquals(original.revision + 1, exported.revision)
+        assertEquals(400f, exportedInk.width)
+        assertEquals(3, exportedInk.strokes.map { it.id }.distinct().size)
+        assertEquals(
+            listOf(INK_COLOR_RED, INK_COLOR_BLUE, INK_COLOR_GREEN),
+            exportedInk.strokes.map { it.color },
+        )
+        assertEquals(
+            listOf(INK_WIDTH_THIN, INK_WIDTH_COARSE, INK_DEFAULT_WIDTH),
+            exportedInk.strokes.map { it.width },
+        )
+        assertEquals("keep", exportedInk.strokes[0].extras.string("futureStroke"))
+        assertEquals("keep", exportedInk.strokes[0].points[0].extras.string("futurePoint"))
+        assertEquals("keep", exportedInk.strokes[0].styleExtras.string("futureStyle"))
+        assertEquals(JsonPrimitive(true), exportedInk.extras.getValue("webInkExtension").jsonObject.getValue("keep"))
+        assertEquals("keep", exportedBlock.string("futureBlock"))
+        assertEquals(JsonPrimitive(true), exported.source.getValue("futureRoot").jsonObject.getValue("keep"))
+        assertTrue(files.getValue(NoteFileStore.inkPath(exportedBlock)).isNotEmpty())
+
+        val importedRoot = temp.newFolder("d04-imported-root")
+        val imported = NoteFileStore(importedRoot).importDocument(ByteArrayInputStream(packageBytes))
+        assertEquals(edited.blocks, imported.blocks)
+        assertEquals(0L, imported.revision)
+    }
+
     @Test fun editablePackageImportPreservesBlockOrderVectorIdentitySizeAndMaterialHashes() {
         var note = NoteDocument.create()
         val photoBytes = ByteArrayOutputStream().also { output ->
@@ -356,4 +407,9 @@ class NoteFileStoreTest {
         }
         return files
     }
+
+    private fun resource(path: String): String =
+        checkNotNull(javaClass.classLoader!!.getResourceAsStream(path)) { "Missing test resource: $path" }
+            .bufferedReader(Charsets.UTF_8)
+            .use { it.readText() }
 }

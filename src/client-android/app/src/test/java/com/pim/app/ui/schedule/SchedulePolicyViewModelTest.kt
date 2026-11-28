@@ -71,7 +71,7 @@ class SchedulePolicyViewModelTest {
         api = FakeApiService()
         cacheStore = ScheduleCacheStore(cacheDir, json)
         serverSettings = ServerSettingsStore(context, FakeAuthSessionStore())
-        serverSettings.setBaseUrl("http://test-server:5858/api/v1/")
+        serverSettings.setBaseUrl("https://test-server:5858/api/v1/")
         trackingSettingsStore = TrackingSettingsStore(
             context.getSharedPreferences("tracking-test-" + System.nanoTime(), Context.MODE_PRIVATE)
         )
@@ -493,7 +493,7 @@ class SchedulePolicyViewModelTest {
     fun `refreshIfStale after server URL change fetches new server content`() = runTest {
         val now = System.currentTimeMillis()
 
-        serverSettings.setBaseUrl("http://server-a:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-a:5858/api/v1/")
         api.events = listOf(
             event(
                 id = "from-server-a",
@@ -508,7 +508,7 @@ class SchedulePolicyViewModelTest {
         }
         assertEquals(1, api.callCount)
 
-        serverSettings.setBaseUrl("http://server-b:5858/api/v1/")
+        serverSettings.setBaseUrl("https://server-b:5858/api/v1/")
         api.events = listOf(
             event(
                 id = "from-server-b",
@@ -537,7 +537,7 @@ class SchedulePolicyViewModelTest {
         lastError: String? = null,
         errorKind: ScheduleRefreshErrorKind? = null
     ): ScheduleCacheSnapshot = ScheduleCacheSnapshot(
-        serverIdentity = "http://test-server:5858",
+        serverIdentity = "https://test-server:5858",
         windows = windows,
         freshness = freshness,
         lastAttemptAtMillis = lastAttemptAtMillis,

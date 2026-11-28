@@ -66,7 +66,7 @@ class NativeNoteUploadTest {
         assertEquals(source.files.map { it.sha256 }, remote.upload.files.map { it.sha256 })
         assertEquals(source.files.sumOf { it.sizeBytes }, remote.upload.files.sumOf { it.sizeBytes })
         assertEquals("上传验收固定稿A", Json.parseToJsonElement(remote.inputJson).jsonObject.getValue("note").jsonObject.string("title"))
-        showLibrary()
+        showLibrary(); showUploadHistory()
         compose.onNodeWithTag("note-upload-${job.id}").performScrollTo().assertIsDisplayed(); shot("uploaded-library")
     }
 
@@ -83,7 +83,8 @@ class NativeNoteUploadTest {
         val oldCount = Json.parseToJsonElement(before).jsonObject.getValue("completedCalls").toString().toInt()
         val count = Json.parseToJsonElement(after).jsonObject.getValue("completedCalls").toString().toInt()
         assertEquals(oldCount + 1, count)
-        showLibrary(); compose.onNodeWithTag("note-upload-${job.id}").performScrollTo().assertIsDisplayed(); shot("background-reconciled")
+        showLibrary(); showUploadHistory()
+        compose.onNodeWithTag("note-upload-${job.id}").performScrollTo().assertIsDisplayed(); shot("background-reconciled")
     }
 
     @Test fun accountSwitchPausesOldIntentThenOriginalOwnerCanExplicitlyResumeSameVersion() {
@@ -97,8 +98,11 @@ class NativeNoteUploadTest {
         val bob = freshTokens().snapshot(); assertNotEquals(captured.ownerId, bob.ownerId)
         try { runBlocking { reader().getNoteMaterialVersion(versionId) }; fail("Another account must not read the version") }
         catch (error: retrofit2.HttpException) { assertEquals(404, error.code()) }
-        showLibrary(); compose.onNodeWithTag("note-upload-${captured.id}").performScrollTo(); shot("owner-paused")
+        showLibrary(); showUploadHistory()
+        compose.onNodeWithTag("note-upload-${captured.id}").performScrollTo(); shot("owner-paused")
+        compose.onNodeWithTag("note-upload-history-close").performClick()
         login("notes-qa-alice"); showLibrary()
+        showUploadHistory()
         compose.onNodeWithTag("note-upload-resume-${captured.id}").performScrollTo().performClick()
         val complete = awaitPhase(versionId, NoteUploadPhase.Uploaded)
         assertEquals(captured.id, complete.id); assertEquals(captured.ownerId, complete.ownerId)
@@ -196,6 +200,11 @@ class NativeNoteUploadTest {
         compose.waitForIdle()
     }
     private fun showLibrary() { showMain(); compose.onNodeWithTag("pim-nav-notes").performClick() }
+    private fun showUploadHistory() {
+        compose.onNodeWithTag("notes-library").performScrollToNode(hasTestTag("notes-top-more"))
+        compose.onNodeWithTag("notes-top-more").performClick()
+        compose.onNodeWithTag("notes-upload-history-open").performClick()
+    }
     private fun freshTokens() = TokenManager(context)
     private fun reader(): ApiService {
         val tokens = freshTokens(); val settings = ServerSettingsStore(context, tokens)

@@ -103,6 +103,9 @@ data class StatusIssue(
             message = StatusDisplayText.apiReason(reasonCode).let { desc ->
                 if (desc == "未配置") "当前 API 地址未配置。"
                 else if (desc == "地址格式不正确") "当前 API 地址格式不正确。"
+                else if (desc == "远程服务器必须使用 HTTPS") {
+                    "当前 API 地址使用明文 HTTP，远程服务器必须使用 HTTPS。"
+                }
                 else "当前 API 地址无效。"
             },
             actionLabel = "去设置",

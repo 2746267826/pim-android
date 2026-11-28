@@ -6076,6 +6076,16 @@
       "CreateEventRequest": {
         "additionalProperties": false,
         "properties": {
+          "allDayEndDateExclusive": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "allDayStartDate": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
           "attachmentReferences": {
             "items": {
               "$ref": "#/components/schemas/EventAttachmentReferenceDto"
@@ -8664,6 +8674,16 @@
       "EventResponse": {
         "additionalProperties": false,
         "properties": {
+          "allDayEndDateExclusive": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "allDayStartDate": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
           "attachmentReferences": {
             "items": {
               "$ref": "#/components/schemas/EventAttachmentReferenceDto"
@@ -8694,6 +8714,18 @@
             "type": "string"
           },
           "descriptionFormat": {
+            "nullable": true,
+            "type": "string"
+          },
+          "displayLocalEnd": {
+            "nullable": true,
+            "type": "string"
+          },
+          "displayLocalStart": {
+            "nullable": true,
+            "type": "string"
+          },
+          "displayTimeZoneId": {
             "nullable": true,
             "type": "string"
           },
@@ -8743,6 +8775,14 @@
           },
           "isSeriesMaster": {
             "type": "boolean"
+          },
+          "localEnd": {
+            "nullable": true,
+            "type": "string"
+          },
+          "localStart": {
+            "nullable": true,
+            "type": "string"
           },
           "location": {
             "nullable": true,
@@ -8828,6 +8868,18 @@
             "type": "string"
           },
           "timeZoneId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "timeZoneIdType": {
+            "nullable": true,
+            "type": "string"
+          },
+          "timeZoneResolution": {
+            "nullable": true,
+            "type": "string"
+          },
+          "timeZoneSourceType": {
             "nullable": true,
             "type": "string"
           },
@@ -9923,6 +9975,94 @@
         "required": [
           "date",
           "kind"
+        ],
+        "type": "object"
+      },
+      "GlobalSearchResult": {
+        "additionalProperties": false,
+        "properties": {
+          "generatedAt": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "groups": {
+            "items": {
+              "$ref": "#/components/schemas/SearchGroup"
+            },
+            "type": "array"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResult"
+            },
+            "type": "array"
+          },
+          "match": {
+            "type": "string"
+          },
+          "page": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "pageSize": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "query": {
+            "type": "string"
+          },
+          "scope": {
+            "type": "string"
+          },
+          "sort": {
+            "type": "string"
+          },
+          "totalCount": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "totalPages": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "generatedAt",
+          "groups",
+          "items",
+          "match",
+          "page",
+          "pageSize",
+          "query",
+          "scope",
+          "sort",
+          "totalCount",
+          "totalPages"
+        ],
+        "type": "object"
+      },
+      "GlobalSearchResultApiResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "format": "int32",
+            "type": "integer"
+          },
+          "data": {
+            "$ref": "#/components/schemas/GlobalSearchResult"
+          },
+          "message": {
+            "type": "string"
+          },
+          "timestamp": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "code",
+          "message",
+          "timestamp"
         ],
         "type": "object"
       },
@@ -19255,6 +19395,16 @@
             "nullable": true,
             "type": "string"
           },
+          "end": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "eventId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
           "extractionId": {
             "format": "uuid",
             "type": "string"
@@ -19262,6 +19412,9 @@
           "id": {
             "format": "uuid",
             "type": "string"
+          },
+          "kind": {
+            "$ref": "#/components/schemas/NoteTaskSuggestionKindDto"
           },
           "noteId": {
             "format": "uuid",
@@ -19293,6 +19446,11 @@
           "sourceManifestSha256": {
             "type": "string"
           },
+          "start": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
           "status": {
             "$ref": "#/components/schemas/NoteTaskSuggestionStatusDto"
           },
@@ -19303,6 +19461,10 @@
           },
           "taskId": {
             "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "timeZoneId": {
             "nullable": true,
             "type": "string"
           },
@@ -19323,6 +19485,7 @@
           "createdAt",
           "extractionId",
           "id",
+          "kind",
           "noteId",
           "ordinal",
           "priority",
@@ -19513,6 +19676,13 @@
           "Running",
           "Succeeded",
           "Failed"
+        ],
+        "type": "string"
+      },
+      "NoteTaskSuggestionKindDto": {
+        "enum": [
+          "Task",
+          "Event"
         ],
         "type": "string"
       },
@@ -23529,22 +23699,166 @@
         ],
         "type": "object"
       },
+      "SearchEventOccurrence": {
+        "additionalProperties": false,
+        "properties": {
+          "eventId": {
+            "format": "uuid",
+            "type": "string"
+          },
+          "recurrenceId": {
+            "nullable": true,
+            "type": "string"
+          },
+          "seriesMasterId": {
+            "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "startsAt": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "eventId",
+          "startsAt"
+        ],
+        "type": "object"
+      },
+      "SearchFieldLocation": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "index": {
+            "format": "int32",
+            "nullable": true,
+            "type": "integer"
+          },
+          "label": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "label"
+        ],
+        "type": "object"
+      },
+      "SearchGroup": {
+        "additionalProperties": false,
+        "properties": {
+          "domain": {
+            "type": "string"
+          },
+          "failure": {
+            "$ref": "#/components/schemas/SearchGroupFailure"
+          },
+          "items": {
+            "items": {
+              "$ref": "#/components/schemas/SearchResult"
+            },
+            "type": "array"
+          },
+          "label": {
+            "type": "string"
+          },
+          "totalCount": {
+            "format": "int32",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "domain",
+          "items",
+          "label",
+          "totalCount"
+        ],
+        "type": "object"
+      },
+      "SearchGroupFailure": {
+        "additionalProperties": false,
+        "properties": {
+          "code": {
+            "type": "string"
+          },
+          "correlationId": {
+            "type": "string"
+          },
+          "message": {
+            "type": "string"
+          },
+          "retryable": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "code",
+          "correlationId",
+          "message",
+          "retryable"
+        ],
+        "type": "object"
+      },
       "SearchResult": {
         "additionalProperties": false,
         "properties": {
+          "createdAt": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
+          "domain": {
+            "type": "string"
+          },
+          "eventOccurrence": {
+            "$ref": "#/components/schemas/SearchEventOccurrence"
+          },
+          "fieldLocations": {
+            "items": {
+              "$ref": "#/components/schemas/SearchFieldLocation"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "id": {
             "type": "string"
+          },
+          "matchedFields": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "moduleName": {
             "type": "string"
           },
+          "score": {
+            "format": "double",
+            "type": "number"
+          },
           "snippet": {
+            "type": "string"
+          },
+          "sortKey": {
+            "nullable": true,
+            "type": "string"
+          },
+          "sourceState": {
             "type": "string"
           },
           "title": {
             "type": "string"
           },
           "type": {
+            "type": "string"
+          },
+          "updatedAt": {
+            "format": "date-time",
+            "nullable": true,
             "type": "string"
           },
           "url": {
@@ -23558,66 +23872,6 @@
           "title",
           "type",
           "url"
-        ],
-        "type": "object"
-      },
-      "SearchResultPagedResult": {
-        "additionalProperties": false,
-        "properties": {
-          "items": {
-            "items": {
-              "$ref": "#/components/schemas/SearchResult"
-            },
-            "type": "array"
-          },
-          "page": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "pageSize": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "totalCount": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "totalPages": {
-            "format": "int32",
-            "type": "integer"
-          }
-        },
-        "required": [
-          "items",
-          "page",
-          "pageSize",
-          "totalCount",
-          "totalPages"
-        ],
-        "type": "object"
-      },
-      "SearchResultPagedResultApiResponse": {
-        "additionalProperties": false,
-        "properties": {
-          "code": {
-            "format": "int32",
-            "type": "integer"
-          },
-          "data": {
-            "$ref": "#/components/schemas/SearchResultPagedResult"
-          },
-          "message": {
-            "type": "string"
-          },
-          "timestamp": {
-            "format": "date-time",
-            "type": "string"
-          }
-        },
-        "required": [
-          "code",
-          "message",
-          "timestamp"
         ],
         "type": "object"
       },
@@ -25821,6 +26075,16 @@
       "UpdateEventRequest": {
         "additionalProperties": false,
         "properties": {
+          "allDayEndDateExclusive": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
+          "allDayStartDate": {
+            "format": "date",
+            "nullable": true,
+            "type": "string"
+          },
           "attachmentReferences": {
             "items": {
               "$ref": "#/components/schemas/EventAttachmentReferenceDto"
@@ -26039,6 +26303,11 @@
             "nullable": true,
             "type": "string"
           },
+          "end": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
           "expectedRevision": {
             "format": "uuid",
             "type": "string"
@@ -26047,8 +26316,18 @@
             "format": "int32",
             "type": "integer"
           },
+          "start": {
+            "format": "date-time",
+            "nullable": true,
+            "type": "string"
+          },
           "taskBookId": {
             "format": "uuid",
+            "nullable": true,
+            "type": "string"
+          },
+          "timeZoneId": {
+            "maxLength": 100,
             "nullable": true,
             "type": "string"
           },
@@ -29708,6 +29987,9 @@
           "401": {
             "description": "Unauthorized"
           },
+          "403": {
+            "description": "Forbidden"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -29764,6 +30046,9 @@
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
           },
           "500": {
             "content": {
@@ -29822,6 +30107,9 @@
           "401": {
             "description": "Unauthorized"
           },
+          "403": {
+            "description": "Forbidden"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -29878,6 +30166,9 @@
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
           },
           "500": {
             "content": {
@@ -29993,6 +30284,9 @@
           "401": {
             "description": "Unauthorized"
           },
+          "403": {
+            "description": "Forbidden"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -30050,6 +30344,9 @@
           "401": {
             "description": "Unauthorized"
           },
+          "403": {
+            "description": "Forbidden"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -30077,6 +30374,7 @@
           {
             "in": "query",
             "name": "start",
+            "required": true,
             "schema": {
               "format": "date-time",
               "type": "string"
@@ -30085,6 +30383,7 @@
           {
             "in": "query",
             "name": "end",
+            "required": true,
             "schema": {
               "format": "date-time",
               "type": "string"
@@ -30438,6 +30737,62 @@
           "Pim.Api"
         ]
       },
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/EventResponseApiResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Not Found"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Pim.Api"
+        ]
+      },
       "put": {
         "parameters": [
           {
@@ -30632,6 +30987,16 @@
               }
             },
             "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Bad Request"
           },
           "401": {
             "description": "Unauthorized"
@@ -33544,6 +33909,62 @@
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Internal Server Error"
+          }
+        },
+        "security": [
+          {
+            "bearerAuth": []
+          }
+        ],
+        "tags": [
+          "Pim.Api"
+        ]
+      },
+      "get": {
+        "parameters": [
+          {
+            "in": "path",
+            "name": "id",
+            "required": true,
+            "schema": {
+              "format": "uuid",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TaskResponseApiResponse"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "401": {
+            "description": "Unauthorized"
+          },
+          "404": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/StringApiResponse"
+                }
+              }
+            },
+            "description": "Not Found"
           },
           "500": {
             "content": {
@@ -46539,6 +46960,9 @@
           "401": {
             "description": "Unauthorized"
           },
+          "403": {
+            "description": "Forbidden"
+          },
           "500": {
             "content": {
               "application/json": {
@@ -46596,6 +47020,9 @@
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
           },
           "500": {
             "content": {
@@ -46662,6 +47089,9 @@
           },
           "401": {
             "description": "Unauthorized"
+          },
+          "403": {
+            "description": "Forbidden"
           },
           "500": {
             "content": {
@@ -52663,6 +53093,43 @@
               "format": "int32",
               "type": "integer"
             }
+          },
+          {
+            "in": "query",
+            "name": "scope",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "match",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "sort",
+            "schema": {
+              "type": "string"
+            }
+          },
+          {
+            "in": "query",
+            "name": "page",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
+          },
+          {
+            "in": "query",
+            "name": "pageSize",
+            "schema": {
+              "format": "int32",
+              "type": "integer"
+            }
           }
         ],
         "responses": {
@@ -52670,7 +53137,7 @@
             "content": {
               "application/json": {
                 "schema": {
-                  "$ref": "#/components/schemas/SearchResultPagedResultApiResponse"
+                  "$ref": "#/components/schemas/GlobalSearchResultApiResponse"
                 }
               }
             },

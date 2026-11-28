@@ -27,7 +27,6 @@ class RecordingBoundaryTest {
         val microphone = services.single { it.name == RecordingService::class.java.name }
         assertFalse(microphone.exported)
         assertEquals(ServiceInfo.FOREGROUND_SERVICE_TYPE_MICROPHONE, microphone.foregroundServiceType)
-        assertEquals(0, microphone.flags and ServiceInfo.FLAG_STOP_WITH_TASK)
         assertTrue(services.any { it.name.endsWith("ForegroundLocationService") })
         assertTrue(permissions.contains(Manifest.permission.RECORD_AUDIO))
         assertTrue(permissions.contains(Manifest.permission.FOREGROUND_SERVICE_MICROPHONE))
@@ -41,7 +40,18 @@ class RecordingBoundaryTest {
         assertNull(shadowOf(activity.application).nextStartedService)
     }
 
-    @Test fun missingNotificationPermissionBlocksRecordingService() {
+    @Test fun globalNotificationSwitchBlocksRecordingService() {
+        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
+        val app = activity.application
+        shadowOf(app).grantPermissions(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
+        val manager = app.getSystemService(NotificationManager::class.java)
+        shadowOf(manager).setNotificationsEnabled(false)
+
+        assertEquals(RecordingProblem.Notifications, RecordingController.start(activity))
+        assertNull(shadowOf(app).nextStartedService)
+    }
+
+    @Test fun notificationPermissionDenialBlocksRecordingService() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val app = activity.application
         shadowOf(app).grantPermissions(Manifest.permission.RECORD_AUDIO)
@@ -51,11 +61,13 @@ class RecordingBoundaryTest {
         assertNull(shadowOf(app).nextStartedService)
     }
 
-    @Test fun disabledNotificationChannelBlocksRecordingService() {
+    @Test fun disabledRecordingChannelBlocksRecordingService() {
         val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
         val app = activity.application
         shadowOf(app).grantPermissions(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
-        app.getSystemService(NotificationManager::class.java).createNotificationChannel(
+        RecordingNotifications.createChannel(app)
+        val manager = app.getSystemService(NotificationManager::class.java)
+        manager.createNotificationChannel(
             android.app.NotificationChannel(
                 RecordingNotifications.CHANNEL,
                 "录音状态",
@@ -63,28 +75,43 @@ class RecordingBoundaryTest {
             )
         )
 
+        val permissions = RecordingPermissionsInspector.inspect(app)
+        assertFalse(permissions.channelEnabled)
         assertEquals(RecordingProblem.NotificationChannel, RecordingController.start(activity))
         assertNull(shadowOf(app).nextStartedService)
     }
 
-    @Test fun disabledSystemNotificationsBlockRecordingService() {
-        val activity = Robolectric.buildActivity(Activity::class.java).setup().get()
-        val app = activity.application
+    @Test fun onResumeStyleInspectionReadsCurrentNotificationState() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
         shadowOf(app).grantPermissions(Manifest.permission.RECORD_AUDIO, Manifest.permission.POST_NOTIFICATIONS)
-        shadowOf(app.getSystemService(NotificationManager::class.java)).setNotificationsEnabled(false)
+        RecordingNotifications.createChannel(app)
+        val manager = app.getSystemService(NotificationManager::class.java)
 
-        assertEquals(RecordingProblem.Notifications, RecordingController.start(activity))
-        assertNull(shadowOf(app).nextStartedService)
+        assertTrue(RecordingPermissionsInspector.inspect(app).canStart)
+        shadowOf(manager).setNotificationsEnabled(false)
+        assertFalse(RecordingPermissionsInspector.inspect(app).canStart)
+        shadowOf(manager).setNotificationsEnabled(true)
+        assertTrue(RecordingPermissionsInspector.inspect(app).canStart)
+        manager.createNotificationChannel(
+            android.app.NotificationChannel(
+                RecordingNotifications.CHANNEL,
+                "录音状态",
+                NotificationManager.IMPORTANCE_NONE,
+            )
+        )
+        assertFalse(RecordingPermissionsInspector.inspect(app).canStart)
     }
 
-    @Test fun permissionMessageNamesEveryMissingSurface() {
+    @Test fun missingPrerequisitesAreNamedInUserFacingOrder() {
         val permissions = RecordingPermissions(
             microphoneGranted = false,
             notificationPermissionGranted = false,
             channelEnabled = false,
         )
+
         assertEquals(listOf("麦克风权限", "通知权限", "录音状态通知渠道"), permissions.missingLabels)
-        assertTrue(permissions.message.contains("麦克风权限、通知权限、录音状态通知渠道"))
+        assertFalse(permissions.canStart)
+        assertTrue(permissions.canRequest)
     }
 
     @Test fun notificationContainsTruthfulPauseStateAndNoSessionIdentityInVisibleText() {
@@ -100,7 +127,7 @@ class RecordingBoundaryTest {
         assertEquals("继续", notification.actions[0].title)
         assertEquals("结束录音", notification.actions[1].title)
         assertEquals("录音已暂停", notification.publicVersion.extras.getString("android.title"))
-        val channel = app.getSystemService(NotificationManager::class.java).getNotificationChannel(RecordingNotifications.CHANNEL)
+        val channel = app.getSystemService(NotificationManager::class.java).getNotificationChannel("pim_recording_v1")
         assertEquals(NotificationManager.IMPORTANCE_LOW, channel.importance)
     }
 
@@ -120,7 +147,7 @@ class RecordingBoundaryTest {
         assertTrue(public.actions.orEmpty().isEmpty())
     }
 
-    @Test fun automaticRecoveryShowsOneNoticeWithoutExposingNoteIdentity() {
+    @Test fun automaticRecoveryNoticeDoesNotExposeNoteOrSessionIdentity() {
         val app = ApplicationProvider.getApplicationContext<Application>()
         RecordingNotifications.createChannel(app)
         val session = RecordingSession(

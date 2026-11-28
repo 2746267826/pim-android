@@ -238,6 +238,26 @@ class NativeNotesRichEditorTest {
         compose.waitUntil(15_000) { eval("Boolean(document.querySelector('.tiptap'))") == "true" }
     }
 
+    @Test fun wholeDocumentSourceModeSurvivesActivityRecreationAndStillReturnsToContinuousEditing() {
+        create(); ready()
+        compose.onNodeWithContentDescription("更多文档操作").performClick()
+        compose.onNodeWithTag("note-source-toggle").performClick()
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("note-source-document").fetchSemanticsNodes().size == 1 }
+        val id = note().id
+
+        compose.activityRule.scenario.recreate()
+        compose.waitUntil(15_000) { model.notes.state.value.loaded && model.selectedId.value == id }
+        compose.waitUntil(10_000) { compose.onAllNodesWithTag("note-source-document").fetchSemanticsNodes().size == 1 }
+        compose.onNodeWithTag("note-document-editor").assertDoesNotExist()
+        compose.onNodeWithText("Markdown 源码编辑：整篇正文共用一个模式", substring = true)
+            .performScrollTo().assertIsDisplayed()
+
+        compose.onNodeWithContentDescription("更多文档操作").performClick()
+        compose.onNodeWithTag("note-source-toggle").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-document-editor").fetchSemanticsNodes().size == 1 }
+        compose.waitUntil(15_000) { eval("Boolean(document.querySelector('.tiptap'))") == "true" }
+    }
+
     @Test fun unsupportedSourceRemainsEditableVerbatimAndEditorCannotFetchOrNavigateToRemoteContent() {
         create(); ready()
         compose.runOnUiThread {

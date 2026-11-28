@@ -1,6 +1,7 @@
 package com.pim.app.notes
 
 import android.content.Context
+import android.util.Log
 import com.pim.app.nativework.quicknotes.isLegacyQuickNoteHtml
 import com.pim.core.contract.QuickNoteDetailDto
 import dagger.hilt.android.qualifiers.ApplicationContext
@@ -31,7 +32,11 @@ data class NotesState(
     val importQuarantine: NoteImportQuarantineSummary = NoteImportQuarantineSummary(),
     val errors: Set<String> = emptySet(),
     val saveProblems: Map<String, String> = emptyMap(),
-    val loadFailed: Boolean = false
+    val loadFailed: Boolean = false,
+    val loadError: String? = null,
+    val refreshing: Boolean = false,
+    val refreshFailed: Boolean = false,
+    val refreshError: String? = null,
 )
 
 data class NoteHistoryAvailability(
@@ -120,31 +125,81 @@ class NoteRepository @Inject constructor(@ApplicationContext context: Context) {
                     )
                 }
             } catch (error: CancellationException) { throw error }
-            catch (_: Exception) { mutableState.value = state.value.copy(loadFailed = true) }
+            catch (error: Exception) {
+                logLoadFailure("initial", error)
+                mutableState.value = state.value.copy(loadFailed = true, loadError = failureDetail(error))
+            }
+        }
+    }
+
+    suspend fun retryLoad() = withContext(Dispatchers.IO) {
+        if (state.value.loaded) {
+            reload()
+        } else {
+            synchronized(this@NoteRepository) {
+                mutableState.value = state.value.copy(loadFailed = false, loadError = null)
+            }
+            initialize()
         }
     }
 
     suspend fun reload() = withContext(Dispatchers.IO) {
+        if (!state.value.loaded) {
+            initialize()
+            check(state.value.loaded) { state.value.loadError ?: "Local note load did not complete" }
+            return@withContext
+        }
         synchronized(this@NoteRepository) {
-            val entries = store.entries()
-            val documents = entries.filterNot { it.damaged }.associate { it.id to store.read(it.id) }
-            val restored = mutableMapOf<String, NoteEditHistory>()
-            documents.forEach { (id, document) ->
-                if (NoteEditHistory.canStore(document)) {
-                    runCatching { editHistory.read(id)?.reconcile(document) }.getOrNull()?.let { restored[id] = it }
+            mutableState.value = state.value.copy(refreshing = true, refreshFailed = false, refreshError = null)
+        }
+        try {
+            synchronized(this@NoteRepository) {
+                val entries = store.entries()
+                val documents = entries.filterNot { it.damaged }.associate { it.id to store.read(it.id) }
+                val restored = mutableMapOf<String, NoteEditHistory>()
+                documents.forEach { (id, document) ->
+                    if (NoteEditHistory.canStore(document)) {
+                        runCatching { editHistory.read(id)?.reconcile(document) }.getOrNull()?.let { restored[id] = it }
+                    }
                 }
+                histories.clear()
+                histories.putAll(restored)
+                mutableState.value = state.value.copy(
+                    loaded = true,
+                    entries = entries,
+                    documents = documents,
+                    savedRevisions = documents.mapValues { it.value.revision },
+                    editHistory = documents.mapValues { (id, _) -> histories[id]?.availability() ?: NoteHistoryAvailability() },
+                    loadFailed = false,
+                    loadError = null,
+                    refreshing = false,
+                    refreshFailed = false,
+                    refreshError = null,
+                )
             }
-            histories.clear()
-            histories.putAll(restored)
-            mutableState.value = state.value.copy(
-                loaded = true,
-                entries = entries,
-                documents = documents,
-                savedRevisions = documents.mapValues { it.value.revision },
-                editHistory = documents.mapValues { (id, _) -> histories[id]?.availability() ?: NoteHistoryAvailability() },
-            )
+        } catch (error: CancellationException) {
+            synchronized(this@NoteRepository) { mutableState.value = state.value.copy(refreshing = false) }
+            throw error
+        } catch (error: Exception) {
+            logLoadFailure("refresh", error)
+            synchronized(this@NoteRepository) {
+                mutableState.value = state.value.copy(
+                    refreshing = false,
+                    refreshFailed = true,
+                    refreshError = failureDetail(error),
+                )
+            }
+            throw error
         }
     }
+
+    private fun logLoadFailure(operation: String, error: Exception) {
+        Log.w("PimNotes", "Local note $operation load failed: ${error.javaClass.simpleName}")
+    }
+
+    private fun failureDetail(error: Exception): String =
+        error.message?.lineSequence()?.firstOrNull()?.trim()?.take(200)
+            ?.takeIf { it.isNotEmpty() } ?: error.javaClass.simpleName
 
     @Synchronized fun create(): String {
         check(state.value.loaded)

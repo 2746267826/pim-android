@@ -1,7 +1,15 @@
 import { test, afterEach } from 'node:test'
 import assert from 'node:assert/strict'
 import { JSDOM } from 'jsdom'
-import { createEditor, insertionAtCaret, sourceOnlyReason } from '../src/engine.mjs'
+import {
+  createEditor,
+  createDocumentEditor,
+  documentBlocks,
+  documentInsertion,
+  documentNeedsSource,
+  insertionAtCaret,
+  sourceOnlyReason,
+} from '../src/engine.mjs'
 
 const dom = new JSDOM('<!doctype html><body></body>', { pretendToBeVisual: true, url: 'https://appassets.androidplatform.net' })
 for (const key of ['window', 'document', 'navigator', 'HTMLElement', 'Node', 'MutationObserver', 'DOMParser', 'getComputedStyle']) {
@@ -13,6 +21,12 @@ const active = []
 const open = (text, callbacks) => {
   const element = document.body.appendChild(document.createElement('div'))
   const editor = createEditor(element, text, callbacks)
+  active.push(editor)
+  return editor
+}
+const openDocument = (blocks, callbacks) => {
+  const element = document.body.appendChild(document.createElement('div'))
+  const editor = createDocumentEditor(element, blocks, callbacks)
   active.push(editor)
   return editor
 }
@@ -94,4 +108,142 @@ test('edits use the mature history implementation and undo restores the original
   assert.equal(editor.commands.undo(), true)
   assert.deepEqual(editor.getJSON(), before)
   assert.equal(editor.commands.redo(), true)
+})
+
+test('one document editor hosts separate Markdown regions around native material nodes', () => {
+  const inkId = '33333333-3333-4333-8333-333333333333'
+  const editor = openDocument([
+    { id: '11111111-1111-4111-8111-111111111111', kind: 'markdown', text: '## 左段\n\n第一段' },
+    { id: inkId, kind: 'ink', label: '手写卡片 1' },
+    { id: '22222222-2222-4222-8222-222222222222', kind: 'markdown', text: '右段保持原文  \n第二行' },
+  ])
+  assert.equal(document.querySelectorAll('.tiptap').length, 1)
+  assert.equal(document.querySelectorAll('.pim-region').length, 2)
+  assert.equal(document.querySelectorAll(`[data-pim-material="${inkId}"]`).length, 1)
+  assert.deepEqual(documentBlocks(editor), [
+    { id: '11111111-1111-4111-8111-111111111111', kind: 'markdown', text: '## 左段\n\n第一段' },
+    { id: inkId, kind: 'ink' },
+    { id: '22222222-2222-4222-8222-222222222222', kind: 'markdown', text: '右段保持原文  \n第二行' },
+  ])
+  editor.commands.setTextSelection(5)
+  editor.commands.insertContent('补写')
+  const blocks = documentBlocks(editor)
+  assert.equal(blocks.length, 3)
+  assert.match(blocks[0].text, /补写/)
+  assert.equal(blocks[1].id, inkId)
+  assert.equal(blocks[2].text, '右段保持原文  \n第二行')
+})
+
+test('document guard rejects deleting a native material identity', () => {
+  const inkId = '44444444-4444-4444-8444-444444444444'
+  const editor = openDocument([
+    { id: '55555555-5555-4555-8555-555555555555', kind: 'markdown', text: 'before' },
+    { id: inkId, kind: 'ink', label: '手写卡片 1' },
+    { id: '66666666-6666-4666-8666-666666666666', kind: 'markdown', text: 'after' },
+  ])
+  let material
+  editor.state.doc.forEach((node, offset) => {
+    if (node.type.name === 'pimMaterial') material = { from: offset, to: offset + node.nodeSize }
+  })
+  assert.ok(material)
+  editor.commands.deleteRange(material)
+  assert.deepEqual(documentBlocks(editor).map(block => block.kind), ['markdown', 'ink', 'markdown'])
+})
+
+test('document guard rejects merging separate Markdown region identities', () => {
+  const editor = openDocument([
+    { id: '44444444-4444-4444-8444-444444444446', kind: 'markdown', text: '前段' },
+    { id: '44444444-4444-4444-8444-444444444447', kind: 'markdown', text: '后段' },
+  ])
+  let position
+  editor.state.doc.descendants((node, pos) => {
+    if (node.isText && node.text === '后段') position = pos
+  })
+  editor.commands.setTextSelection(position)
+  editor.commands.joinBackward()
+  assert.deepEqual(documentBlocks(editor), [
+    { id: '44444444-4444-4444-8444-444444444446', kind: 'markdown', text: '前段' },
+    { id: '44444444-4444-4444-8444-444444444447', kind: 'markdown', text: '后段' },
+  ])
+})
+
+test('one text selection can span a native material without changing its identity', () => {
+  const inkId = '44444444-4444-4444-8444-444444444445'
+  const editor = openDocument([
+    { id: '55555555-5555-4555-8555-555555555551', kind: 'markdown', text: '前段' },
+    { id: inkId, kind: 'ink' },
+    { id: '55555555-5555-4555-8555-555555555552', kind: 'markdown', text: '后段' },
+  ])
+  let material
+  editor.state.doc.descendants((node, pos) => {
+    if (node.type.name === 'pimMaterial') material = { from: pos, to: pos + node.nodeSize }
+  })
+  assert.ok(material)
+  let first
+  let last
+  editor.state.doc.descendants((node, pos) => {
+    if (!node.isText) return
+    if (node.text === '前段') first = pos + 1
+    if (node.text === '后段') last = pos + node.nodeSize
+  })
+  editor.commands.setTextSelection({ from: first, to: last })
+  assert.ok(editor.state.selection.from < material.from)
+  assert.ok(editor.state.selection.to > material.to)
+  assert.deepEqual(documentBlocks(editor), [
+    { id: '55555555-5555-4555-8555-555555555551', kind: 'markdown', text: '前段' },
+    { id: inkId, kind: 'ink' },
+    { id: '55555555-5555-4555-8555-555555555552', kind: 'markdown', text: '后段' },
+  ])
+})
+
+test('one document history crosses both Markdown regions around a material', () => {
+  const editor = openDocument([
+    { id: '77777777-7777-4777-8777-777777777771', kind: 'markdown', text: '前' },
+    { id: '77777777-7777-4777-8777-777777777772', kind: 'ink' },
+    { id: '77777777-7777-4777-8777-777777777773', kind: 'markdown', text: '后' },
+  ])
+  const find = text => {
+    let position
+    editor.state.doc.descendants((node, pos) => {
+      if (node.isText && node.text === text) position = pos + node.nodeSize
+    })
+    return position
+  }
+  editor.commands.setTextSelection(find('前'))
+  editor.commands.insertContent('甲')
+  editor.commands.setTextSelection(find('后'))
+  editor.commands.insertContent('乙')
+  assert.deepEqual(documentBlocks(editor).map(block => block.text ?? block.kind), ['前甲', 'ink', '后乙'])
+  assert.equal(editor.commands.undo(), true)
+  assert.deepEqual(documentBlocks(editor).map(block => block.text ?? block.kind), ['前甲', 'ink', '后'])
+  assert.equal(editor.commands.undo(), true)
+  assert.deepEqual(documentBlocks(editor).map(block => block.text ?? block.kind), ['前', 'ink', '后'])
+})
+
+test('document caret insertion keeps the whole region Markdown fragments', () => {
+  const editor = openDocument([
+    { id: '77777777-7777-4777-8777-777777777777', kind: 'markdown', text: '**beforeafter**' },
+  ])
+  let position
+  editor.state.doc.descendants((node, pos) => {
+    if (node.isText && node.text === 'beforeafter') position = pos + 6
+  })
+  editor.commands.setTextSelection(position)
+  assert.deepEqual(documentInsertion(editor), {
+    blockId: '77777777-7777-4777-8777-777777777777',
+    offset: 0,
+    expectedText: '**beforeafter**',
+    before: '**before**',
+    after: '**after**',
+  })
+})
+
+test('unsupported syntax is detected across the whole document before editing starts', () => {
+  assert.match(documentNeedsSource([
+    { id: '88888888-8888-4888-8888-888888888888', kind: 'markdown', text: '正常正文' },
+    { id: '99999999-9999-4999-8999-999999999999', kind: 'markdown', text: '![图片](private.png)' },
+  ]), /HTML|图片|源码/)
+  assert.equal(documentNeedsSource([
+    { id: 'aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa', kind: 'markdown', text: '正常 **正文**' },
+  ]), null)
 })

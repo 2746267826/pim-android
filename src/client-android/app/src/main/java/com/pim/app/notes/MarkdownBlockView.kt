@@ -177,7 +177,7 @@ internal fun MarkdownBlockView(
 }
 
 @Composable
-private fun SourceMarkdownBlockView(
+internal fun SourceMarkdownBlockView(
     block: JsonObject, preview: Boolean, enabled: Boolean, readCurrentText: () -> String?,
     onText: (String) -> Unit, onSelection: (Int) -> Unit,
     minimumHeight: Dp

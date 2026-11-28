@@ -82,6 +82,18 @@ class NotesViewModel @Inject constructor(
         }
     }
 
+    fun retryLoad() {
+        if (notes.state.value.refreshing) return
+        viewModelScope.launch {
+            try { notes.retryLoad() }
+            catch (error: CancellationException) { throw error }
+            catch (_: Exception) {
+                tell(if (notes.state.value.loaded) "列表更新仍未成功，已有内容保留；请稍后重试"
+                else "本机记录仍未读取成功，原文件保留；请稍后重试")
+            }
+        }
+    }
+
     fun openCloudNote(noteId: String, onRestored: (String) -> Unit) {
         if (busy.value) return
         viewModelScope.launch {

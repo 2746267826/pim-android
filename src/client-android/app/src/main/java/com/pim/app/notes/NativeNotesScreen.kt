@@ -4,7 +4,6 @@ import androidx.compose.foundation.layout.*
 import androidx.compose.foundation.gestures.scrollBy
 import androidx.activity.compose.BackHandler
 import androidx.compose.foundation.lazy.LazyColumn
-import androidx.compose.foundation.lazy.items
 import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -37,6 +36,7 @@ fun NativeNotesScreen(
     onCreate: () -> Unit, onOpen: (String?) -> Unit,
     readDocument: (String) -> NoteDocument?, onProblem: (String) -> Unit,
     onChange: (String, (NoteDocument) -> NoteDocument) -> Unit, onRetry: (String) -> Unit,
+    onRetryLoad: () -> Unit = {},
     photoFile: (String, String) -> File,
     onInsertPhoto: (String, NoteInsertion, Boolean) -> Unit, onRecord: (String) -> Unit,
     onPauseResume: () -> Unit, onFinish: (String) -> Unit,
@@ -84,7 +84,8 @@ fun NativeNotesScreen(
                     onEnableAutoSubmit = onAuthorizeAutoSubmit, onRevokeAutoSubmit = onRevokeAutoSubmit,
                     onResumeUpload = onResumeUpload, onPauseUpload = onPauseUpload,
                     asrTaskCount = asr.tasks.size, onAsr = { showAsr = true }, onImport = onImport,
-                    onLegacyQuickNotes = legacyMigrationActions.open)
+                    onLegacyQuickNotes = legacyMigrationActions.open,
+                    onRetryLoad = onRetryLoad)
             } else key(note.id) {
                 var preview by rememberSaveable { mutableStateOf(false) }
                 val scope = rememberCoroutineScope()
@@ -96,6 +97,12 @@ fun NativeNotesScreen(
                 var showAbout by rememberSaveable { mutableStateOf(false) }
                 var showSaveStatus by rememberSaveable { mutableStateOf(false) }
                 var showRecordingConflict by remember(note.id) { mutableStateOf(false) }
+                var sourceModeManual by rememberSaveable(note.id) { mutableStateOf(false) }
+                var sourceFallbackReason by rememberSaveable(note.id) { mutableStateOf<String?>(null) }
+                var materialSheetId by rememberSaveable(note.id) { mutableStateOf<String?>(null) }
+                var materialScrollTarget by remember(note.id) { mutableStateOf<String?>(null) }
+                var sourceInsertion by remember(note.id) { mutableStateOf<NoteInsertion?>(null) }
+                val sourceMode = sourceModeManual || sourceFallbackReason != null
                 val focus = LocalFocusManager.current
                 val keyboard = LocalSoftwareKeyboardController.current
                 val list = rememberLazyListState()
@@ -116,10 +123,20 @@ fun NativeNotesScreen(
                 val latest = materials.entries.firstOrNull { it.noteId == note.id }
                 val latestUpload = latestUploadJobForNote(uploads.jobs, note.id)
                 val saveProblem = state.saveProblems[note.id]
-                val lastMarkdown = note.blocks.lastOrNull { it.string("kind") == "markdown" }
-                val showTextTools = editor.activeRichBlock != null && !preview && !busy && !committing
+                val firstMarkdown = note.blocks.firstOrNull { it.string("kind") == "markdown" }
+                val documentReviewId = firstMarkdown?.string("id") ?: note.id
+                val showTextTools = !sourceMode && editor.activeRichBlock != null && !preview && !busy && !committing
                 val dockClearance = d.noteDockClearance + if (showTextTools) d.minimumTouchTarget + d.spaceSmall else 0.dp
                 fun leaveInput() { keyboard?.hide(); focus.clearFocus() }
+                fun fallbackInsertion(current: NoteDocument): NoteInsertion? = current.blocks.lastOrNull { it.string("kind") == "markdown" }
+                    ?.let { NoteInsertion(it.string("id"), it.string("text").length) }
+                fun insertionFor(current: NoteDocument): NoteInsertion? {
+                    if (!sourceMode) return editor.insertion(current)
+                    val selected = sourceInsertion?.takeIf { anchor ->
+                        current.blocks.any { it.string("id") == anchor.blockId && it.string("kind") == "markdown" }
+                    }
+                    return selected ?: fallbackInsertion(current)
+                }
                 fun afterInput(action: (NoteDocument) -> Unit) {
                     if (busy || committing) return
                     committing = true
@@ -150,8 +167,7 @@ fun NativeNotesScreen(
                     // Constrain the viewport too: content padding alone lets the caret scroll behind the dock.
                     Row(Modifier.fillMaxSize().padding(top = d.noteHeaderClearance, bottom = dockClearance)) {
                         if (wide) NoteMaterialsRail(note, sessions, { leaveInput(); showRecordings = true }, { leaveInput(); showMaterials = true }) { id ->
-                            val index = note.blocks.indexOfFirst { it.string("id") == id }
-                            if (index >= 0) scope.launch { list.animateScrollToItem(index + 2) }
+                            materialScrollTarget = id
                         }
                         Box(Modifier.weight(1f).fillMaxHeight(), contentAlignment = Alignment.TopCenter) {
                             LazyColumn(
@@ -204,35 +220,59 @@ fun NativeNotesScreen(
                                          if (editor.reviewIds.isNotEmpty()) {
                                              PimStatusBanner("有正文需要核对，确认后才能结束、导出或离开本篇。录音仍独立进行。", PimStatusTone.Warning)
                                              TextButton(modifier = Modifier.testTag("note-review-pending"), onClick = {
-                                                 val index = note.blocks.indexOfFirst { it.string("id") in editor.reviewIds }
-                                                 if (index >= 0) scope.launch { list.scrollToItem(index + 2) }
+                                                 scope.launch { list.animateScrollToItem(2) }
                                              }) { Text("查看待核对正文") }
                                          }
                                     }
                                 }
-                                items(note.blocks, key = { it.string("id") }) { block ->
-                                    when (block.string("kind")) {
-                                        "markdown" -> MarkdownBlockView(block, preview, !busy && !committing, editor,
-                                            readCurrentText = { readDocument(note.id)?.blocks?.firstOrNull { it.string("id") == block.string("id") }?.string("text") },
-                                            onText = { text -> onChange(note.id) { doc -> doc.replaceBlock(block.string("id")) { JsonObject(it + ("text" to JsonPrimitive(text))) } } },
+                                item(key = "document-body") {
+                                    if (sourceMode || firstMarkdown == null) {
+                                        ContinuousSourceDocument(
+                                            note = note,
+                                            preview = preview,
+                                            enabled = !busy && !committing,
+                                            reason = sourceFallbackReason,
+                                            reviewPending = documentReviewId in editor.reviewIds,
+                                            canAcknowledgeReview = editor.canAcknowledge(documentReviewId),
+                                            onAcknowledgeReview = { editor.acknowledge(documentReviewId) },
+                                            onChangeBlock = { id, text ->
+                                                onChange(note.id) { doc -> doc.replaceBlock(id) { JsonObject(it + ("text" to JsonPrimitive(text))) } }
+                                            },
+                                            onInkChange = { id, ink ->
+                                                onChange(note.id) { doc -> doc.replaceBlock(id) { withInk(it, ink) } }
+                                            },
+                                            onSelection = { anchor -> sourceInsertion = anchor },
                                             onProblem = onProblem,
-                                            minimumHeight = if (note.blocks.size == 1) d.noteEditorMinHeight else d.minimumTouchTarget,
+                                            photoFile = photoFile,
+                                            onMaterial = { materialSheetId = it },
+                                        )
+                                    } else {
+                                        ContinuousMarkdownDocument(
+                                            note = note,
+                                            preview = preview,
+                                            enabled = !busy && !committing,
+                                            coordinator = editor,
+                                            readCurrentBlocks = { readDocument(note.id)?.blocks },
+                                            onBlocks = { blocks -> onChange(note.id) { doc -> doc.withDocumentBlocks(blocks) } },
+                                            onMaterial = { materialSheetId = it },
+                                            onProblem = onProblem,
+                                            onFallback = { reason -> sourceFallbackReason = reason },
+                                            photoFile = photoFile,
+                                            minimumHeight = d.noteEditorMinHeight,
                                             viewportBounds = viewportBounds,
-                                            onRevealCaret = { caret -> viewportBounds?.let { viewport ->
-                                                val distance = when {
-                                                     caret.height >= viewport.height -> (caret.bottom - viewport.bottom).coerceAtLeast(0f)
-                                                    caret.bottom > viewport.bottom -> caret.bottom - viewport.bottom
-                                                    caret.top < viewport.top -> caret.top - viewport.top
-                                                    else -> 0f
+                                            onRevealCaret = { caret ->
+                                                viewportBounds?.let { viewport ->
+                                                    val distance = when {
+                                                        caret.height >= viewport.height -> (caret.bottom - viewport.bottom).coerceAtLeast(0f)
+                                                        caret.bottom > viewport.bottom -> caret.bottom - viewport.bottom
+                                                        caret.top < viewport.top -> caret.top - viewport.top
+                                                        else -> 0f
+                                                    }
+                                                    if (kotlin.math.abs(distance) > 1f) list.scrollBy(distance)
                                                 }
-                                                if (kotlin.math.abs(distance) > 1f) list.scrollBy(distance)
-                                            } })
-                                        "photo" -> PhotoBlockView(photoFile(note.id, block.string("assetId")))
-                                        "ink" -> InkCard(block.string("id"), inkOf(block), preview || busy || committing) { ink ->
-                                            onChange(note.id) { doc -> doc.replaceBlock(block.string("id")) { withInk(it, ink) } }
-                                        }
-                                        "legacyQuickNote" -> LegacyQuickNoteSourceBlock(block)
-                                        else -> PimStatusBanner("未知扩展块已保留，当前版本不能编辑它。", PimStatusTone.Warning)
+                                            },
+                                            materialScrollTarget = materialScrollTarget,
+                                        )
                                     }
                                 }
                                 item(key = "document-end") {
@@ -241,13 +281,19 @@ fun NativeNotesScreen(
                             }
                         }
                     }
-                    NoteEditorTopBar(saved, note.id in state.errors, busy || committing, preview,
+                    NoteEditorTopBar(saved, note.id in state.errors, busy || committing, preview, note.title, sourceMode,
                         onBack = { afterInput { onOpen(null) } },
                         onSaveStatus = {
                             leaveInput()
                             showSaveStatus = true
                         },
                         onPreview = { afterInput { preview = !preview } }, onFinish = { afterInput { confirmFinish = true } },
+                        onToggleSource = {
+                            afterInput {
+                                if (sourceMode) { sourceModeManual = false; sourceFallbackReason = null }
+                                else sourceModeManual = true
+                            }
+                        },
                         onMaterials = { leaveInput(); showMaterials = true }, onRecordings = { leaveInput(); showRecordings = true },
                         onExport = { afterInput(onExport) }, onImport = onImport, onAbout = { leaveInput(); showAbout = true },
                         needsReview = editor.reviewIds.isNotEmpty(),
@@ -269,8 +315,7 @@ fun NativeNotesScreen(
                         },
                         onReview = {
                             showSaveStatus = false
-                            val index = note.blocks.indexOfFirst { it.string("id") in editor.reviewIds }
-                            if (index >= 0) scope.launch { list.scrollToItem(index + 2) }
+                            scope.launch { list.scrollToItem(2) }
                         },
                         onOpenMaterials = {
                             showSaveStatus = false
@@ -280,14 +325,20 @@ fun NativeNotesScreen(
                         onDismiss = { showSaveStatus = false },
                     )
                     NoteEditorDock(recording, ownActive, activeOtherTitle, saved && !busy && !committing && !recording.preparing,
-                        !busy && !committing && !preview && lastMarkdown != null,
+                        !busy && !committing && !preview && firstMarkdown != null,
                         onRecord = {
                             if (activeOtherSession != null) showRecordingConflict = true
                             else afterInput { onRecord(it.id) }
                         }, onPauseResume = onPauseResume,
                         onRecordings = { leaveInput(); showRecordings = true },
-                        onPhoto = { capture -> afterInput { current -> onInsertPhoto(current.id, editor.insertion(current), capture) } },
-                        onInk = { afterInput { current -> onChange(current.id) { it.insert(editor.insertion(current), inkBlock(d.noteDefaultInkWidth.value)) } } },
+                        onPhoto = { capture -> afterInput { current ->
+                            insertionFor(current)?.let { onInsertPhoto(current.id, it, capture) }
+                        } },
+                        onInk = { afterInput { current ->
+                            insertionFor(current)?.let { anchor ->
+                                onChange(current.id) { it.insert(anchor, inkBlock(d.noteDefaultInkWidth.value)) }
+                            }
+                        } },
                         modifier = Modifier.align(Alignment.BottomCenter).padding(d.spaceLarge))
                     if (showTextTools) NoteTextToolbar(editor, Modifier.align(Alignment.BottomCenter)
                         .padding(horizontal = d.spaceLarge).padding(bottom = d.noteDockClearance))
@@ -318,6 +369,16 @@ fun NativeNotesScreen(
                     onRefreshProcessing = onRefreshProcessing,
                     onPromoteConflict = onPromoteUploadConflict,
                     onAsr = { asrVersionId = it; showAsr = true })
+                materialSheetId?.let { id ->
+                    NoteMaterialSheet(
+                        note = note,
+                        blockId = id,
+                        readOnly = preview || busy || committing,
+                        photoFile = photoFile,
+                        onInk = { ink -> onChange(note.id) { doc -> doc.replaceBlock(id) { withInk(it, ink) } } },
+                        onDismiss = { materialSheetId = null },
+                    )
+                }
                 if (showRecordings) NoteRecordingsSheet(sessions, recording, playing, { showRecordings = false }, onPlay, onPauseResume, onStopRecording)
                 completion?.takeIf { it.noteId == note.id }?.let { finished ->
                     NoteCompletionSheet(materials.entries.firstOrNull { it.id == finished.versionId }, onDismissCompletion,

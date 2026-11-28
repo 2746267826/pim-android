@@ -16,6 +16,7 @@ import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.semantics.disabled
 import androidx.compose.ui.semantics.semantics
 import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
 import com.pim.app.recording.RecordingState
 import com.pim.app.ui.components.PimStatusBanner
 import com.pim.app.ui.components.PimStatusTone
@@ -41,6 +42,7 @@ internal fun NoteLibraryScreen(
     onLegacyQuickNotes: () -> Unit = {},
     cloudNotes: CloudNotesState = CloudNotesState(), onRefreshCloudNotes: () -> Unit = {},
     onOpenCloudNote: (String) -> Unit = {},
+    onRetryLoad: () -> Unit = {},
 ) {
     val d = PimTheme.dimensions
     var search by rememberSaveable { mutableStateOf("") }
@@ -111,7 +113,34 @@ internal fun NoteLibraryScreen(
                 OutlinedTextField(search, { search = it }, label = { Text("搜索本机笔记") }, singleLine = true,
                     leadingIcon = { Icon(Icons.Default.Search, null) }, modifier = Modifier.fillMaxWidth().testTag("notes-search"))
             }
-            if (state.loadFailed) item { PimStatusBanner("本地记录读取失败，原文件保留。请重新打开页面。", PimStatusTone.Error) }
+            if (state.loadFailed) item {
+                Column(Modifier.testTag("notes-load-error"), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
+                    PimStatusBanner(
+                        "本地记录读取失败：${state.loadError ?: "未知原因"}。原文件保留，可以重试读取，不会用空白文档覆盖已有记录。",
+                        PimStatusTone.Error,
+                    )
+                    TextButton(onClick = onRetryLoad, enabled = !busy,
+                        modifier = Modifier.fillMaxWidth().testTag("notes-load-retry")) { Text("重试读取本机记录") }
+                }
+            }
+            if (state.loaded && state.refreshing) item {
+                Row(Modifier.fillMaxWidth().testTag("notes-refreshing"), verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
+                    CircularProgressIndicator(Modifier.size(d.iconSize), strokeWidth = 2.dp)
+                    Text("正在更新本机记录…", style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                }
+            }
+            if (state.loaded && state.refreshFailed) item {
+                Column(Modifier.testTag("notes-refresh-error"), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
+                    PimStatusBanner(
+                        "列表更新失败：${state.refreshError ?: "未知原因"}。已有记录和当前浏览位置已保留，可以原处重试。",
+                        PimStatusTone.Warning,
+                    )
+                    TextButton(onClick = onRetryLoad, enabled = !busy && !state.refreshing,
+                        modifier = Modifier.fillMaxWidth().testTag("notes-refresh-retry")) { Text("重试更新列表") }
+                }
+            }
             if (selectedId != null) item { PimStatusBanner("该记录仍在加载或无法读取，不会用空白文档覆盖它。", PimStatusTone.Warning) }
             recording.session?.takeIf { it.active && it.noteId != null }?.let { session ->
                 val title = session.noteId?.let { noteDisplayTitle(state, it) } ?: "未命名记录"
@@ -131,21 +160,30 @@ internal fun NoteLibraryScreen(
                     }
                 }
             }
-            if (!state.loaded && !state.loadFailed) item { LinearProgressIndicator(Modifier.fillMaxWidth()) }
+            if (!state.loaded && !state.loadFailed) item {
+                Column(Modifier.fillMaxWidth().testTag("notes-loading"), verticalArrangement = Arrangement.spacedBy(d.spaceSmall)) {
+                    Text("正在读取本机记录…", style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant)
+                    LinearProgressIndicator(Modifier.fillMaxWidth())
+                }
+            }
             if (state.loaded && state.entries.isEmpty()) item {
-                Column(Modifier.fillMaxWidth().padding(vertical = d.noteHeaderClearance), horizontalAlignment = Alignment.CenterHorizontally) {
+                Column(Modifier.fillMaxWidth().padding(vertical = d.noteHeaderClearance).testTag("notes-empty"),
+                    horizontalAlignment = Alignment.CenterHorizontally) {
                     Surface(shape = MaterialTheme.shapes.extraLarge, color = MaterialTheme.colorScheme.surfaceVariant) {
                         Icon(Icons.Default.EditNote, null, Modifier.padding(d.spaceExtraLarge).size(d.minimumTouchTarget),
                             tint = MaterialTheme.colorScheme.primary)
                     }
                     Spacer(Modifier.height(d.spaceExtraLarge))
-                    Text("从一页空白开始", style = MaterialTheme.typography.titleMedium)
+                    Text("还没有笔记", style = MaterialTheme.typography.titleMedium)
                     Spacer(Modifier.height(d.spaceSmall))
-                    Text("写笔记、拍照片，也可以随手写下来。\n需要时再开启录音，全程可以离线。",
+                    Text("从一页空白开始：写笔记、拍照片，也可以随手写下来。\n需要时再开启录音，全程可以离线。",
                         style = MaterialTheme.typography.bodyMedium, color = MaterialTheme.colorScheme.onSurfaceVariant)
                 }
             }
-            if (state.loaded && entries.isEmpty() && state.entries.isNotEmpty()) item { Text("没有匹配的本机笔记", style = MaterialTheme.typography.bodyMedium) }
+            if (state.loaded && entries.isEmpty() && state.entries.isNotEmpty()) item {
+                Text("没有匹配的笔记", Modifier.testTag("notes-no-results"), style = MaterialTheme.typography.bodyMedium)
+            }
             items(entries, key = { it.id }) { entry ->
                 val note = state.documents[entry.id]
                 val uploadNotice = noteUploadNotice(latestUploadJobForNote(uploads.jobs, entry.id))

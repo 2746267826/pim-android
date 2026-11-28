@@ -33,6 +33,79 @@ class NoteDocumentTest {
         assertEquals(1, note.blocks.size)
     }
 
+    @Test fun continuousDocumentEditsOnlyReplaceMarkdownAndKeepMaterialIdentity() {
+        val first = JsonObject(markdownBlock("before") + ("future" to JsonPrimitive("keep")))
+        val material = inkBlock(320f)
+        val last = markdownBlock("after")
+        val note = NoteDocument.create().withBlocks(listOf(first, material, last))
+        val changed = note.withDocumentBlocks(listOf(
+            JsonObject(buildJsonObject {
+                put("id", first.string("id")); put("kind", "markdown"); put("text", "before edited")
+            }),
+            JsonObject(buildJsonObject {
+                put("id", material.string("id")); put("kind", "ink"); put("ignored", true)
+            }),
+            JsonObject(buildJsonObject {
+                put("id", last.string("id")); put("kind", "markdown"); put("text", "after edited")
+            }),
+        ))
+        assertEquals(listOf("before edited", "after edited"), changed.blocks.filter { it.string("kind") == "markdown" }.map { it.string("text") })
+        assertEquals("keep", changed.blocks[0].string("future"))
+        assertEquals(material, changed.blocks[1])
+        assertEquals(first.string("id"), changed.blocks[0].string("id"))
+    }
+
+    @Test fun completeDocumentRoundTripKeepsPhotoAndInkIdentityBetweenMarkdownRegions() {
+        val first = JsonObject(markdownBlock("前段") + ("future" to JsonPrimitive("keep")))
+        val photo = buildJsonObject {
+            put("id", newNoteId()); put("kind", "photo"); put("assetId", newNoteId())
+            put("mimeType", "image/png"); put("sha256", "a".repeat(64))
+        }
+        val ink = inkBlock(320f)
+        val last = markdownBlock("后段")
+        val note = NoteDocument.create().withBlocks(listOf(first, photo, ink, last))
+        val edited = note.withDocumentBlocks(listOf(
+            buildJsonObject {
+                put("id", first.string("id")); put("kind", "markdown"); put("text", "前段已改")
+            },
+            buildJsonObject { put("id", photo.string("id")); put("kind", "photo") },
+            buildJsonObject { put("id", ink.string("id")); put("kind", "ink") },
+            buildJsonObject {
+                put("id", last.string("id")); put("kind", "markdown"); put("text", "后段已改")
+            },
+        ))
+
+        assertEquals(listOf("markdown", "photo", "ink", "markdown"), edited.blocks.map { it.string("kind") })
+        assertEquals(listOf(first, photo, ink, last).map { it.string("id") }, edited.blocks.map { it.string("id") })
+        assertEquals("前段已改", edited.blocks[0].string("text"))
+        assertEquals(photo, edited.blocks[1])
+        assertEquals(ink, edited.blocks[2])
+        assertEquals("后段已改", edited.blocks[3].string("text"))
+        assertEquals("keep", edited.blocks[0].string("future"))
+        assertEquals(edited, NoteDocument.decode(edited.source.toString()))
+    }
+
+    @Test fun continuousDocumentEditorCannotMoveOrDeleteMaterialBlocks() {
+        val text = markdownBlock("text")
+        val material = inkBlock(320f)
+        val note = NoteDocument.create().withBlocks(listOf(text, material))
+        assertThrows(IllegalArgumentException::class.java) {
+            note.withDocumentBlocks(listOf(JsonObject(buildJsonObject {
+                put("id", text.string("id")); put("kind", "markdown"); put("text", "text")
+            })))
+        }
+        assertThrows(IllegalArgumentException::class.java) {
+            note.withDocumentBlocks(listOf(
+                JsonObject(buildJsonObject {
+                    put("id", material.string("id")); put("kind", "ink")
+                }),
+                JsonObject(buildJsonObject {
+                    put("id", text.string("id")); put("kind", "markdown"); put("text", "text")
+                }),
+            ))
+        }
+    }
+
     @Test fun richCaretUsesCompleteMarkdownFragmentsAndKeepsOpaqueFields() {
         val block = JsonObject(markdownBlock("**beforeafter**") + ("future" to JsonPrimitive("keep")))
         val anchor = NoteInsertion(block.string("id"), 0, "**beforeafter**", "**before**", "**after**")

@@ -1,12 +1,11 @@
 package com.pim.app.notes
 
 import android.Manifest
-import android.content.Context
 import android.os.Build
 import android.os.ParcelFileDescriptor
 import android.view.View
 import android.view.ViewGroup
-import android.view.inputmethod.InputMethodManager
+import androidx.compose.ui.semantics.SemanticsProperties
 import androidx.compose.ui.test.*
 import androidx.compose.ui.test.junit4.createAndroidComposeRule
 import androidx.compose.ui.unit.dp
@@ -17,6 +16,10 @@ import androidx.test.espresso.Espresso.pressBack
 import androidx.test.platform.app.InstrumentationRegistry
 import androidx.test.rule.GrantPermissionRule
 import com.pim.app.recording.*
+import java.util.concurrent.CountDownLatch
+import java.util.concurrent.TimeUnit
+import kotlinx.serialization.json.JsonObject
+import kotlinx.serialization.json.JsonPrimitive
 import org.junit.After
 import org.junit.Assert.*
 import org.junit.Rule
@@ -55,11 +58,20 @@ class NativeNotesExperienceTest {
             )) }
         }
         saved()
+        compose.onNodeWithText("PIM 笔记").assertDoesNotExist()
+        compose.onNodeWithTag("note-top-title", useUnmergedTree = true)
+            .assertIsDisplayed().assertTextEquals("研究方法 · 第四讲")
+            .assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading))
+        compose.onNodeWithTag("note-title").assert(SemanticsMatcher.keyIsDefined(SemanticsProperties.Heading))
         compose.onNodeWithTag("note-finish").assertHeightIsAtLeast(48.dp)
+        compose.onNodeWithTag("note-finish").assertContentDescriptionEquals("结束并保存本次记录")
         compose.onNodeWithTag("note-insert-menu").assertHeightIsAtLeast(48.dp)
         val root = compose.onRoot().fetchSemanticsNode().boundsInRoot
         val document = compose.onNodeWithTag("note-document").fetchSemanticsNode().boundsInRoot
         assertTrue("The document must receive most vertical space, even on a compact phone", document.height >= root.height * .70f)
+        val topBarBefore = compose.onNodeWithTag("note-top-bar").fetchSemanticsNode().boundsInRoot
+        val finishBefore = compose.onNodeWithTag("note-finish").fetchSemanticsNode().boundsInRoot
+        assertTrue("Finish must stay in the top-right action area", finishBefore.left > topBarBefore.center.x)
         assertDockBounds()
         evidence("editor")
         compose.onNodeWithTag("note-document").performScrollToNode(hasTestTag("note-document-end"))
@@ -68,11 +80,34 @@ class NativeNotesExperienceTest {
         val dock = compose.onNodeWithTag("note-dock").fetchSemanticsNode().boundsInRoot
         assertTrue("The final content must scroll above the floating controls", end.bottom <= dock.top)
         compose.onNodeWithTag("note-finish").assertIsDisplayed()
+        assertEquals(topBarBefore, compose.onNodeWithTag("note-top-bar").fetchSemanticsNode().boundsInRoot)
+        assertEquals(finishBefore, compose.onNodeWithTag("note-finish").fetchSemanticsNode().boundsInRoot)
         compose.onNodeWithContentDescription("返回记录列表").performClick()
         compose.waitUntil(5000) { model.selectedId.value == null }
         compose.onNodeWithTag("notes-library").performScrollToNode(hasTestTag("note-open-${noteId}"))
         compose.onNodeWithTag("note-open-${noteId}").assertIsDisplayed()
         evidence("library")
+    }
+
+    @Test fun finishWithoutRecordingRequiresConfirmationAndCancelLeavesTheDraftOpen() {
+        create(); saved()
+        val before = note()
+        compose.onNodeWithTag("note-finish").assertContentDescriptionEquals("结束并保存本次记录")
+        compose.onNodeWithTag("note-finish").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
+        compose.onNodeWithText("继续记录").performClick()
+        compose.waitUntil(5_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().isEmpty() }
+        assertEquals(before, note())
+        assertFalse(note().source.containsKey("endedAtMillis"))
+
+        compose.onNodeWithTag("note-finish").performClick()
+        compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
+        compose.onNodeWithTag("note-confirm-finish").performClick()
+        compose.waitUntil(20_000) { !model.busy.value && model.completion.value != null }
+        assertEquals(before.id, note().id)
+        assertEquals(before.title, note().title)
+        assertTrue(note().source.containsKey("endedAtMillis"))
+        compose.onNodeWithTag("note-completion").assertIsDisplayed()
     }
 
     @RequiresDevice
@@ -104,6 +139,7 @@ class NativeNotesExperienceTest {
     @RequiresDevice
     @Test fun endingRequiresConfirmationAndTheResultDoesNotPretendToBeCloudProcessing() {
         create(); startRecording()
+        compose.onNodeWithTag("note-finish").assertContentDescriptionEquals("结束并保存本次记录")
         compose.onNodeWithTag("note-finish").performClick()
         compose.waitUntil(15_000) { compose.onAllNodesWithTag("note-confirm-finish").fetchSemanticsNodes().size == 1 }
         compose.onNodeWithText("继续记录").performClick()
@@ -164,20 +200,64 @@ class NativeNotesExperienceTest {
         compose.waitUntil(10_000) { model.recordings.state.value.active && (model.recordings.state.value.session?.samples ?: 0) >= 3200 }
     }
     private fun edit(text: String, keyboard: Boolean = false) {
-        val mode = "markdown-mode-${note().blocks.first { it.string("kind") == "markdown" }.string("id")}"
-        if (compose.onAllNodes(hasTestTag(mode) and hasText("Markdown 源码")).fetchSemanticsNodes().isNotEmpty()) {
-            compose.onNodeWithTag(mode).performScrollTo().performClick()
-            compose.waitUntil(10_000) { compose.onAllNodes(hasTestTag(mode) and hasText("富文本")).fetchSemanticsNodes().isNotEmpty() }
-        }
+        readyEditor()
+        val block = note().blocks.first { it.string("kind") == "markdown" }
         compose.runOnUiThread {
-            fun descendants(view: View): List<View> = listOf(view) + if (view is ViewGroup)
-                (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
-            val editor = descendants(compose.activity.window.decorView).filterIsInstance<MarkdownEditText>().first()
-            editor.requestFocus(); editor.setText(text); editor.setSelection(text.length)
-            if (keyboard) (compose.activity.getSystemService(Context.INPUT_METHOD_SERVICE) as InputMethodManager).showSoftInput(editor, InputMethodManager.SHOW_IMPLICIT)
+            model.notes.update(note().id) { doc ->
+                doc.replaceBlock(block.string("id")) { JsonObject(it + ("text" to JsonPrimitive(text))) }
+            }
+        }
+        compose.waitUntil(10_000) { note().blocks.first { it.string("kind") == "markdown" }.string("text") == text }
+        compose.waitUntil(10_000) { eval("Boolean(document.querySelector('.tiptap'))") == "true" }
+        eval("""
+            const region=document.querySelector('.pim-region');
+            const walker=document.createTreeWalker(region, NodeFilter.SHOW_TEXT);
+            let remaining=${text.length}, node;
+            while(node=walker.nextNode()) {
+              if(remaining<=node.textContent.length) {
+                const range=document.createRange(); range.setStart(node, remaining); range.collapse(true);
+                const selection=window.getSelection(); selection.removeAllRanges(); selection.addRange(range); break;
+              }
+              remaining-=node.textContent.length;
+            }
+            document.querySelector('.tiptap').focus(); true
+        """.trimIndent())
+        if (keyboard) {
+            compose.onNodeWithTag("note-document-editor").performScrollTo().performTouchInput {
+                click(androidx.compose.ui.geometry.Offset(30f, 30f))
+            }
+            eval("document.querySelector('.tiptap').focus();true")
         }
         compose.waitForIdle()
         if (!keyboard) closeSoftKeyboard()
+    }
+    private fun readyEditor() {
+        compose.onNodeWithTag("note-document").performScrollToIndex(2)
+        compose.waitUntil(15_000) {
+            var attached = false
+            compose.runOnUiThread { attached = webOrNull() != null }
+            attached
+        }
+        compose.waitUntil(15_000) { eval("Boolean(document.querySelector('.tiptap'))") == "true" }
+    }
+    private fun webOrNull(): OfflineMarkdownView? {
+        var result: OfflineMarkdownView? = null
+        compose.runOnUiThread {
+            fun descendants(view: View): List<View> = listOf(view) + if (view is ViewGroup)
+                (0 until view.childCount).flatMap { descendants(view.getChildAt(it)) } else emptyList()
+            result = descendants(compose.activity.window.decorView).filterIsInstance<OfflineMarkdownView>().firstOrNull()
+        }
+        return result
+    }
+    private fun eval(script: String): String {
+        var result = ""
+        val done = CountDownLatch(1)
+        compose.runOnUiThread {
+            val editor = webOrNull()
+            if (editor == null) done.countDown() else editor.evaluateJavascript(script) { result = it; done.countDown() }
+        }
+        check(done.await(10, TimeUnit.SECONDS)) { "Editor WebView did not respond" }
+        return result
     }
     private fun assertDockBounds() {
         val root = compose.onRoot().fetchSemanticsNode().boundsInRoot

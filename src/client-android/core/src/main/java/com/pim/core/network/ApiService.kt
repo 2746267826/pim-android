@@ -95,6 +95,7 @@ import com.pim.core.contract.MobileUsageIngestResultApiResponse
 import com.pim.core.contract.MobileUsageSummaryResponseApiResponse
 import com.pim.core.contract.OutlookSyncBatchResponseApiResponse
 import com.pim.core.contract.OutlookSyncRequest
+import com.pim.core.contract.OutlookWriteResultApiResponse
 import com.pim.core.contract.QuickNoteDetailDtoApiResponse
 import com.pim.core.contract.QuickNoteListItemDtoPagedResultApiResponse
 import com.pim.core.contract.RefreshRequest
@@ -367,7 +368,7 @@ interface ApiService {
     ): EventResponseApiResponse
 
     @DELETE("calendar/events/{id}")
-    suspend fun deleteEvent(@Path("id") id: String): StringApiResponse
+    suspend fun deleteEvent(@Path("id") id: String): OutlookWriteResultApiResponse
 
     // Tasks — 契约 2xx payload 是 TaskResponsePagedResult（对象），不是裸数组（F-B-04）。
     @GET("calendar/tasks")

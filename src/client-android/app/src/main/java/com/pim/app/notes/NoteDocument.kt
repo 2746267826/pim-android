@@ -54,6 +54,34 @@ data class NoteDocument(val source: JsonObject) {
         return withBlocks(blocks.take(index) + listOf(before, block, after) + blocks.drop(index + 1))
     }
 
+    /**
+     * Applies the single-document editor's ordered projection without letting it rewrite
+     * material identity or opaque extension payloads. Markdown blocks keep their extra
+     * fields; material blocks are always taken verbatim from the stored document.
+     */
+    fun withDocumentBlocks(edited: List<JsonObject>): NoteDocument {
+        require(edited.isNotEmpty() && edited.map { it.string("id") }.distinct().size == edited.size)
+        require(edited.any { it.string("kind") == "markdown" }) { "A note requires an editable Markdown block" }
+        val originalById = blocks.associateBy { it.string("id") }
+        val originalLayout = blocks.map { it.string("kind") to it.string("id") }
+        val editedLayout = edited.map { it.string("kind") to it.string("id") }
+        require(editedLayout == originalLayout) {
+            "Block order, material position and identity belong to the native document, not the editor"
+        }
+        val next = edited.map { candidate ->
+            val id = candidate.string("id")
+            val kind = candidate.string("kind")
+            val previous = checkNotNull(originalById[id])
+            if (kind != "markdown") {
+                previous
+            } else {
+                require(previous.string("kind") == "markdown")
+                JsonObject(previous + ("text" to JsonPrimitive(candidate.string("text"))))
+            }
+        }
+        return withBlocks(next).also(NoteDocument::validate)
+    }
+
     fun validate() {
         require(source.getValue("schemaVersion").jsonPrimitive.int == 1) { "Unsupported note version" }
         require(validNoteId(id) && revision >= 0 && title.length <= 500)

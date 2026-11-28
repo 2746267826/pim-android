@@ -177,7 +177,7 @@ class NativeNotesActivity : ComponentActivity() {
                     onImport = {
                         try { importPackage.launch(arrayOf("application/zip", "application/octet-stream")) }
                         catch (_: Exception) { model.tell("没有可用的文档包选择器") }
-                    }, onRetryMaterial = model.materials::retry,
+                    }, onRetryLoad = model::retryLoad, onRetryMaterial = model.materials::retry,
                     onExportMaterial = { id ->
                         model.prepareMaterialExport(id)
                         try { exportMaterials.launch("PIM-material-${id.take(8)}.zip") }

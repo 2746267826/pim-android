@@ -147,6 +147,25 @@ class RecordingBoundaryTest {
         assertTrue(public.actions.orEmpty().isEmpty())
     }
 
+    @Test fun automaticRecoveryNoticeDoesNotExposeNoteOrSessionIdentity() {
+        val app = ApplicationProvider.getApplicationContext<Application>()
+        RecordingNotifications.createChannel(app)
+        val session = RecordingSession(
+            "private-session-identity", 1, currentSegment = 2,
+            chunks = listOf(RecordingChunk(1, 1, 16_000), RecordingChunk(2, 1, 16_000)),
+            noteId = "private-note-secret",
+        )
+        val notification = RecordingNotifications.build(app, RecordingState(session), resumed = true)
+        assertEquals("已自动续接", notification.extras.getString("android.title"))
+        assertFalse(notification.extras.toString().contains(session.id))
+        assertFalse(notification.extras.toString().contains("private-note-secret"))
+        val public = notification.publicVersion!!
+        assertEquals("已自动续接", public.extras.getString("android.title"))
+        assertTrue(public.extras.getString("android.text")!!.contains("第 2 段"))
+        assertFalse(public.extras.toString().contains(session.id))
+        assertFalse(public.extras.toString().contains("private-note-secret"))
+    }
+
     @Test fun durationDoesNotWrapAfterOneDayOrBecomeNegative() {
         assertEquals("25:00:00", recordingDuration(25 * 60 * 60 * 1000L))
         assertEquals("00:00:00", recordingDuration(-1))

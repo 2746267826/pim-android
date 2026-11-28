@@ -47,6 +47,10 @@ const snapshot = split => {
 }
 
 function refreshTools() {
+  if (!editor) {
+    tools.hidden = true
+    return
+  }
   for (const button of tools.querySelectorAll('button')) {
     const name = button.dataset.command
     button.setAttribute('aria-pressed', String(editor.isActive(name === 'heading' ? 'heading' : name)))
@@ -55,6 +59,9 @@ function refreshTools() {
 }
 
 function publishSelection() {
+  // Tiptap can emit selection/focus callbacks while the constructor is still
+  // running, before createDocumentEditor has returned to assign `editor`.
+  if (!editor) return
   post(snapshot(true)); refreshTools()
   scheduleGeometry()
 }

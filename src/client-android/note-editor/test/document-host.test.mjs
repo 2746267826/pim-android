@@ -28,7 +28,7 @@ test('host exposes one continuous document, material identity and previews acros
   window.PimEditor.configure(config)
   assert.equal(document.querySelectorAll('.tiptap').length, 1)
   assert.equal(document.querySelectorAll('.pim-region').length, 2)
-  assert.deepEqual(messages.filter(message => message.type === 'snapshot'), [])
+  assert.deepEqual(messages.filter(message => ['snapshot', 'composing', 'error'].includes(message.type)), [])
   const snapshot = () => JSON.parse(window.PimEditor.snapshot(true))
   assert.deepEqual(snapshot().blocks, blocks.map(({ id, kind, text }) => ({ id, kind, ...(text == null ? {} : { text }) })))
   window.PimEditor.setMaterialPreviews({ '22222222-2222-4222-8222-222222222222': 'data:image/png;base64,AAAA' })

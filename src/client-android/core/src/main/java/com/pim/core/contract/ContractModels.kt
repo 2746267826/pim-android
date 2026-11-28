@@ -1,7 +1,7 @@
 // ---------------------------------------------------------------------------
 // 本文件由工具生成，请勿手工修改 / GENERATED FILE — DO NOT EDIT BY HAND.
 //
-//   契约快照 : contract/openapi.json (sha256 5f5bffc67f26d70a15507d093d526c62c27270f4627a5feaba97b79be6eb73e7)
+//   契约快照 : contract/openapi.json (sha256 6fed0a41ff1c1451553fa62be850d5f79336f039d51db0690b0f73b498d5cdf6)
 //   生成器   : scripts/contract/generate-kotlin.py
 //   重新生成 : bash scripts/ci/generate-contract-kotlin.sh
 //   一致性   : bash scripts/ci/check-contract-kotlin.sh（CI 逐字节比对，改了就红）
@@ -25,6 +25,20 @@ data class AiAsrDestinationConsent(
     val presetId: String,
     val presetVersion: String,
 )
+
+/** 契约 `components.schemas.AiPurpose`（response）。 */
+/**
+ * 契约枚举 `AiPurpose`：wire 值由 `@SerialName` 固定，写错取值编译期就不通过。
+ */
+@Serializable
+enum class AiPurpose {
+    @SerialName("NoteOrganization")
+    NOTEORGANIZATION,
+    @SerialName("NoteTodo")
+    NOTETODO,
+    @SerialName("CalendarPlanning")
+    CALENDARPLANNING,
+}
 
 /** 契约 `components.schemas.AppKnowledgeAppDto`（response）。 */
 @Serializable
@@ -597,6 +611,7 @@ data class EventResponse(
     val attendees: List<EventAttendeeDto>? = null,
     val calendarId: String,
     val categories: List<String>? = null,
+    val clientOperationId: String? = null,
     val description: String? = null,
     val descriptionFormat: String? = null,
     val displayLocalEnd: String? = null,
@@ -631,6 +646,8 @@ data class EventResponse(
     val recurrenceId: String? = null,
     val recurrenceMetadataJson: String? = null,
     val reminderMinutesBeforeStart: Int? = null,
+    val replayed: Boolean? = null,
+    val requiresConfirmation: Boolean? = null,
     val sensitivity: String? = null,
     val seriesMasterId: String? = null,
     val showAs: String? = null,
@@ -644,6 +661,8 @@ data class EventResponse(
     val timeZoneSourceType: String? = null,
     val title: String,
     val uid: String,
+    val undoAvailable: Boolean? = null,
+    val userMessage: String? = null,
 )
 
 /** 契约 `components.schemas.EventResponseApiResponse`（response）。 */
@@ -1655,7 +1674,9 @@ data class NoteDerivedDestinationDto(
 /** 契约 `components.schemas.NoteDerivedDestinationsDto`（response）。 */
 @Serializable
 data class NoteDerivedDestinationsDto(
+    val defaultModelId: String? = null,
     val items: List<NoteDerivedDestinationDto>,
+    val purpose: AiPurpose? = null,
     val total: Int,
 )
 
@@ -2337,6 +2358,32 @@ data class OutlookSyncStep(
     val detail: String,
     val name: String,
     val status: String,
+)
+
+/** 契约 `components.schemas.OutlookWriteResult`（response）。 */
+@Serializable
+data class OutlookWriteResult(
+    val clientOperationId: String? = null,
+    val errorCode: String? = null,
+    val errorMessage: String? = null,
+    val event: EventResponse? = null,
+    val latestEtag: String? = null,
+    val latestEvent: EventResponse? = null,
+    val noChangesApplied: Boolean? = null,
+    val replayed: Boolean? = null,
+    val requiresConfirmation: Boolean? = null,
+    val status: String,
+    val undoAvailable: Boolean? = null,
+    val userMessage: String? = null,
+)
+
+/** 契约 `components.schemas.OutlookWriteResultApiResponse`（response）。 */
+@Serializable
+data class OutlookWriteResultApiResponse(
+    val code: Int,
+    val data: OutlookWriteResult? = null,
+    val message: String,
+    val timestamp: String,
 )
 
 /** 契约 `components.schemas.PcDetailRecord`（response）。 */

@@ -21,6 +21,7 @@ import androidx.compose.runtime.Composable
 import androidx.compose.runtime.DisposableEffect
 import androidx.compose.runtime.LaunchedEffect
 import androidx.compose.runtime.getValue
+import androidx.compose.runtime.key
 import androidx.compose.runtime.mutableStateOf
 import androidx.compose.runtime.produceState
 import androidx.compose.runtime.remember
@@ -131,51 +132,53 @@ internal fun ContinuousMarkdownDocument(
         "touch" to "${d.minimumTouchTarget.value}px", "radius" to "${d.spaceSmall.value}px",
         "minimum-height" to "${minimumHeight.value}px",
     )
-    AndroidView(
-        factory = { context ->
-            OfflineMarkdownView(context).also { view ->
-                view.blockId = documentId
-                view.readCurrentBlocks = { blocks.value() }
-                view.onBlocks = onBlocks
-                view.onInsertion = { anchor, focused, marks ->
-                    if (coordinator.isCurrent(documentId, view)) { richFocused = focused; coordinator.remember(anchor, focused, marks) }
+    key(documentId) {
+        AndroidView(
+            factory = { context ->
+                OfflineMarkdownView(context).also { view ->
+                    view.blockId = documentId
+                    view.readCurrentBlocks = { blocks.value() }
+                    view.onBlocks = onBlocks
+                    view.onInsertion = { anchor, focused, marks ->
+                        if (coordinator.isCurrent(documentId, view)) { richFocused = focused; coordinator.remember(anchor, focused, marks) }
+                    }
+                    view.onMaterial = { materialCallback.value(it) }
+                    view.onCaret = { top, bottom ->
+                        val start = (top - d.spaceSmall.value).coerceAtLeast(0f)
+                        if (coordinator.isCurrent(documentId, view)) caret = Rect(
+                            0f, start * density.density, density.density,
+                            (bottom + d.spaceSmall.value).coerceAtLeast(start + 1f) * density.density,
+                        )
+                    }
+                    view.onHeight = { height = it.dp.coerceAtLeast(minimumHeight) }
+                    view.onFailure = { reason -> fallback.value(reason) }
+                    view.onReviewRequired = { reason -> coordinator.review(documentId, reason) }
+                    view.onSourceOnly = { reason -> fallback.value(reason) }
+                    view.onNotice = { problem.value(it) }
+                    view.onPending = { coordinator.pending(view, it) }
+                    coordinator.register(documentId, view)
+                    richView = view
                 }
-                view.onMaterial = { materialCallback.value(it) }
-                view.onCaret = { top, bottom ->
-                    val start = (top - d.spaceSmall.value).coerceAtLeast(0f)
-                    if (coordinator.isCurrent(documentId, view)) caret = Rect(
-                        0f, start * density.density, density.density,
-                        (bottom + d.spaceSmall.value).coerceAtLeast(start + 1f) * density.density,
-                    )
-                }
-                view.onHeight = { height = it.dp.coerceAtLeast(minimumHeight) }
-                view.onFailure = { reason -> fallback.value(reason) }
-                view.onReviewRequired = { reason -> coordinator.review(documentId, reason) }
-                view.onSourceOnly = { reason -> fallback.value(reason) }
-                view.onNotice = { problem.value(it) }
-                view.onPending = { coordinator.pending(view, it) }
-                coordinator.register(documentId, view)
-                richView = view
-            }
-        },
-        modifier = Modifier.fillMaxWidth().height(height)
-            .onGloballyPositioned { geometry.origin = it.positionInRoot(); requestReveal() }
-            .testTag("note-document-editor"),
-        onReset = null,
-        onRelease = { view ->
-            coordinator.retire(view)
-            if (richView === view) richView = null
-        },
-        update = { view ->
-            view.updateMaterialPreviews(previewState.value)
-            view.bindDocument(
-                blocks.value() ?: note.blocks,
-                enabled && !preview,
-                theme,
-                previewState.value,
-            )
-        },
-    )
+            },
+            modifier = Modifier.fillMaxWidth().height(height)
+                .onGloballyPositioned { geometry.origin = it.positionInRoot(); requestReveal() }
+                .testTag("note-document-editor"),
+            onReset = null,
+            onRelease = { view ->
+                coordinator.retire(view)
+                if (richView === view) richView = null
+            },
+            update = { view ->
+                view.updateMaterialPreviews(previewState.value)
+                view.bindDocument(
+                    blocks.value() ?: note.blocks,
+                    enabled && !preview,
+                    theme,
+                    previewState.value,
+                )
+            },
+        )
+    }
 }
 
 @Composable

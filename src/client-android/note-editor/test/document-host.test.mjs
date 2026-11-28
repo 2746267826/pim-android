@@ -60,5 +60,12 @@ test('host exposes one continuous document, material identity and previews acros
     { ...blocks[2], text: '原生新版本' },
   ] })
   assert.equal(snapshot().blocks[2].text, '原生新版本')
+
+  window.PimEditor.configure({ ...config, epoch: 2, blocks: [
+    { ...blocks[0], text: '<span data-private="keep">原稿</span>' },
+  ] })
+  const sourceOnly = messages.filter(message => message.type === 'sourceOnly')
+  assert.equal(sourceOnly.length, 1)
+  assert.equal(sourceOnly[0].epoch, 2)
   dom.window.close()
 })

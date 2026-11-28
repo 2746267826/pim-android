@@ -92,12 +92,12 @@ function applyMaterialPreviews() {
 }
 
 function configureDocument(config) {
+  if (config.epoch > epoch) { epoch = config.epoch; sequence = 0 }
   const reason = documentNeedsSource(config.blocks)
   if (reason) {
     post({ type: 'sourceOnly', reason })
     return
   }
-  if (config.epoch > epoch) { epoch = config.epoch; sequence = 0 }
   const nextSignature = signature(config.blocks)
   if (!editor) {
     documentMode = true
